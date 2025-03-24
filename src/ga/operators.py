@@ -1,38 +1,42 @@
-# ฟังก์ชันเพิ่มเติม เช่น crossover, mutation operators
+# ga/operators.py
 
 import numpy as np
 from copy import deepcopy
 
 
 def roulette_wheel_selection(prob):
-    """Roulette Wheel Selection"""
-    c = np.cumsum(prob)
-    r = np.random.rand() * c[-1]
-    idx = np.argwhere(r <= c)
-    return idx[0][0]
+    cumsum = np.cumsum(prob)
+    r = np.random.rand() * cumsum[-1]
+    idx = np.where(r <= cumsum)[0][0]
+    return idx
 
 
 def crossover(p1, p2, gamma=0.1):
-    """Blend Crossover (BGA) แบบง่าย ๆ"""
+    # Integer crossover: ใช้วิธี uniform crossover สำหรับ integer vector
     c1 = deepcopy(p1)
     c2 = deepcopy(p2)
-
-    alpha = np.random.uniform(-gamma, 1 + gamma, p1["position"].shape)
-    c1["position"] = alpha * p1["position"] + (1 - alpha) * p2["position"]
-    c2["position"] = alpha * p2["position"] + (1 - alpha) * p1["position"]
-
+    for i in range(len(p1["position"])):
+        if np.random.rand() < 0.5:
+            c1["position"][i], c2["position"][i] = p2["position"][i], p1["position"][i]
     return c1, c2
 
 
-def mutate(ind, mu, sigma):
-    """Gaussian Mutation"""
+def mutate(ind, mu, sigma, var_min, var_max):
+    # Integer mutation: สำหรับแต่ละ gene ให้สุ่มเปลี่ยนแปลงด้วยความน่าจะเป็น mu
     c = deepcopy(ind)
-    mask = np.random.rand(*c["position"].shape) < mu
-    c["position"][mask] += sigma * np.random.randn(np.sum(mask))
+    n = len(c["position"])
+    n_batches = n // 2
+    for i in range(n):
+        if np.random.rand() < mu:
+            # ถ้าเป็นตัวแปร start_slot (indices 0 ถึง n_batches-1)
+            if i < n_batches:
+                c["position"][i] = np.random.randint(var_min[i], var_max[i] + 1)
+            else:
+                # สำหรับ furnace assignment: ควรสุ่มเป็น 0 หรือ 1
+                c["position"][i] = np.random.randint(0, 2)
     return c
 
 
 def apply_bound(ind, var_min, var_max):
-    """Clamp ค่าให้อยู่ใน boundary"""
     ind["position"] = np.maximum(ind["position"], var_min)
     ind["position"] = np.minimum(ind["position"], var_max)
