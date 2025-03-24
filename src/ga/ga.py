@@ -72,30 +72,19 @@ class GeneticAlgorithm:
         n_batches = self.n_var // 2
 
         while len(pop) < self.pop_size:
-            used_slots = [0] * 48
+            # สร้าง position แบบสุ่มล้วน
             position = np.empty(self.n_var, dtype=int)
-            valid = True
 
             for i in range(n_batches):
-                # ลองสุ่ม start_slot ที่ไม่ชน
-                for _ in range(100):  # ลองไม่เกิน 100 รอบ
-                    start_slot = np.random.randint(0, 48 - 3)
-                    overlap = any(
-                        used_slots[t] >= 1 for t in range(start_slot, start_slot + 3)
-                    )
-                    if not overlap:
-                        for t in range(start_slot, start_slot + 3):
-                            used_slots[t] += 1
-                        position[2 * i] = start_slot
-                        position[2 * i + 1] = np.random.randint(0, 2)
-                        break
-                else:
-                    valid = False
-                    break  # สุ่มไม่ได้ ไม่ใส่เข้า population
+                # สุ่ม start_slot (0 ถึง 48) หรืออาจใช้ 48 - (T_LOAD+T_MELT) ถ้าอยากกันขอบ
+                start_slot = np.random.randint(0, 49)
+                # สุ่ม furnace 0=A, 1=B
+                furnace = np.random.randint(0, 2)
+                position[2 * i]     = start_slot
+                position[2 * i + 1] = furnace
 
-            if valid:
-                ind = {"position": position, "cost": None}
-                pop.append(ind)
+            ind = {"position": position, "cost": None}
+            pop.append(ind)
 
         return pop
 
