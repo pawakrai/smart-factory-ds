@@ -1,14 +1,23 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from src.ga.ga import GeneticAlgorithm
 from matplotlib.patches import Patch
+from src.ga.ga import GeneticAlgorithm
 
+# =============== CONFIG ==================
 
-# ----------------------------
-# CONFIG
-T_LOAD = 1   # Loading phase (1 slot = 30 นาที)
-T_MELT = 3   # Melting phase (3 slots = 90 นาที)
-# ถ้าอยากมี POURING อีก ก็เพิ่ม T_POUR = 1 ฯลฯ ได้
+# 1) ตั้ง SLOT_DURATION (นาทีต่อ slot)
+SLOT_DURATION = 30  # ปรับได้ 10,20,30 ฯลฯ
+
+# 2) คำนวณ total slots ใน 1 วัน (1440 นาที)
+TOTAL_SLOTS = 1440 // SLOT_DURATION  # เช่น ถ้า SLOT_DURATION=20 => TOTAL_SLOTS=72
+
+# 3) กำหนดระยะเวลาของแต่ละ phase (หน่วยเป็น "slot")
+T_LOAD = 1
+T_MELT = 3
+T_POUR = 1
+
+# =========================================
+
 
 def scheduling_cost(x):
     """
@@ -16,11 +25,15 @@ def scheduling_cost(x):
        x[2*i]   = start_slot
        x[2*i+1] = furnace (0=A, 1=B)
 
+    เฟส:
+      - Loading (T_LOAD slots)
+      - Melting (T_MELT slots)
+      - Pouring (T_POUR slots)
+
     เงื่อนไข:
-     - Melting ข้ามเตาไม่ได้พร้อมกัน (global)
-     - เตาเดียวกัน ห้าม Loading ทับ Melting
-     - Loading + Loading ข้ามเตา หรือข้าม batch ได้
-     - Loading + Melting ข้ามเตาได้
+      - เตาเดียวกัน: ห้าม 2 phase ใด ๆ ซ้อนทับกันในเวลาเดียวกัน
+      - Melting ระหว่างเตาต่างกัน ห้ามซ้อนเพราะไฟไม่พอ
+      - Loading/Pouring คนละเตา ซ้อนได้
     """
     n = len(x) // 2
     penalty = 0
@@ -29,251 +42,225 @@ def scheduling_cost(x):
     for i in range(n):
         start = int(x[2 * i])
         f = int(round(x[2 * i + 1]))
-        # กันขอบ
-        start = max(0, min(start, 48 - (T_LOAD + T_MELT)))
+
+        # กันขอบไม่ให้ start เกินช่วง
+        # รวมทั้งหมด T_LOAD + T_MELT + T_POUR
+        total_phase = T_LOAD + T_MELT + T_POUR
+        start = max(0, min(start, TOTAL_SLOTS - total_phase))
 
         load_start = start
-        load_end   = start + T_LOAD
+        load_end = start + T_LOAD
+
         melt_start = load_end
-        melt_end   = load_end + T_MELT
-        schedule.append((load_start, load_end, melt_start, melt_end, f, i+1))
+        melt_end = melt_start + T_MELT
 
-    # 1) Array ป้องกัน Melting ซ้อนกันข้ามเตา
-    global_meltdown_usage = [0]*48
+        pour_start = melt_end
+        pour_end = pour_start + T_POUR
 
-    # 2) Array ป้องกันเตาเดียวกัน Loading+Melting ทับกัน
+        schedule.append(
+            (load_start, load_end, melt_start, melt_end, pour_start, pour_end, f, i + 1)
+        )
+
+    # 1) ตรวจ Melting ข้ามเตา
+    meltdown_usage = [0] * TOTAL_SLOTS
+
+    # 2) ตรวจเตาเดียวกัน (loading+melting+pouring)
     usage_for_furnace = {
-        0: [0]*48,  # Furnace A
-        1: [0]*48   # Furnace B
+        0: [0] * TOTAL_SLOTS,  # Furnace A
+        1: [0] * TOTAL_SLOTS,  # Furnace B
     }
 
-    for (ls, le, ms, me, furnace, b_id) in schedule:
-        # --- Global meltdown check ---
+    # เติมข้อมูล
+    for ls, le, ms, me, ps, pe, furnace, b_id in schedule:
+        # global meltdown
         for t in range(ms, me):
-            if 0 <= t < 48:
-                global_meltdown_usage[t] += 1
+            if 0 <= t < TOTAL_SLOTS:
+                meltdown_usage[t] += 1
 
-        # --- Furnace-specific usage ---
-        # Loading
-        for t in range(ls, le):
-            if 0 <= t < 48:
+        # furnace usage
+        for t in range(ls, le):  # Loading
+            if 0 <= t < TOTAL_SLOTS:
                 usage_for_furnace[furnace][t] += 1
-        # Melting
-        for t in range(ms, me):
-            if 0 <= t < 48:
+        for t in range(ms, me):  # Melting
+            if 0 <= t < TOTAL_SLOTS:
+                usage_for_furnace[furnace][t] += 1
+        for t in range(ps, pe):  # Pouring
+            if 0 <= t < TOTAL_SLOTS:
                 usage_for_furnace[furnace][t] += 1
 
-    # เช็ค penalty:
-    # A) Melting ข้ามเตา
-    for t in range(48):
-        # ถ้า global meltdown usage > 1 => มี 2 เตาละลายพร้อมกัน
-        if global_meltdown_usage[t] > 1:
-            penalty += (global_meltdown_usage[t] - 1) * 1e9
+    # ลงโทษ Melting พร้อมกัน >1 เตา
+    for t in range(TOTAL_SLOTS):
+        if meltdown_usage[t] > 1:
+            penalty += (meltdown_usage[t] - 1) * 1e14
 
-    # B) Loading + Melting ในเตาเดียวกัน
+    # ลงโทษเตาเดียวกันมีการซ้อน (เฟสไหนก็ได้)
     for f in [0, 1]:
-        for t in range(48):
+        for t in range(TOTAL_SLOTS):
             if usage_for_furnace[f][t] > 1:
-                # มากกว่า 1 แสดงว่าเตานี้มีอย่างน้อย Loading และ Melting ทับกัน
-                penalty += (usage_for_furnace[f][t] - 1) * 1e9
+                penalty += (usage_for_furnace[f][t] - 1) * 1e14
 
-    # คำนวณ makespan
-    makespan = max(me for (_,_,_,me,_,_) in schedule)
-    total_time = makespan * 30
+    # makespan = slot สิ้นสุดของ Pour
+    makespan = 0
+    for _, _, _, _, _, pour_end, _, _ in schedule:
+        makespan = max(makespan, pour_end)
+
+    # แปลงเป็นนาที (makespan * SLOT_DURATION)
+    total_time = makespan * SLOT_DURATION
     cost = total_time + penalty
     return cost
 
 
-
-# ----- Problem Definition -----
-num_batches = 10
-problem = {
-    "cost_func": scheduling_cost,
-    # 2 ตัวแปร/Batch
-    "n_var": num_batches * 2,
-    # สมมติให้ x[2*i] อยู่ได้ถึง 48 - (T_LOAD+T_MELT) = 48 - 4 = 44 ก็พอ
-    # แต่เพื่อความยืดหยุ่น ก็ใส่ 48 ไปเลยแล้วเดี๋ยวใน cost function เช็คขอบ
-    "var_min": [0 if i % 2 == 0 else 0 for i in range(num_batches * 2)],
-    "var_max": [48 if i % 2 == 0 else 1 for i in range(num_batches * 2)],
-}
-
-# ----- GA Parameters -----
-params = {
-    "max_iter": 1000,
-    "pop_size": 200,
-    "beta": 0.6,   # ลดแรงกดดันจาก cost
-    "pc": 0.9,
-    "gamma": 0.2,
-    "mu": 0.5,
-    "sigma": 4,
-}
-
-
 def decode_schedule(best_sol):
     """
-    เปลี่ยนให้สอดคล้องกับ multi-phase
-    คืนค่า (load_start, load_end, melt_start, melt_end, furnace, batch_id)
+    แปลง chromosome -> schedule
+    คืน (ls, le, ms, me, ps, pe, furnace, batch_id)
     """
     x = best_sol["position"]
     n = len(x) // 2
+
     schedule = []
     for i in range(n):
-        start = int(round(x[2 * i]))
-        furnace = int(round(x[2 * i + 1]))
-        start = max(0, min(start, 48 - (T_LOAD + T_MELT)))
-        
-        load_start = start
-        load_end   = start + T_LOAD
-        melt_start = load_end
-        melt_end   = load_end + T_MELT
-        schedule.append((load_start, load_end, melt_start, melt_end, furnace, i+1))
+        start = int(x[2 * i])
+        f = int(round(x[2 * i + 1]))
 
-    # เรียงตาม melt_start เพื่อดูง่าย
-    schedule.sort(key=lambda s: s[2])  # sort by melt_start
+        total_phase = T_LOAD + T_MELT + T_POUR
+        start = max(0, min(start, TOTAL_SLOTS - total_phase))
+
+        load_start = start
+        load_end = start + T_LOAD
+
+        melt_start = load_end
+        melt_end = melt_start + T_MELT
+
+        pour_start = melt_end
+        pour_end = pour_start + T_POUR
+
+        schedule.append(
+            (load_start, load_end, melt_start, melt_end, pour_start, pour_end, f, i + 1)
+        )
+
+    # sort ตาม melt_start
+    schedule.sort(key=lambda s: s[2])
     return schedule
+
 
 def plot_schedule(schedule):
     """
-    schedule: list of tuples (load_start, load_end, melt_start, melt_end, furnace, batch_id)
-    1 slot = 30 นาที
-
-    ต้องการแสดงเวลาเริ่มที่ 9:00 (นับเป็นจุดเริ่มของกราฟ)
-    และลากยาวจนถึงอีก 24 ชั่วโมง (9:00 ของวันถัดไป) = 1980 นาทีจากเที่ยงคืน
+    plot 3 เฟส: Loading (เทาอ่อน), Melting (ฟ้า), Pouring (เทาเข้ม)
+    X-axis: เริ่ม 9:00 (540) -> 9:00 + 24 ชม = 540 + 1440 = 1980
+    แต่จะใช้ TOTAL_SLOTS * SLOT_DURATION => ถ้า slot=72, slot_duration=20 => 72*20=1440
     """
-
-    # นิยามจุดเริ่มที่ 9:00 (540 นาทีจากเที่ยงคืน)
-    SHIFT_START = 9 * 60      # 540
-    SHIFT_END   = SHIFT_START + 1440  # 540 + 1440 = 1980 (9:00 ของวันถัดไป)
-
-    furnace_y = {0: 10, 1: 30}
-    height = 8
+    SHIFT_START = 9 * 60  # เริ่ม 9:00 AM
+    # สร้าง x-axis ช่วง 1 วัน = SHIFT_START -> SHIFT_START + 1440
+    # แต่จริงๆ ถ้า GA ใช้ไม่ถึงก็ไม่เป็นไร เราเผื่อ 1 วัน
 
     fig, ax = plt.subplots(figsize=(12, 6))
+    height = 8
 
-    for (ls, le, ms, me, furnace, b_id) in schedule:
-        # คำนวณเวลาเริ่ม-สิ้นสุดในหน่วย "นาทีจากเที่ยงคืน" แต่เราจะ shift ไปเริ่มที่ 9:00
-        load_start_time = SHIFT_START + (ls * 30)
-        load_dur        = (le - ls) * 30
+    furnace_y = {0: 10, 1: 20}
 
-        melt_start_time = SHIFT_START + (ms * 30)
-        melt_dur        = (me - ms) * 30
+    for ls, le, ms, me, ps, pe, f, b_id in schedule:
+        # แปลง slot->นาที
+        load_start_t = SHIFT_START + ls * SLOT_DURATION
+        load_dur = (le - ls) * SLOT_DURATION
 
-        # Loading phase (สีเทาอ่อน)
+        melt_start_t = SHIFT_START + ms * SLOT_DURATION
+        melt_dur = (me - ms) * SLOT_DURATION
+
+        pour_start_t = SHIFT_START + ps * SLOT_DURATION
+        pour_dur = (pe - ps) * SLOT_DURATION
+
+        # Loading = lightgray
         ax.broken_barh(
-            [(load_start_time, load_dur)],
-            (furnace_y[furnace], height),
+            [(load_start_t, load_dur)],
+            (furnace_y[f], height),
             facecolors="lightgray",
             alpha=0.4,
-            edgecolor="black"
+            edgecolor="black",
         )
-
-        # Melting phase (สีน้ำเงิน)
+        # Melting = tab:blue
         ax.broken_barh(
-            [(melt_start_time, melt_dur)],
-            (furnace_y[furnace], height),
+            [(melt_start_t, melt_dur)],
+            (furnace_y[f], height),
             facecolors="tab:blue",
             alpha=1.0,
-            edgecolor="black"
+            edgecolor="black",
+        )
+        # Pouring = dimgray
+        ax.broken_barh(
+            [(pour_start_t, pour_dur)],
+            (furnace_y[f], height),
+            facecolors="dimgray",
+            alpha=0.8,
+            edgecolor="black",
         )
 
-        # Label batch ตรงกลาง bar (Melting)
+        # label batch ตรงกลาง Melting
         ax.text(
-            melt_start_time + melt_dur / 2,
-            furnace_y[furnace] + height / 2,
+            melt_start_t + melt_dur / 2,
+            furnace_y[f] + height / 2,
             f"{b_id}",
             ha="center",
             va="center",
             color="white",
             fontsize=10,
-            fontweight="bold"
         )
 
-    # กำหนดแกน X ให้เริ่มที่ 9:00 (540) จนถึง 9:00 ของวันถัดไป (1980)
-    ax.set_xlim(SHIFT_START, SHIFT_END)
+    # ตั้งค่า X limit = 9:00 -> 9:00 + 1440 (อีก 24 ชม)
+    ax.set_xlim(SHIFT_START, SHIFT_START + 1440)
 
-    # สร้าง xticks ทุก 60 นาที (1 ชม) ในช่วง 9:00 -> 9:00 ของวันถัดไป
-    xticks = np.arange(SHIFT_START, SHIFT_END + 1, 60)
+    # ตั้ง Tick ทุก 60 นาที
+    import numpy as np
+
+    xticks = np.arange(SHIFT_START, SHIFT_START + 1440 + 1, 60)
     ax.set_xticks(xticks)
-
-    # แปลงเป็น label "HH:MM" ตามเวลาจริง
     xlabels = []
     for x in xticks:
-        # แปลง x (นาทีจากเที่ยงคืน) เป็นชั่วโมง:นาที
-        hr = x // 60
+        hr = (x // 60) % 24
         mn = x % 60
-        # ex. 540 = 9*60 => hr=9, mn=0 => "09:00"
-        # แต่ถ้าเป็น 33:00 => hr=33 => hr%24 = 9 => "09:00" ของวันถัดไป
-        hr_mod = hr % 24
-        xlabels.append(f"{hr_mod:02d}:{mn:02d}")
+        xlabels.append(f"{hr:02d}:{mn:02d}")
     ax.set_xticklabels(xlabels)
 
     ax.set_xlabel("Time (HH:MM)")
     ax.set_ylabel("Furnace")
 
-    # ปรับแกน Y ให้เป็นชื่อเตา
+    # Y-axis
     ax.set_yticks([furnace_y[0] + height / 2, furnace_y[1] + height / 2])
     ax.set_yticklabels(["Furnace A", "Furnace B"])
 
-    ax.set_title("Melting Schedule (starting at 09:00)")
+    ax.set_title(f"Melting Schedule (Slot={SLOT_DURATION} min)")
 
-    # Grid + Legend
     ax.grid(True)
     legend_elements = [
         Patch(facecolor="lightgray", alpha=0.4, edgecolor="black", label="Loading"),
         Patch(facecolor="tab:blue", alpha=1.0, edgecolor="black", label="Melting"),
+        Patch(facecolor="dimgray", alpha=0.8, edgecolor="black", label="Pouring"),
     ]
     ax.legend(handles=legend_elements, loc="upper right")
-
     plt.tight_layout()
     plt.show()
 
 
-# def plot_schedule(schedule):
-#     """
-#     Plot Gantt แบบ 2 phase:
-#       - Loading (สีจาง)
-#       - Melting (สีเข้ม)  # ตัวอย่างเปลี่ยน facecolors ได้ถ้าอยากต่างสี
-#     """
-#     fig, ax = plt.subplots(figsize=(12, 6))
-#     furnace_y = {0: 10, 1: 30}
-#     height = 8
+# -------- Problem Definition --------
+num_batches = 11
+problem = {
+    "cost_func": scheduling_cost,
+    "n_var": num_batches * 2,
+    "var_min": [0 if i % 2 == 0 else 0 for i in range(num_batches * 2)],
+    "var_max": [TOTAL_SLOTS if i % 2 == 0 else 1 for i in range(num_batches * 2)],
+}
 
-#     # วนดูแต่ละ batch
-#     for (ls, le, ms, me, furnace, b_id) in schedule:
-#         # Loading
-#         load_start_time = ls * 30
-#         load_dur = (le - ls) * 30
-#         ax.broken_barh(
-#             [(load_start_time, load_dur)],
-#             (furnace_y[furnace], height),
-#             facecolors="tab:gray",  # สีเทาอ่อน
-#         )
-#         # Melting
-#         melt_start_time = ms * 30
-#         melt_dur = (me - ms) * 30
-#         ax.broken_barh(
-#             [(melt_start_time, melt_dur)],
-#             (furnace_y[furnace], height),
-#             facecolors="tab:blue",  # สีฟ้า
-#         )
-#         # เขียนชื่อ batch ตรงกลางของ Melting
-#         ax.text(
-#             melt_start_time + melt_dur / 2,
-#             furnace_y[furnace] + height / 2,
-#             f"{b_id}",
-#             ha="center",
-#             va="center",
-#             color="white",
-#             fontsize=10,
-#         )
-#     ax.set_xlabel("Time (minutes from midnight)")
-#     ax.set_ylabel("Furnace")
-#     ax.set_yticks([furnace_y[0] + height / 2, furnace_y[1] + height / 2])
-#     ax.set_yticklabels(["Furnace A", "Furnace B"])
-#     ax.set_title("Melting Schedule (Loading + Melting phases)")
-#     ax.set_xlim(0, 1440)
-#     ax.grid(True)
-#     plt.show()
+
+# ------- GA Parameters ------------
+params = {
+    "max_iter": 2000,
+    "pop_size": 200,
+    "beta": 0.6,  # Probability of selection
+    "pc": 0.9,  # Crossover Probability (ค่านี้ใกล้ 1 หมายถึง แทบทุกคู่ของพ่อแม่ (parents) จะมีการ crossover)
+    "gamma": 0.2,  # Crossover Ratio / Blend Parameter
+    "mu": 0.7,  # Mutation Rate
+    "sigma": 4,  # Mutation Scale (ถ้ามาก กระโดดเยอะ ไม่ stable ถ้าน้อยอาจจะไม่หลุด local min)
+}
 
 
 def main():
@@ -284,14 +271,18 @@ def main():
     plt.plot(output["best_cost"], "b-", linewidth=2)
     plt.xlabel("Iteration")
     plt.ylabel("Best Cost")
-    plt.title("GA for Induction Furnace Scheduling (Multi-phase)")
+    plt.title(f"GA for Induction Furnace (Slot={SLOT_DURATION} min)")
     plt.grid(True)
     plt.show()
 
     best_schedule = decode_schedule(output["best_sol"])
     print("Best Schedule:")
-    for (ls, le, ms, me, furnace, b_id) in best_schedule:
-        print(f"Batch {b_id}: LOAD=({ls}-{le})  MELT=({ms}-{me})  Furnace={'A' if furnace==0 else 'B'}")
+    for ls, le, ms, me, ps, pe, f, b_id in best_schedule:
+        print(
+            f"Batch {b_id}: "
+            f"LOAD=({ls}-{le}) MELT=({ms}-{me}) POUR=({ps}-{pe}) "
+            f"Furnace={'A' if f==0 else 'B'}"
+        )
 
     plot_schedule(best_schedule)
 
