@@ -13,7 +13,7 @@ TOTAL_SLOTS = 1440 // SLOT_DURATION  # เช่น ถ้า SLOT_DURATION=20 =
 
 # 3) กำหนดระยะเวลาของแต่ละ phase (หน่วยเป็น "slot")
 T_LOAD = 1
-T_MELT = 3
+T_MELT = 4
 T_POUR = 1
 
 # =========================================
