@@ -71,16 +71,51 @@ class GeneticAlgorithm:
         pop = []
         n_batches = self.n_var // 2
 
+        # นำเข้าหรือกำหนดค่า USE_FURNACE_A, USE_FURNACE_B, T_MELT, ฯลฯ
+        from src.app import USE_FURNACE_A, USE_FURNACE_B, T_MELT, TOTAL_SLOTS
+
+        # สมมติว่าเราต้องการให้ start_slot กระจายกันไม่ทับ (แบบง่ายๆ)
+        # ตัวอย่างเช่น ถ้าเปิด 2 เตา => สลับ A,B และขยับ start_slot ต่อๆ กัน
+        # ถ้าเตาเดียว => ไล่เรียงต่อกัน
+        # หมายเหตุ: หาก T_MELT=3 เราจะเผื่อให้ batch ต่อไปเริ่มหลังจาก 3 slot ก่อน
+
         while len(pop) < self.pop_size:
-            # สร้าง position แบบสุ่มล้วน
             position = np.empty(self.n_var, dtype=int)
 
+            # ตัวอย่างง่าย: base_start = 0
+            base_start = 0
+
             for i in range(n_batches):
-                # สุ่ม start_slot (0 ถึง 48) หรืออาจใช้ 48 - (T_LOAD+T_MELT) ถ้าอยากกันขอบ
-                start_slot = np.random.randint(0, 49)
-                # สุ่ม furnace 0=A, 1=B
-                furnace = np.random.randint(0, 2)
-                position[2 * i]     = start_slot
+                # กำหนด start_slot:
+                #   - ถ้าเตาเดียว => start_slot = base_start + i*T_MELT (เช่น ไล่ต่อกัน)
+                #   - ถ้า 2 เตา => start_slot = i*T_MELT (แล้วให้ batch A, B สลับ?)
+                #     หรือจะบวก gap อีกสัก 1 slot เพื่อให้สบายขึ้น
+
+                # ตรวจว่าเราเปิดกี่เตา
+                if USE_FURNACE_A and USE_FURNACE_B:
+                    # เปิด 2 เตา => สลับเตา + ไล่ start slot
+                    # เช่น batch i => start = i*(T_MELT), furnace = i%2
+                    start_slot = i * (T_MELT)
+                    furnace = i % 2  # สลับ 0,1,0,1
+                elif USE_FURNACE_A and not USE_FURNACE_B:
+                    # เปิด A อย่างเดียว => furnace=0
+                    # ไล่ต่อกัน
+                    start_slot = i * T_MELT
+                    furnace = 0
+                elif (not USE_FURNACE_A) and USE_FURNACE_B:
+                    # เปิด B อย่างเดียว => furnace=1
+                    start_slot = i * T_MELT
+                    furnace = 1
+                else:
+                    # กรณีปิดหมด => fallback (หรือ raise Error)
+                    start_slot = 0
+                    furnace = 0  # no furnace available
+
+                # กันไม่ให้ start_slot เกิน TOTAL_SLOTS - T_MELT
+                start_slot = min(start_slot, TOTAL_SLOTS - T_MELT)
+
+                # ใส่ลงใน position
+                position[2 * i] = start_slot
                 position[2 * i + 1] = furnace
 
             ind = {"position": position, "cost": None}

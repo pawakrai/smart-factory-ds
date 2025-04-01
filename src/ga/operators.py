@@ -23,6 +23,8 @@ def crossover(p1, p2, gamma=0.1):
 
 def mutate(ind, mu, sigma, var_min, var_max):
     # Integer mutation: สำหรับแต่ละ gene ให้สุ่มเปลี่ยนแปลงด้วยความน่าจะเป็น mu
+    # Design Mu ใหม่ให้สอดคล้องกับปัญหา เช่น อัตราการเปลี่ยน เตา แบบนึง หรือขยับเวลา แบบนึง
+    # Random ให้เลื่อน 1 ตัว หรือ n ตัว (ขยับ scheduel)
     c = deepcopy(ind)
     n = len(c["position"])
     n_batches = n // 2
