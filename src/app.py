@@ -22,72 +22,175 @@ SHIFT_START = 9 * 60
 
 def scheduling_cost(x):
     """
-    x: chromosome => [start_1, furnace_1, start_2, furnace_2, ...]
-    แต่ละ batch ใช้ T_MELT slot (Melting only)
-
-    แนวทางที่ 2:
-      - ถ้าเตาไหน "ปิด" → ถ้า chromosome เลือกเตานั้น => penalty สูง
-      - ถ้าเตาไหน "เปิด" → ห้ามมี overlap ภายในเตานั้น
-      - (ถ้าเปิดทั้ง A และ B) → ตามตัวอย่างนี้ จะยังไม่ลงโทษ cross-furnace
-        (แต่คุณสามารถเพิ่มเองได้ง่าย ๆ ถ้าต้องการ)
+    1) สร้างตาราง schedule ของ IF
+    2) ตรวจ overlap / penalty IF
+    3) ทำ mini-simulation M&H เพื่อคำนวณ Energy + penalty
+    4) รวมทั้งหมดเป็น cost
     """
+
+    # ----------------------------
+    # 1) สร้างตาราง (start, end, furnace, batch_id)
+    # ----------------------------
     n = len(x) // 2
     schedule = []
     for i in range(n):
         start = int(x[2 * i])
-        f = int(round(x[2 * i + 1]))
+        furnace = int(round(x[2 * i + 1]))
 
+        # กันไม่ให้หลุด slot
         start = max(0, min(start, TOTAL_SLOTS - T_MELT))
         end = start + T_MELT
+        schedule.append((start, end, furnace, i + 1))
 
-        schedule.append((start, end, f, i + 1))
+    # ----------------------------
+    # 2) ตรวจ Overlap IF -> penalty_if
+    # ----------------------------
+    # ตัวอย่างเช็คเหมือนเดิม:
+    penalty_if = 0.0
 
-    penalty = 0
-
-    # (1) ลงโทษถ้าเลือกเตาที่ปิด
+    # (2.1) ลงโทษถ้าเตาไหนปิดแต่ x ระบุใช้เตานั้น
     for s, e, f, b_id in schedule:
-        if f == 0 and not USE_FURNACE_A:  # ถ้า furnace=0 แต่ปิด => penalty
-            penalty += 1e12
-        if f == 1 and not USE_FURNACE_B:  # ถ้า furnace=1 แต่ปิด => penalty
-            penalty += 1e12
+        if f == 0 and not USE_FURNACE_A:
+            penalty_if += 1e12
+        if f == 1 and not USE_FURNACE_B:
+            penalty_if += 1e12
 
-    # (2) ห้ามซ้อนภายในเตาที่ "เปิด" โดยใช้ usage_for_furnace
-    usage_for_furnace = {0: [0] * TOTAL_SLOTS, 1: [0] * TOTAL_SLOTS}  # A  # B
-
+    # (2.2) ห้ามซ้อนในเตาเดียวกัน
+    usage_for_furnace = {0: [0] * TOTAL_SLOTS, 1: [0] * TOTAL_SLOTS}
     for s, e, f, b_id in schedule:
         for t in range(s, e):
             usage_for_furnace[f][t] += 1
 
-    # เตา A เปิด => ถ้าพบ usage_for_furnace[0][t] > 1 => penalize
     if USE_FURNACE_A:
         for t in range(TOTAL_SLOTS):
             if usage_for_furnace[0][t] > 1:
-                penalty += (usage_for_furnace[0][t] - 1) * 1e9
+                penalty_if += (usage_for_furnace[0][t] - 1) * 1e9
 
-    # เตา B เปิด => ถ้าพบ usage_for_furnace[1][t] > 1 => penalize
     if USE_FURNACE_B:
         for t in range(TOTAL_SLOTS):
             if usage_for_furnace[1][t] > 1:
-                penalty += (usage_for_furnace[1][t] - 1) * 1e9
+                penalty_if += (usage_for_furnace[1][t] - 1) * 1e9
 
-    # Global melt check
+    # (2.3) ถ้าเปิดทั้ง A,B => global check
     global_usage = [0] * TOTAL_SLOTS
-    for s, e, f, b_id in schedule:
-        for t in range(s, e):
-            global_usage[t] += 1
-
-    # ถ้าเปิดทั้ง A,B => ห้าม global_usage[t] > 1
     if USE_FURNACE_A and USE_FURNACE_B:
+        for s, e, f, b_id in schedule:
+            for t in range(s, e):
+                global_usage[t] += 1
         for t in range(TOTAL_SLOTS):
             if global_usage[t] > 1:
-                penalty += (global_usage[t] - 1) * 1e9
+                penalty_if += (global_usage[t] - 1) * 1e9
 
-    # makespan
-    makespan_slot = max(e for (s, e, f, b_id) in schedule)
-    total_time = makespan_slot * SLOT_DURATION
-    cost = total_time + penalty
+    # ----------------------------
+    # 2.4) คำนวณ makespan slot => makespan (นาที)
+    # ----------------------------
+    makespan_slot = max(e for (s, e, f, b_id) in schedule) if schedule else 0
+    makespan_min = makespan_slot * SLOT_DURATION
+
+    # ----------------------------
+    # 3) สร้าง water_events สำหรับ M&H
+    # สมมติ 1 batch = 500 kg => มีน้ำหลอม 500 kg ทันทีที่ batch_i finish
+    # (ถ้าคุณมี partial batch capacity จริง ๆ ก็ปรับ logic)
+    # ----------------------------
+    water_events = []  # list of (finish_minute, batch_id)
+    for s, e, f, b_id in schedule:
+        finish_minute = e * SLOT_DURATION
+        water_events.append((finish_minute, b_id))
+
+    water_events.sort(key=lambda w: w[0])  # เรียงตามเวลา
+
+    # ----------------------------
+    # 4) เรียก mini-simulation M&H
+    # ----------------------------
+    MH_idle_penalty, MH_reheat_penalty, total_energy_mh, _ = simulate_mh_consumption(
+        makespan_min, water_events
+    )
+
+    # ----------------------------
+    # 5) รวม cost
+    # ----------------------------
+    # สมมติ IF กินพลังงาน => 2 kWh/min
+    # (ปรับตามจริง)
+    if_energy_rate = 2.0
+    total_energy_if = if_energy_rate * makespan_min
+
+    # final cost
+    cost = 0.0
+    cost += total_energy_if  # พลังงาน IF
+    cost += total_energy_mh  # พลังงาน M&H
+    cost += penalty_if  # overlap/ปิดเตา/ฯลฯ
+    cost += MH_idle_penalty * 100  # สมมติ scale penalty idle
+    cost += MH_reheat_penalty * 200
 
     return cost
+
+
+def simulate_mh_consumption(makespan_min, water_events):
+    """
+    จำลองเตา M&H ทีละ 1 นาที จนถึง makespan_min
+      - 'water_events' คือรายการ (finish_minute, batch_id)
+        บอกว่าตอนไหน IF ส่งน้ำหลอมเสร็จ
+
+    ตัวอย่างโค้ด:
+      - 1 batch => 500 kg
+      - if M&H ว่าง => รับ 500 kg
+      - random consumption => [0..5]
+      - idle ถ้า M&H empty
+      - reheat ถ้า M&H เต็มแต่ยังมี batch รอ
+    """
+
+    rng = np.random.default_rng()  # random
+    MH_CAPACITY = 500.0
+    MH_current = 0.0
+
+    MH_idle_penalty = 0.0
+    MH_reheat_penalty = 0.0
+    total_energy_mh = 0.0
+
+    idx_water = 0
+    available_batches = 0  # นับว่ามีกี่ batch ที่พร้อมน้ำแล้ว
+
+    # เพิ่ม "time_series" เก็บ (t, MH_current) เพื่อ plot
+    time_series = []
+
+    for t in range(makespan_min + 1):  # ไล่ทุกนาที
+        # 1) check water_events => batch เสร็จตอนไหน
+        while idx_water < len(water_events) and water_events[idx_water][0] <= t:
+            available_batches += 1
+            idx_water += 1
+
+        # 2) สุ่ม consumption
+        rate = rng.uniform(0, 5)  # 0..5 kg/min
+        # โอกาส 10% พัง => rate=0
+        if rng.random() < 0.1:
+            rate = 0
+
+        # 3) ถ้า MH_current <= 0 => idle
+        if MH_current <= 0:
+            MH_idle_penalty += 1.0
+            consumed = 0
+        else:
+            consumed = min(MH_current, rate)
+            MH_current -= consumed
+
+        # 4) ถ้า MH_current < 500 => ถ้ามี batch => fill
+        if MH_current < MH_CAPACITY and available_batches > 0:
+            MH_current = MH_CAPACITY
+            available_batches -= 1
+        else:
+            # ถ้า MH_current=500 แต่ยังมี batch => reheat penalty
+            if MH_current >= MH_CAPACITY and available_batches > 0:
+                MH_reheat_penalty += 1.0
+
+        # 5) พลังงานเตา M&H
+        # เช่น ฐาน 1 kWh/min + 0.01 * MH_current
+        energy_mh_per_min = 1.0 + 0.01 * MH_current
+        total_energy_mh += energy_mh_per_min
+
+        # เก็บค่า current
+        time_series.append((t, MH_current))
+
+    return MH_idle_penalty, MH_reheat_penalty, total_energy_mh, time_series
 
 
 def decode_schedule(best_sol):
@@ -103,9 +206,8 @@ def decode_schedule(best_sol):
     schedule.sort(key=lambda s: s[0])
     return schedule
 
-
-# -------------- Plot ส่วนที่เหลือเหมือนเดิม ----------------
-def simulate_mh_capacity():
+    # -------------- Plot ส่วนที่เหลือเหมือนเดิม ----------------
+    # def simulate_mh_capacity():
     t = np.arange(0, 1441)
     cap = MH_CAPACITY_MAX
     capacity = np.zeros_like(t, dtype=float)
@@ -118,6 +220,147 @@ def simulate_mh_capacity():
 
 
 def plot_schedule_and_mh(schedule):
+    """
+    1) Plot Gantt (ax1)
+    2) เรียก mini-sim M&H อีกครั้ง => ได้ time_series => plot(ax2)
+    """
+    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(18, 9))
+
+    furnace_y = {0: 10, 1: 25}
+    height = 8
+
+    # 1) plot Gantt
+    for start, end, f, b_id in schedule:
+        melt_start_t = SHIFT_START + start * SLOT_DURATION
+        melt_dur = (end - start) * SLOT_DURATION
+        ax1.broken_barh(
+            [(melt_start_t, melt_dur)],
+            (furnace_y[f], height),
+            facecolors="tab:blue",
+            edgecolor="black",
+        )
+        ax1.text(
+            melt_start_t + melt_dur / 2,
+            furnace_y[f] + height / 2,
+            f"{b_id}",
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=10,
+        )
+
+    ax1.set_xlim(SHIFT_START, SHIFT_START + 1440)
+    xticks = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
+    ax1.set_xticks(xticks)
+    ax1.set_xlabel("Time (HH:MM)")
+    xlabels = []
+    for x in xticks:
+        hr = (x // 60) % 24
+        mn = x % 60
+        xlabels.append(f"{hr:02d}:{mn:02d}")
+    ax1.set_xticklabels(xlabels)
+
+    ax1.set_ylabel("Furnace")
+    ax1.set_yticks([furnace_y[0] + height / 2, furnace_y[1] + height / 2])
+    ax1.set_yticklabels(["Furnace A", "Furnace B"])
+    ax1.set_title("Melting Schedule")
+
+    ax1.grid(True, axis="y", alpha=0.5)
+    for slot_i in range(TOTAL_SLOTS + 1):
+        line_x = SHIFT_START + slot_i * SLOT_DURATION
+        ax1.axvline(x=line_x, color="gray", alpha=0.3, linestyle="--")
+
+    # 2) mini-sim M&H อีกครั้ง เพื่อจะได้ time_series
+    if schedule:
+        makespan_slot = max(e for (s, e, f, b) in schedule)
+    else:
+        makespan_slot = 0
+    makespan_min = makespan_slot * SLOT_DURATION
+
+    # สร้าง water_events
+    water_events = []
+    for s, e, f, b in schedule:
+        water_events.append((e * SLOT_DURATION, b))
+    water_events.sort(key=lambda w: w[0])
+
+    # เรียก simulate
+    MH_idle_penalty, MH_reheat_penalty, total_energy_mh, time_series = (
+        simulate_mh_consumption_for_plot(makespan_min, water_events)
+    )
+
+    # time_series => list of (t, MH_current)
+    # shift t + SHIFT_START
+    times = [SHIFT_START + m[0] for m in time_series]
+    mhs = [m[1] for m in time_series]
+
+    ax2.plot(times, mhs, "r-", linewidth=2, label="M&H Capacity (Sim)")
+    ax2.set_xlim(SHIFT_START, SHIFT_START + 1440)
+    ax2.set_ylim(0, MH_CAPACITY_MAX * 1.1)
+    ax2.set_xlabel("Time (HH:MM)")
+    ax2.set_ylabel("Metal in M&H (kg)", color="r")
+    xticks2 = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
+    ax2.set_xticks(xticks2)
+    xlabels2 = []
+    for x in xticks2:
+        hr = (x // 60) % 24
+        mn = x % 60
+        xlabels2.append(f"{hr:02d}:{mn:02d}")
+    ax2.set_xticklabels(xlabels2)
+    ax2.set_title("M&H Real Consumption (Mini-sim)")
+    ax2.grid(True, alpha=0.5)
+    ax2.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def simulate_mh_consumption_for_plot(makespan_min, water_events):
+    """
+    เหมือน simulate_mh_consumption แต่ว่า return time_series ด้วย
+    """
+    rng = np.random.default_rng()
+    MH_CAPACITY = 500.0
+    MH_current = 0.0
+
+    MH_idle_penalty = 0.0
+    MH_reheat_penalty = 0.0
+    total_energy_mh = 0.0
+
+    idx_water = 0
+    available_batches = 0
+
+    time_series = []
+
+    for t in range(makespan_min + 1):
+        while idx_water < len(water_events) and water_events[idx_water][0] <= t:
+            available_batches += 1
+            idx_water += 1
+
+        rate = rng.uniform(0, 5)
+        if rng.random() < 0.1:
+            rate = 0
+
+        if MH_current <= 0:
+            MH_idle_penalty += 1
+        else:
+            consumed = min(MH_current, rate)
+            MH_current -= consumed
+
+        if MH_current < MH_CAPACITY and available_batches > 0:
+            MH_current = MH_CAPACITY
+            available_batches -= 1
+        else:
+            if MH_current >= MH_CAPACITY and available_batches > 0:
+                MH_reheat_penalty += 1
+
+        e_mh = 1.0 + 0.01 * MH_current
+        total_energy_mh += e_mh
+
+        time_series.append((t, MH_current))
+
+    return MH_idle_penalty, MH_reheat_penalty, total_energy_mh, time_series
+
+    # def plot_schedule_and_mh(schedule):
     fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(18, 9))
 
     furnace_y = {0: 10, 1: 25}
