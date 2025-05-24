@@ -1,23 +1,32 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from pymoo.core.problem import ElementwiseProblem
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+from pymoo.core.sampling import Sampling
+from pymoo.operators.sampling.rnd import FloatRandomSampling
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PolynomialMutation
 
 # =============== CONFIG ==================
-
-SLOT_DURATION = 30  # 1 slot = 30 นาที
-TOTAL_SLOTS = 1440 // SLOT_DURATION  # 1 วัน = 48 slots ถ้า 30 นาที/slot
-
-T_MELT = 3  # Melting 3 slot = 90 นาที
-
-# กำหนดว่าเตาไหนใช้งานได้บ้าง
+SLOT_DURATION = 30
+TOTAL_SLOTS = 1440 // SLOT_DURATION
+T_MELT = 3
 USE_FURNACE_A = True
-USE_FURNACE_B = True  # ตัวอย่าง: ปิดเตา B
-
-# เตา M&H (โค้ดเดิมไว้ plot)
+USE_FURNACE_B = True
 MH_CAPACITY_MAX = 500.0
 MH_CONSUMPTION_RATE = 5.56
-REFILL_THRESHOLD = 0.0
-
 SHIFT_START = 9 * 60
+NUM_BATCHES = 14
+
+
+def simulate_mh_consumption(makespan_min, water_events):
+    # แค่ mock ไว้ก่อน
+    MH_idle_penalty = 0.0
+    MH_reheat_penalty = 0.0
+    total_energy_mh = 0.0
+    return MH_idle_penalty, MH_reheat_penalty, total_energy_mh
 
 
 def scheduling_cost(x):
@@ -51,9 +60,9 @@ def scheduling_cost(x):
     # (2.1) ลงโทษถ้าเตาไหนปิดแต่ x ระบุใช้เตานั้น
     for s, e, f, b_id in schedule:
         if f == 0 and not USE_FURNACE_A:
-            penalty_if += 1e12
+            penalty_if += 1e9
         if f == 1 and not USE_FURNACE_B:
-            penalty_if += 1e12
+            penalty_if += 1e9
 
     # (2.2) ห้ามซ้อนในเตาเดียวกัน
     usage_for_furnace = {0: [0] * TOTAL_SLOTS, 1: [0] * TOTAL_SLOTS}
@@ -102,7 +111,7 @@ def scheduling_cost(x):
     # ----------------------------
     # 4) เรียก mini-simulation M&H
     # ----------------------------
-    MH_idle_penalty, MH_reheat_penalty, total_energy_mh, _ = simulate_mh_consumption(
+    MH_idle_penalty, MH_reheat_penalty, total_energy_mh = simulate_mh_consumption(
         makespan_min, water_events
     )
 
@@ -122,372 +131,299 @@ def scheduling_cost(x):
     cost += MH_idle_penalty * 100  # สมมติ scale penalty idle
     cost += MH_reheat_penalty * 200
 
-    return cost
+    return cost, makespan_min
 
 
-def simulate_mh_consumption(makespan_min, water_events):
-    """
-    จำลองเตา M&H ทีละ 1 นาที จนถึง makespan_min
-      - 'water_events' คือรายการ (finish_minute, batch_id)
-        บอกว่าตอนไหน IF ส่งน้ำหลอมเสร็จ
+# ===== NSGA-II Problem Class =====
+class MeltingScheduleProblem(ElementwiseProblem):
+    def __init__(self, num_batches):
+        # Determine bounds based on problem logic (start times and furnace index 0 or 1)
+        xl_list = []
+        xu_list = []
+        for i in range(num_batches):
+            xl_list.extend(
+                [0, 0]
+            )  # Start slot lower bound 0, Furnace index lower bound 0
+            # Ensure start time allows for T_MELT duration within TOTAL_SLOTS
+            xu_list.extend(
+                [TOTAL_SLOTS - T_MELT, 1]
+            )  # Start slot upper bound, Furnace index upper bound 1
 
-    ตัวอย่างโค้ด:
-      - 1 batch => 500 kg
-      - if M&H ว่าง => รับ 500 kg
-      - random consumption => [0..5]
-      - idle ถ้า M&H empty
-      - reheat ถ้า M&H เต็มแต่ยังมี batch รอ
-    """
-
-    rng = np.random.default_rng()  # random
-    MH_CAPACITY = 500.0
-    MH_current = 0.0
-
-    MH_idle_penalty = 0.0
-    MH_reheat_penalty = 0.0
-    total_energy_mh = 0.0
-
-    idx_water = 0
-    available_batches = 0  # นับว่ามีกี่ batch ที่พร้อมน้ำแล้ว
-
-    # เพิ่ม "time_series" เก็บ (t, MH_current) เพื่อ plot
-    time_series = []
-
-    for t in range(makespan_min + 1):  # ไล่ทุกนาที
-        # 1) check water_events => batch เสร็จตอนไหน
-        while idx_water < len(water_events) and water_events[idx_water][0] <= t:
-            available_batches += 1
-            idx_water += 1
-
-        # 2) สุ่ม consumption
-        rate = rng.uniform(0, 5)  # 0..5 kg/min
-        # โอกาส 10% พัง => rate=0
-        if rng.random() < 0.1:
-            rate = 0
-
-        # 3) ถ้า MH_current <= 0 => idle
-        if MH_current <= 0:
-            MH_idle_penalty += 1.0
-            consumed = 0
-        else:
-            consumed = min(MH_current, rate)
-            MH_current -= consumed
-
-        # 4) ถ้า MH_current < 500 => ถ้ามี batch => fill
-        if MH_current < MH_CAPACITY and available_batches > 0:
-            MH_current = MH_CAPACITY
-            available_batches -= 1
-        else:
-            # ถ้า MH_current=500 แต่ยังมี batch => reheat penalty
-            if MH_current >= MH_CAPACITY and available_batches > 0:
-                MH_reheat_penalty += 1.0
-
-        # 5) พลังงานเตา M&H
-        # เช่น ฐาน 1 kWh/min + 0.01 * MH_current
-        energy_mh_per_min = 1.0 + 0.01 * MH_current
-        total_energy_mh += energy_mh_per_min
-
-        # เก็บค่า current
-        time_series.append((t, MH_current))
-
-    return MH_idle_penalty, MH_reheat_penalty, total_energy_mh, time_series
-
-
-def decode_schedule(best_sol):
-    x = best_sol["position"]
-    n = len(x) // 2
-    schedule = []
-    for i in range(n):
-        start = int(x[2 * i])
-        f = int(round(x[2 * i + 1]))
-        start = max(0, min(start, TOTAL_SLOTS - T_MELT))
-        end = start + T_MELT
-        schedule.append((start, end, f, i + 1))
-    schedule.sort(key=lambda s: s[0])
-    return schedule
-
-    # -------------- Plot ส่วนที่เหลือเหมือนเดิม ----------------
-    # def simulate_mh_capacity():
-    t = np.arange(0, 1441)
-    cap = MH_CAPACITY_MAX
-    capacity = np.zeros_like(t, dtype=float)
-    for i in range(len(t)):
-        capacity[i] = cap
-        cap -= MH_CONSUMPTION_RATE
-        if cap < 0:
-            cap = MH_CAPACITY_MAX
-    return t, capacity
-
-
-def plot_schedule_and_mh(schedule):
-    """
-    1) Plot Gantt (ax1)
-    2) เรียก mini-sim M&H อีกครั้ง => ได้ time_series => plot(ax2)
-    """
-    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(18, 9))
-
-    furnace_y = {0: 10, 1: 25}
-    height = 8
-
-    # 1) plot Gantt
-    for start, end, f, b_id in schedule:
-        melt_start_t = SHIFT_START + start * SLOT_DURATION
-        melt_dur = (end - start) * SLOT_DURATION
-        ax1.broken_barh(
-            [(melt_start_t, melt_dur)],
-            (furnace_y[f], height),
-            facecolors="tab:blue",
-            edgecolor="black",
-        )
-        ax1.text(
-            melt_start_t + melt_dur / 2,
-            furnace_y[f] + height / 2,
-            f"{b_id}",
-            ha="center",
-            va="center",
-            color="white",
-            fontsize=10,
+        super().__init__(
+            n_var=num_batches * 2,
+            n_obj=2,
+            n_constr=0,
+            xl=np.array(xl_list),
+            xu=np.array(xu_list),
         )
 
-    ax1.set_xlim(SHIFT_START, SHIFT_START + 1440)
-    xticks = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
-    ax1.set_xticks(xticks)
-    ax1.set_xlabel("Time (HH:MM)")
-    xlabels = []
-    for x in xticks:
-        hr = (x // 60) % 24
-        mn = x % 60
-        xlabels.append(f"{hr:02d}:{mn:02d}")
-    ax1.set_xticklabels(xlabels)
-
-    ax1.set_ylabel("Furnace")
-    ax1.set_yticks([furnace_y[0] + height / 2, furnace_y[1] + height / 2])
-    ax1.set_yticklabels(["Furnace A", "Furnace B"])
-    ax1.set_title("Melting Schedule")
-
-    ax1.grid(True, axis="y", alpha=0.5)
-    for slot_i in range(TOTAL_SLOTS + 1):
-        line_x = SHIFT_START + slot_i * SLOT_DURATION
-        ax1.axvline(x=line_x, color="gray", alpha=0.3, linestyle="--")
-
-    # 2) mini-sim M&H อีกครั้ง เพื่อจะได้ time_series
-    if schedule:
-        makespan_slot = max(e for (s, e, f, b) in schedule)
-    else:
-        makespan_slot = 0
-    makespan_min = makespan_slot * SLOT_DURATION
-
-    # สร้าง water_events
-    water_events = []
-    for s, e, f, b in schedule:
-        water_events.append((e * SLOT_DURATION, b))
-    water_events.sort(key=lambda w: w[0])
-
-    # เรียก simulate
-    MH_idle_penalty, MH_reheat_penalty, total_energy_mh, time_series = (
-        simulate_mh_consumption_for_plot(makespan_min, water_events)
-    )
-
-    # time_series => list of (t, MH_current)
-    # shift t + SHIFT_START
-    times = [SHIFT_START + m[0] for m in time_series]
-    mhs = [m[1] for m in time_series]
-
-    ax2.plot(times, mhs, "r-", linewidth=2, label="M&H Capacity (Sim)")
-    ax2.set_xlim(SHIFT_START, SHIFT_START + 1440)
-    ax2.set_ylim(0, MH_CAPACITY_MAX * 1.1)
-    ax2.set_xlabel("Time (HH:MM)")
-    ax2.set_ylabel("Metal in M&H (kg)", color="r")
-    xticks2 = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
-    ax2.set_xticks(xticks2)
-    xlabels2 = []
-    for x in xticks2:
-        hr = (x // 60) % 24
-        mn = x % 60
-        xlabels2.append(f"{hr:02d}:{mn:02d}")
-    ax2.set_xticklabels(xlabels2)
-    ax2.set_title("M&H Real Consumption (Mini-sim)")
-    ax2.grid(True, alpha=0.5)
-    ax2.legend(loc="upper right")
-
-    plt.tight_layout()
-    plt.show()
+    def _evaluate(self, x, out, *args, **kwargs):
+        energy, makespan = scheduling_cost(x)
+        out["F"] = [energy, makespan]
 
 
-def simulate_mh_consumption_for_plot(makespan_min, water_events):
+# ===== Custom Sampling Class (ปรับปรุง) =====
+class CustomInitialSampling(Sampling):
     """
-    เหมือน simulate_mh_consumption แต่ว่า return time_series ด้วย
+    สร้างประชากรเริ่มต้นตามเตาที่ใช้งานได้:
+    - ถ้าใช้ได้ 2 เตา: สุ่มเวลาเริ่มและสลับเตา A/B พยายามไม่ให้ซ้อนในเตาเดียวกัน
+    - ถ้าใช้ได้ 1 เตา: สุ่มเวลาเริ่มในเตานั้น พยายามไม่ให้ซ้อนกัน
     """
-    rng = np.random.default_rng()
-    MH_CAPACITY = 500.0
-    MH_current = 0.0
 
-    MH_idle_penalty = 0.0
-    MH_reheat_penalty = 0.0
-    total_energy_mh = 0.0
+    def _do(self, problem, n_samples, **kwargs):
+        X = np.full((n_samples, problem.n_var), 0.0)
+        num_batches = problem.n_var // 2
 
-    idx_water = 0
-    available_batches = 0
+        available_furnaces = []
+        if USE_FURNACE_A:
+            available_furnaces.append(0)
+        if USE_FURNACE_B:
+            available_furnaces.append(1)
 
-    time_series = []
+        if not available_furnaces:
+            # กรณีไม่มีเตาใช้งานเลย (ไม่ควรเกิด) อาจจะคืนค่าสุ่มหรือ error
+            # ในที่นี้จะคืนค่าที่อาจไม่ valid เพื่อให้ penalty จัดการ
+            print("Warning: No furnaces enabled for CustomInitialSampling!")
+            return FloatRandomSampling()._do(problem, n_samples, **kwargs)
 
-    for t in range(makespan_min + 1):
-        while idx_water < len(water_events) and water_events[idx_water][0] <= t:
-            available_batches += 1
-            idx_water += 1
+        only_one_furnace = len(available_furnaces) == 1
+        furnace_to_use = available_furnaces[0] if only_one_furnace else None
 
-        rate = rng.uniform(0, 5)
-        if rng.random() < 0.1:
-            rate = 0
+        for i in range(n_samples):
+            # เก็บ slot ที่ใช้ไปแล้วสำหรับแต่ละเตา ใน sample ปัจจุบัน
+            used_slots = {f: [0] * TOTAL_SLOTS for f in available_furnaces}
+            successful_generation = True
 
-        if MH_current <= 0:
-            MH_idle_penalty += 1
-        else:
-            consumed = min(MH_current, rate)
-            MH_current -= consumed
+            for j in range(num_batches):
+                # --- 1. กำหนดเตา (furnace_idx) ---
+                if only_one_furnace:
+                    furnace_idx = furnace_to_use
+                else:
+                    # สลับเตา A(0), B(1), A(0), ...
+                    furnace_idx = available_furnaces[j % len(available_furnaces)]
 
-        if MH_current < MH_CAPACITY and available_batches > 0:
-            MH_current = MH_CAPACITY
-            available_batches -= 1
-        else:
-            if MH_current >= MH_CAPACITY and available_batches > 0:
-                MH_reheat_penalty += 1
+                # --- 2. หาวันที่เริ่ม (start_slot) ที่ไม่ซ้อน ---
+                found_slot = False
+                max_attempts = 50  # จำนวนครั้งสูงสุดในการสุ่มหา slot ว่าง
+                min_start_slot = 0
+                max_start_slot = TOTAL_SLOTS - T_MELT
 
-        e_mh = 1.0 + 0.01 * MH_current
-        total_energy_mh += e_mh
+                # Ensure furnace_idx is valid before using it as a key
+                if furnace_idx not in used_slots:
+                    print(
+                        f"Error: Invalid furnace index {furnace_idx} generated in sampling. Skipping batch."
+                    )
+                    # Handle error: skip this batch or assign default values
+                    # For simplicity, let's assign defaults here, might lead to invalid solution
+                    X[i, 2 * j] = 0
+                    X[i, 2 * j + 1] = available_furnaces[
+                        0
+                    ]  # Assign to the first available furnace
+                    successful_generation = False
+                    continue  # Move to the next batch
 
-        time_series.append((t, MH_current))
+                for attempt in range(max_attempts):
+                    start_slot = np.random.randint(min_start_slot, max_start_slot + 1)
+                    is_overlap = False
+                    for t in range(start_slot, start_slot + T_MELT):
+                        if t >= TOTAL_SLOTS or used_slots[furnace_idx][t] == 1:
+                            is_overlap = True
+                            break
+                    if not is_overlap:
+                        # เจอ slot ว่าง
+                        for t in range(start_slot, start_slot + T_MELT):
+                            used_slots[furnace_idx][t] = 1  # ทำเครื่องหมายว่าใช้ slot นี้แล้ว
+                        X[i, 2 * j] = start_slot
+                        X[i, 2 * j + 1] = furnace_idx
+                        found_slot = True
+                        break
 
-    return MH_idle_penalty, MH_reheat_penalty, total_energy_mh, time_series
+                if not found_slot:
+                    # ถ้าสุ่มหลายครั้งแล้วยังไม่เจอ ลองหาช่องแรกที่ว่าง
+                    earliest_slot = -1
+                    for s_try in range(min_start_slot, max_start_slot + 1):
+                        is_overlap = False
+                        for t in range(s_try, s_try + T_MELT):
+                            if t >= TOTAL_SLOTS or used_slots[furnace_idx][t] == 1:
+                                is_overlap = True
+                                break
+                        if not is_overlap:
+                            earliest_slot = s_try
+                            break
 
-    # def plot_schedule_and_mh(schedule):
-    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(18, 9))
+                    if earliest_slot != -1:
+                        for t in range(earliest_slot, earliest_slot + T_MELT):
+                            used_slots[furnace_idx][t] = 1
+                        X[i, 2 * j] = earliest_slot
+                        X[i, 2 * j + 1] = furnace_idx
+                        found_slot = True
+                    else:
+                        # หา slot ไม่ได้จริงๆ (อาจเกิดถ้า batch เยอะมาก/slot น้อย)
+                        print(
+                            f"Warning: Could not find non-overlapping slot for sample {i}, batch {j+1} in furnace {furnace_idx}. Filling potentially invalid."
+                        )
+                        # ใส่ค่า default หรือ random ไปก่อน (อาจไม่ valid)
+                        # Assign to earliest possible slot even if overlapping, let penalty handle it
+                        X[i, 2 * j] = min_start_slot
+                        X[i, 2 * j + 1] = furnace_idx
+                        # Mark the slots as used anyway to avoid infinite loops if logic has issues
+                        for t in range(
+                            min_start_slot, min(min_start_slot + T_MELT, TOTAL_SLOTS)
+                        ):
+                            used_slots[furnace_idx][t] = 1
+                        successful_generation = False  # อาจจะ track sample ที่มีปัญหา
 
-    furnace_y = {0: 10, 1: 25}
-    height = 8
+            # อาจจะเพิ่ม logic ถ้า successful_generation เป็น False เช่น สร้าง sample นี้ใหม่
 
-    # ---------------------------
-    # พล็อต Gantt chart (ax1)
-    # ---------------------------
-    for start, end, f, b_id in schedule:
-        melt_start_t = SHIFT_START + start * SLOT_DURATION
-        melt_dur = (end - start) * SLOT_DURATION
-        ax1.broken_barh(
-            [(melt_start_t, melt_dur)],
-            (furnace_y[f], height),
-            facecolors="tab:blue",
-            edgecolor="black",
-        )
-        ax1.text(
-            melt_start_t + melt_dur / 2,
-            furnace_y[f] + height / 2,
-            f"{b_id}",
-            ha="center",
-            va="center",
-            color="white",
-            fontsize=10,
-        )
+        # Clip ค่าเพื่อให้แน่ใจว่าอยู่ในขอบเขตที่กำหนด (สำคัญ!)
+        X = np.clip(X, problem.xl, problem.xu)
+        # ตรวจสอบและแก้ไขค่า furnace index ให้เป็น int และอยู่ในช่วง 0, 1
+        X[:, 1::2] = np.round(np.clip(X[:, 1::2], 0, 1)).astype(int)
+        # ตรวจสอบและแก้ไขค่า start time ให้เป็น int และอยู่ในช่วงขอบเขต
+        max_start_time_bound = TOTAL_SLOTS - T_MELT
+        X[:, 0::2] = np.round(np.clip(X[:, 0::2], 0, max_start_time_bound)).astype(int)
 
-    ax1.set_xlim(SHIFT_START, SHIFT_START + 1440)
-
-    # สร้าง X-ticks หลัก รายชั่วโมง (60 นาที)
-    xticks = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
-    ax1.set_xticks(xticks)
-    xlabels = []
-    for x in xticks:
-        hr = (x // 60) % 24
-        mn = x % 60
-        xlabels.append(f"{hr:02d}:{mn:02d}")
-    ax1.set_xticklabels(xlabels)
-    ax1.set_xlabel("Time (HH:MM)")
-
-    # ตั้งค่าแกน Y ให้มี Furnace A, B เสมอ
-    ax1.set_ylabel("Furnace")
-    ax1.set_yticks([furnace_y[0] + height / 2, furnace_y[1] + height / 2])
-    ax1.set_yticklabels(["Furnace A", "Furnace B"])
-    ax1.set_title("Melting Schedule")
-
-    # เปิด Grid เส้นแนวนอนตามปกติ
-    ax1.grid(True, axis="y", linestyle="-", alpha=0.5)
-
-    # ➊ เพิ่มเส้นตั้งทุก slot เพื่อให้เห็นช่วง slot ชัด
-    #    สมมติว่ามี TOTAL_SLOTS และ SLOT_DURATION เป็น global หรือ import
-
-    for slot_i in range(TOTAL_SLOTS + 1):
-        line_x = SHIFT_START + slot_i * SLOT_DURATION
-        ax1.axvline(x=line_x, color="gray", alpha=0.3, linestyle="--")
-
-    # ---------------------------
-    # subplot ล่าง (ax2) - M&H consumption
-    # ---------------------------
-    t, capacity = simulate_mh_capacity()
-    t_shifted = t + SHIFT_START
-    ax2.plot(t_shifted, capacity, "r-", linewidth=2, label="M&H Capacity")
-
-    ax2.set_xlim(SHIFT_START, SHIFT_START + 1440)
-    ax2.set_ylim(0, MH_CAPACITY_MAX * 1.1)
-    ax2.set_xlabel("Time (HH:MM)")
-    ax2.set_ylabel("Metal in M&H (kg)", color="r")
-
-    # xticks ราย ชม.
-    xticks2 = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
-    ax2.set_xticks(xticks2)
-    xlabels2 = []
-    for x in xticks2:
-        hr = (x // 60) % 24
-        mn = x % 60
-        xlabels2.append(f"{hr:02d}:{mn:02d}")
-    ax2.set_xticklabels(xlabels2)
-    ax2.set_title("M&H Consumption / Capacity")
-    ax2.grid(True, which="major", axis="both", alpha=0.5)
-    ax2.legend(loc="upper right")
-
-    plt.tight_layout()
-    plt.show()
-
-
-# =========== GA Setup =================
-from src.ga.ga import GeneticAlgorithm
-
-num_batches = 14
-problem = {
-    "cost_func": scheduling_cost,
-    "n_var": num_batches * 2,
-    "var_min": [0 if i % 2 == 0 else 0 for i in range(num_batches * 2)],
-    "var_max": [TOTAL_SLOTS if i % 2 == 0 else 1 for i in range(num_batches * 2)],
-}
-
-params = {
-    "max_iter": 100,
-    "pop_size": 50,
-    "beta": 0.6,
-    "pc": 0.9,
-    "gamma": 0.2,
-    "mu": 0.7,
-    "sigma": 4,
-}
+        return X
 
 
 def main():
-    ga_engine = GeneticAlgorithm(problem, params)
-    output = ga_engine.run()
+    # ===== Run NSGA-II =====
+    problem = MeltingScheduleProblem(NUM_BATCHES)
 
-    # plot best cost
-    plt.figure()
-    plt.plot(output["best_cost"], "b-", linewidth=2)
-    plt.xlabel("Iteration")
-    plt.ylabel("Best Cost")
-    plt.title("GA for Single/Multiple Furnace Overlap (Approach #2)")
+    # --- ใช้ Custom Sampling ---
+    custom_sampling = CustomInitialSampling()
+
+    algorithm = NSGA2(
+        pop_size=200,
+        sampling=custom_sampling,
+        crossover=SBX(prob=0.9, eta=15),
+        mutation=PolynomialMutation(prob=0.2, eta=20),
+        eliminate_duplicates=True,
+    )
+
+    termination = get_termination("n_gen", 100)
+
+    result = minimize(problem, algorithm, termination, seed=42, verbose=True)
+
+    # ===== Plot Result =====
+    F = result.F
+    plt.figure(figsize=(10, 6))
+    plt.scatter(F[:, 0], F[:, 1], c="blue", s=40, edgecolors="k")
+    plt.xlabel("Total Energy Consumption")
+    plt.ylabel("Makespan (minutes)")
+    plt.title("NSGA-II Pareto Front for Melting Schedule")
     plt.grid(True)
     plt.show()
 
-    best_schedule = decode_schedule(output["best_sol"])
-    print("Best Schedule:")
-    for s, e, f, b_id in best_schedule:
-        furnace_str = "A" if f == 0 else "B"
-        print(f"Batch {b_id}: start={s}, end={e}, Furnace={furnace_str}")
+    solutions = []
 
-    plot_schedule_and_mh(best_schedule)
+    # แสดงเฉพาะ 5 solution แรก (หรือน้อยกว่าถ้าผลลัพธ์น้อยกว่า 5)
+    num_to_show = min(5, len(result.X))
+    print(f"\nShowing top {num_to_show} solutions:")
+    for i in range(num_to_show):
+        print(f"\nSolution #{i+1}")
+        print("  Total Energy:", F[i][0])
+        print("  Makespan    :", F[i][1])
+        print("  Schedule Vec:", result.X[i])
+        solutions.append(result.X[i])
+
+    # Plot top solutions
+    for i, sol in enumerate(solutions):
+        schedule = decode_schedule(sol)
+        plot_schedule(schedule, title=f"Melting Schedule - Top {i+1}")
+
+
+# =====================
+
+## Config
+# SLOT_DURATION = 30
+# TOTAL_SLOTS = 1440 // SLOT_DURATION
+# T_MELT = 3
+# SHIFT_START = 9 * 60
+# MH_CAPACITY_MAX = 500.0
+# MH_CONSUMPTION_RATE = 5.56
+
+# Furnace plot position
+furnace_y = {0: 10, 1: 25}
+height = 8
+
+
+def decode_schedule(x, batch_count=None):  # batch_count is unused if derived from x
+    schedule = []
+    n = len(x) // 2  # Calculate n based on length of x
+    num_batches_actual = (
+        batch_count if batch_count is not None else n
+    )  # Use provided count if available
+    for i in range(num_batches_actual):  # Iterate up to actual number of batches
+        start = int(x[2 * i])
+        furnace = int(round(x[2 * i + 1]))
+        # Clip start time based on problem bounds defined in MeltingScheduleProblem
+        # Ensure start time allows for T_MELT duration within TOTAL_SLOTS
+        start = max(0, min(start, TOTAL_SLOTS - T_MELT))
+        end = start + T_MELT
+        schedule.append((start, end, furnace, i + 1))  # Batch ID starts from 1
+    return schedule
+
+
+def plot_schedule(schedule, title="Schedule"):
+    fig, ax = plt.subplots(figsize=(14, 4))
+    for start, end, f, b_id in schedule:
+        melt_start_t = SHIFT_START + start * SLOT_DURATION
+        melt_dur = (end - start) * SLOT_DURATION
+
+        # Ensure furnace index is valid before accessing furnace_y
+        if f not in furnace_y:
+            print(
+                f"Warning: Invalid furnace index {f} for batch {b_id}. Skipping plot for this entry."
+            )
+            continue  # Skip this entry if furnace index is invalid
+
+        ax.broken_barh(
+            [(melt_start_t, melt_dur)],
+            (furnace_y[f], height),
+            facecolors="tab:blue",
+            edgecolor="black",
+        )
+        ax.text(
+            melt_start_t + melt_dur / 2,
+            furnace_y[f] + height / 2,
+            f"{b_id}",
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=10,
+        )
+    ax.set_xlim(SHIFT_START, SHIFT_START + 1440)
+    xticks = np.arange(SHIFT_START, SHIFT_START + 1441, 60)
+    ax.set_xticks(xticks)
+    ax.set_xticklabels([f"{(x // 60) % 24:02d}:{x % 60:02d}" for x in xticks])
+    # Check if both furnaces are potentially used based on config or schedule
+    yticks_pos = []
+    yticks_labels = []
+    # Use config flags first, then check schedule if needed
+    furnaces_in_schedule = set(f for _, _, f, _ in schedule)
+
+    if USE_FURNACE_A or (0 in furnaces_in_schedule):
+        yticks_pos.append(furnace_y[0] + height / 2)
+        yticks_labels.append("Furnace A")
+    if USE_FURNACE_B or (1 in furnaces_in_schedule):
+        yticks_pos.append(furnace_y[1] + height / 2)
+        yticks_labels.append("Furnace B")
+
+    # Only add labels if positions exist
+    if yticks_pos:
+        ax.set_yticks(yticks_pos)
+        ax.set_yticklabels(yticks_labels)
+    else:  # Handle case where no valid furnaces are used/plotted
+        ax.set_yticks([])  # No ticks if no furnaces
+        ax.set_yticklabels([])
+
+    ax.set_xlabel("Time (HH:MM)")
+    ax.set_ylabel("Furnace")
+    ax.set_title(title)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
