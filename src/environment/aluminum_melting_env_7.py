@@ -2,13 +2,13 @@ import numpy as np
 
 
 class AluminumMeltingEnvironment:
-    def __init__(self):
+    def __init__(self, initial_weight_kg=500, target_temp_c=900):
         # Physical constants for aluminum
         self.specific_heat = 900  # J/kg·K
-        self.mass = 500  # kg
+        self.mass = initial_weight_kg  # kg
         self.ambient_temp = 25  # °C
         self.max_temp = 900  # °C
-        self.target_temp = 900  # Target temperature
+        self.target_temp = target_temp_c  # Target temperature
 
         # กำหนด state โดยไม่รวม cumulative_energy
         self.state = {
@@ -34,7 +34,7 @@ class AluminumMeltingEnvironment:
     def reset(self):
         self.state = {
             "temperature": self.ambient_temp,
-            "weight": 500,
+            "weight": self.mass,
             "time": 0,
             "power": 0,
             "status": 1,  # Start with furnace on
@@ -70,7 +70,7 @@ class AluminumMeltingEnvironment:
         Q_input = self.state["power"] * 1000 * efficiency_factor  # (W)
 
         # 2. คำนวณการสูญเสียความร้อนแบบคอนเวคทีฟ
-        h = 14.0  # W/m²·K
+        h = 14.9  # W/m²·K
         A = 4.0  # m²
         Q_conv = h * A * (self.state["temperature"] - self.ambient_temp)
 
@@ -139,7 +139,7 @@ class AluminumMeltingEnvironment:
             max_power = 400
         else:
             max_power = 450
-            
+
         # ควร Fix ว่าเติมอะไรบางอย่างเข้าไป ถ้าไม่เติมจะโดนหักคะแนน
 
         # ปรับค่า power ไม่ให้เกินข้อจำกัดของแต่ละ Phase

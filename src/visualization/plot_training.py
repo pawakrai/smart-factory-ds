@@ -63,12 +63,12 @@ def plot_training_results(
     plt.show()
 
 
-def plot_episode_details(temperatures, powers, energies, rewards):
+def plot_episode_details(temperatures, powers, energies, rewards, targetTemp):
     fig, axes = plt.subplots(4, 1, figsize=(12, 20))
 
     # Temperature plot
     axes[0].plot(temperatures, "b-", label="Temperature")
-    axes[0].axhline(y=850, color="r", linestyle="--", label="Target Temperature")
+    axes[0].axhline(y=targetTemp, color="r", linestyle="--", label="Target Temperature")
     axes[0].set_title("Temperature vs Time")
     axes[0].set_xlabel("Time (minutes)")
     axes[0].set_ylabel("Temperature (°C)")
@@ -115,6 +115,8 @@ def replay_episode(env, agent):
     rewards = []
     actions = []
     times = []
+
+    targetTemp = env.target_temp
 
     print("\nStarting Episode Replay:")
     print("Initial state:", state)
@@ -164,4 +166,4 @@ def replay_episode(env, agent):
         print(f"{act}: {percentage:.1f}%")
 
     # Plot episode details
-    plot_episode_details(temperatures, powers, energies, rewards)
+    plot_episode_details(temperatures, powers, energies, rewards, targetTemp)

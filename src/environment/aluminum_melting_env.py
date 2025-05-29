@@ -8,7 +8,7 @@ class AluminumMeltingEnvironment:
         self.mass = 500  # kg
         self.ambient_temp = 25  # °C
         self.max_temp = 800  # °C
-        self.target_temp = 750  # Target temperature
+        self.target_temp = 900  # Target temperature
 
         self.state = {
             "temperature": self.ambient_temp,
