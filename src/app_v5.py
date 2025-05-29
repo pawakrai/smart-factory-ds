@@ -18,10 +18,11 @@ import random
 
 # =============== CONFIG ==================
 
-SLOT_DURATION = 10  # 1 slot = 10 นาที
-TOTAL_SLOTS = 1440 // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
+HOURS_A_DAY = 24 * 60  # 1440
+SLOT_DURATION = 5  # 1 slot = 10 นาที
+TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
 
-T_MELT = 9  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
+T_MELT = 18  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
 NUM_BATCHES = 10  # <<< DEFINE GLOBALLY HERE
 
 # กำหนดว่าเตาไหนใช้งานได้บ้าง
@@ -30,19 +31,21 @@ USE_FURNACE_B = True
 
 # --- New Constants for Advanced Simulation Logic ---
 # Penalty rate per minute for an IF holding a batch after melt completion
-IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 50  # Example value, adjust as needed
+IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 0  # Example value, adjust as needed
 # Very high penalty for any batch that cannot be poured by the end of simulation
 UNPOURED_BATCH_PENALTY = 1e13  # Increased penalty
 # Penalty for idle time between consecutive batches on the same IF furnace
 IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 0.5  # Example: 0.5 cost unit per minute of gap
 # Penalty for IF working during designated break times
 IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
-    1e10  # Example: 100 cost unit per minute of work in break
+    10000  # Example: 100 cost unit per minute of work in break
 )
+# Average Power Rating for each IF in kW
+IF_POWER_RATING_KW = {"A": 550.0, "B": 600.0}  # เตา A = 550 kW, เตา B = 600 kW
 
 # เตา M&H (โค้ดเดิมไว้ plot)
 MH_MAX_CAPACITY_KG = {"A": 300.0, "B": 300.0}  # ความจุสูงสุดแต่ละเตา (kg)
-MH_INITIAL_LEVEL_KG = {"A": 150.0, "B": 150.0}  # ระดับเริ่มต้น (kg)
+MH_INITIAL_LEVEL_KG = {"A": 250.0, "B": 250.0}  # ระดับเริ่มต้น (kg)
 MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 3.0, "B": 2.56}  # อัตราการใช้ kg/min แต่ละเตา
 MH_EMPTY_THRESHOLD_KG = 20  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
@@ -50,14 +53,14 @@ MH_REFILL_PER_FURNACE_KG = (
     IF_BATCH_OUTPUT_KG / 2
 )  # ปริมาณที่เติมให้ M&H แต่ละเตาต่อ batch IF (kg)
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
-MH_IDLE_PENALTY_RATE = 100.0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ต่ำกว่า threshold)
+MH_IDLE_PENALTY_RATE = 0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ต่ำกว่า threshold)
 MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
 
 # กำหนดช่วงเวลาพัก (นาทีตั้งแต่เริ่มวัน 0 - 1440)
 # ตัวอย่าง: 9:00-9:15 และ 12:00-13:00
 BREAK_TIMES_MINUTES = [
-    (0 * 60, 0 * 60 + 15),
-    (3 * 60, 4 * 60),
+    (0 * 60, 0 * 60 + 40),  # 08:00 - 08:40
+    (9 * 60, 9 * 60 + 40),  # 20:00 - 20:40
 ]
 
 # --- Plotting Config ---
@@ -68,7 +71,7 @@ MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
 furnace_y = {0: 10, 1: 25}
 height = 8
 
-SHIFT_START = 9 * 60
+SHIFT_START = 0 * 60
 
 
 def scheduling_cost(x):
@@ -221,12 +224,76 @@ def scheduling_cost(x):
     # ----------------------------
     # 5) รวม cost
     # ----------------------------
-    if_energy_rate = 2.0  # สมมติ IF กินพลังงาน (ปรับตามจริง)
-    # คำนวณพลังงาน IF จาก *เวลาทำงานจริง* ของเตา ไม่ใช่แค่ makespan
-    total_if_melting_slots = len(schedule) * T_MELT
-    base_total_energy_if = if_energy_rate * total_if_melting_slots * SLOT_DURATION
+    # --- NEW IF ENERGY CALCULATION (in kWh) ---
+    base_total_energy_if_kwh = 0.0
+    # Map furnace index (0, 1) to furnace ID ("A", "B") - assuming 0 is A, 1 is B
+    # This mapping should be consistent with how USE_FURNACE_A/B is handled or defined
+    if_furnace_id_map = {}
+    if USE_FURNACE_A:
+        if_furnace_id_map[0] = "A"
+    if USE_FURNACE_B:
+        if (
+            len(if_furnace_id_map) == 1 and 0 not in if_furnace_id_map
+        ):  # e.g. only B is used, assign 0 to B
+            if_furnace_id_map[0] = "B"  # This case for B only and f=0
+        elif 1 not in if_furnace_id_map and USE_FURNACE_B:  # e.g. A and B used, B is 1
+            if_furnace_id_map[1] = "B"
+        elif (
+            0 not in if_furnace_id_map and USE_FURNACE_A
+        ):  # e.g. A and B used, A is 0 (already handled)
+            pass  # Already handled if USE_FURNACE_A is true, 0 is A
+        elif len(if_furnace_id_map) == 0:  # Neither A or B is used.
+            pass  # Should not happen if schedule has items
+        # If only one furnace is active, its index in schedule (0) will map to its ID ("A" or "B")
+        # If both are active, 0 maps to "A", 1 maps to "B" (needs careful check if USE_FURNACE_A/B allows gaps)
+
+    # Fallback for furnace mapping if only one furnace is used, assume it's index 0
+    # This logic needs to be robust if furnace indices in `schedule` are not always 0 or 1 or if only one is used.
+    # For simplicity, let's assume if only one furnace type is active, its ID is used for index 0.
+    # And if both are active, 0 is A, 1 is B.
+
+    # Simplified mapping based on active furnaces
+    # This mapping is crucial. Let's refine it.
+    # if_map_for_power = {0: "A", 1: "B"} # Default if both used
+    # if USE_FURNACE_A and not USE_FURNACE_B:
+    #     if_map_for_power = {0: "A"}
+    # elif not USE_FURNACE_A and USE_FURNACE_B:
+    #     if_map_for_power = {0: "B"}
+    # elif not USE_FURNACE_A and not USE_FURNACE_B:
+    #     if_map_for_power = {}
+
+    for s, e, f, b_id in schedule:
+        furnace_idx_in_schedule = f  # f is the furnace index (0 or 1) from schedule
+        furnace_id_for_power = None
+
+        if USE_FURNACE_A and USE_FURNACE_B:
+            furnace_id_for_power = "A" if furnace_idx_in_schedule == 0 else "B"
+        elif USE_FURNACE_A:  # Only Furnace A is active
+            furnace_id_for_power = (
+                "A"  # All scheduled batches must be on furnace A (index 0)
+            )
+        elif USE_FURNACE_B:  # Only Furnace B is active
+            furnace_id_for_power = (
+                "B"  # All scheduled batches must be on furnace B (index 0)
+            )
+
+        if furnace_id_for_power and furnace_id_for_power in IF_POWER_RATING_KW:
+            power_rating_kw = IF_POWER_RATING_KW[furnace_id_for_power]
+            melting_duration_hours = (T_MELT * SLOT_DURATION) / 60.0
+            energy_for_batch_kwh = power_rating_kw * melting_duration_hours
+            base_total_energy_if_kwh += energy_for_batch_kwh
+        # else:
+        # This case should ideally not happen if schedule is valid and furnaces are defined
+        # print(f"Warning: Could not map furnace index {furnace_idx_in_schedule} to power rating for batch {b_id}")
 
     # Add IF holding energy penalty
+    # IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is currently 50.
+    # If this is meant to be an actual energy cost, it needs to be kW * (minutes/60)
+    # For now, let's assume it's a separate penalty, not directly kWh.
+    # If you want to convert this to kWh based on a standby power:
+    # standby_power_A_kw = ... (define this)
+    # standby_power_B_kw = ... (define this)
+    # holding_energy_kwh = (total_if_holding_minutes_A / 60.0 * standby_power_A_kw) + ...
     if_holding_penalty_cost = (
         total_if_holding_minutes * IF_HOLDING_ENERGY_PENALTY_PER_MINUTE
     )
@@ -237,11 +304,14 @@ def scheduling_cost(x):
     )
 
     # final cost (Objective 1: Energy/Cost)
+    # The 'cost' objective now primarily reflects energy in kWh plus other penalties
     cost = 0.0
-    cost += base_total_energy_if  # พลังงาน IF (พื้นฐานจากการหลอม)
-    cost += if_holding_penalty_cost  # พลังงาน/ค่าปรับจากการถือครอง IF batch
+    cost += base_total_energy_if_kwh  # Base IF melting energy in kWh
+    cost += if_holding_penalty_cost  # This is still a penalty value, not kWh unless redefined
     cost += total_energy_mh  # พลังงาน M&H (ยังเป็น placeholder)
-    cost += penalty_if  # Overlap IF / ปิดเตา / Gap Time (จากการวางแผนเบื้องต้น)
+    cost += (
+        penalty_if  # Overlap IF / ปิดเตา / Gap Time / IF in Break (จากการวางแผนเบื้องต้น)
+    )
     cost += MH_idle_penalty  # Penalty จาก M&H idle
     cost += MH_reheat_penalty  # Penalty M&H reheat (ยังเป็น placeholder)
     cost += pour_induced_mh_overflow_penalty  # Penalty M&H overflow จากการเทจริง
@@ -262,7 +332,21 @@ def scheduling_cost(x):
     # The unpoured_batches_penalty_cost already makes the solution undesirable.
     # We can let makespan_min_actual reflect the last pour, or be max sim time if all failed.
 
-    return cost, makespan_min_actual
+    # Return detailed cost components as well
+    cost_components = {
+        "total_cost": cost,
+        "makespan_minutes": makespan_min_actual,
+        "base_if_energy_kwh": base_total_energy_if_kwh,
+        "if_holding_penalty": if_holding_penalty_cost,
+        "if_general_penalty": penalty_if,  # Contains overlap, gap, break penalties
+        "mh_idle_penalty": MH_idle_penalty,
+        "mh_reheat_penalty": MH_reheat_penalty,  # Placeholder
+        "mh_overflow_penalty": pour_induced_mh_overflow_penalty,
+        "unpoured_batch_penalty": unpoured_batches_penalty_cost,
+        "mh_energy_kwh": total_energy_mh,  # Placeholder
+    }
+
+    return cost, makespan_min_actual, cost_components
 
 
 def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
@@ -377,10 +461,8 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
             ]
 
         for furnace_id in ["A", "B"]:
-            # If a pour happened *into* this furnace this minute, its level is already set.
-            # The consumption logic should apply to the state *after* any pour.
+            # Handle Downtime
             if downtime_remaining[furnace_id] > 0:
-                # This check happens even if a pour just occurred for this furnace.
                 downtime_remaining[furnace_id] -= 1
                 mh_status[furnace_id] = "downtime"
                 if downtime_remaining[furnace_id] == 0:
@@ -389,6 +471,8 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
                         if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG
                         else "idle"
                     )
+                mh_levels[furnace_id][t] = current_level[furnace_id]
+                continue  # Skip consumption and idle penalty if in downtime
 
             if mh_status[furnace_id] == "downtime":
                 mh_levels[furnace_id][t] = current_level[furnace_id]
@@ -398,6 +482,17 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
                 current_level[furnace_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[furnace_id]
                 current_level[furnace_id] = max(current_level[furnace_id], 0)
                 mh_status[furnace_id] = "running"
+                if current_level[furnace_id] <= MH_EMPTY_THRESHOLD_KG:
+                    mh_status[furnace_id] = "idle"
+                    # idle_duration[furnace_id] = 1 # Start/reset idle duration counter
+            else:  # Already at or below threshold
+                mh_status[furnace_id] = "idle"
+                # if mh_status was already "idle", increment idle_duration
+                # idle_duration[furnace_id] += 1
+
+            # Apply idle penalty if the furnace is idle (and not in downtime or break)
+            if mh_status[furnace_id] == "idle":
+                total_idle_penalty += MH_IDLE_PENALTY_RATE
 
             mh_levels[furnace_id][t] = current_level[furnace_id]
 
@@ -587,16 +682,16 @@ def plot_schedule_and_mh(
 
         # For ax1 (IF Gantt)
         ax1.axvspan(
-            plot_break_start + SHIFT_START,
-            plot_break_end + SHIFT_START,
+            plot_break_start,
+            plot_break_end,
             facecolor="grey",
             alpha=0.2,
             zorder=-1,
         )
         # For ax2 (M&H Levels)
         ax2.axvspan(
-            plot_break_start + SHIFT_START,
-            plot_break_end + SHIFT_START,
+            plot_break_start,
+            plot_break_end,
             facecolor="grey",
             alpha=0.2,
             zorder=-1,
@@ -736,6 +831,23 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             if not is_if_globally_free:
                 continue  # Try next potential_if_start_slot
 
+            # # NEW Constraint: Check if IF operation falls into any break time
+            # if_op_start_minute = potential_if_start_slot * SLOT_DURATION
+            # if_op_end_minute = (potential_if_start_slot + T_MELT) * SLOT_DURATION
+            # is_in_break = False
+            # for break_start_abs, break_end_abs in BREAK_TIMES_MINUTES:
+            #     # Check for overlap:
+            #     # (IF_start < Break_end) and (IF_end > Break_start)
+            #     if (
+            #         if_op_start_minute < break_end_abs
+            #         and if_op_end_minute > break_start_abs
+            #     ):
+            #         is_in_break = True
+            #         break
+
+            # if is_in_break:
+            #     continue  # Skip this slot as it overlaps with a break time
+
             potential_if_melt_finish_minute = (
                 potential_if_start_slot + T_MELT
             ) * SLOT_DURATION
@@ -871,6 +983,7 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
         # P คือ population ณ generation ปัจจุบัน (array of permutations)
         results_f = []  # เก็บ objective values [energy, makespan]
         evaluated_schedules_x = []  # Store x_schedule_vector for each individual in P
+        all_cost_components = []  # Store cost_components for each individual
 
         # วนลูปแต่ละ Permutation ใน Population
         for batch_order_perm in P:  # Renamed batch_order
@@ -881,7 +994,8 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
             evaluated_schedules_x.append(x_sched_vec)  # Store the generated schedule
 
             # 2. คำนวณ Objectives โดยใช้ scheduling_cost เดิม
-            energy, makespan = scheduling_cost(x_sched_vec)
+            energy, makespan, cost_components = scheduling_cost(x_sched_vec)
+            all_cost_components.append(cost_components)  # Store the detailed components
 
             # เพิ่ม penalty สูงมากถ้า greedy assignment ล้มเหลว (เช่น หา slot ไม่ได้)
             # (ตรวจจาก x_sched_vec ที่ได้ หรือเพิ่ม flag จาก greedy_assignment)
@@ -896,6 +1010,7 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
         out["schedules"] = np.array(
             evaluated_schedules_x
         )  # Attach all generated schedules to the output
+        out["cost_details"] = all_cost_components  # Attach all cost component dicts
 
 
 def main():
@@ -963,11 +1078,68 @@ def main():
 
         # Retrieve the stored x_vector (schedule) generated during evaluation
         x_vector = individual.get("schedules")
+        cost_details = individual.get("cost_details")  # Retrieve cost details
 
         print(f"\nSolution #{i+1}")
         print(f"  Batch Order (Permutation): {permutation}")
-        print(f"  Total Energy (from F): {energy:.2f}")
-        print(f"  Makespan (from F)    : {makespan:.2f}")
+        # print(f"  Total Energy (from F): {energy:.2f}") # This is 'cost' which includes penalties
+        # print(f"  Makespan (from F)    : {makespan:.2f}")
+
+        if cost_details:
+            print(f"  Total Cost (Objective 1) : {cost_details['total_cost']:.2f}")
+            print(
+                f"  Makespan (Objective 2)   : {cost_details['makespan_minutes']:.2f} min"
+            )
+            print(f"  --------------------------------------------------")
+            print(f"  Cost Component Details:")
+            print(
+                f"    Base IF Energy (kWh)     : {cost_details['base_if_energy_kwh']:.2f}"
+            )
+
+            num_actual_batches = NUM_BATCHES  # Assumes all batches are processed
+            if cost_details["base_if_energy_kwh"] > 0 and num_actual_batches > 0:
+                avg_if_energy_per_batch = (
+                    cost_details["base_if_energy_kwh"] / num_actual_batches
+                )
+                print(
+                    f"      -> Avg Base IF Energy/Batch (kWh): {avg_if_energy_per_batch:.2f}"
+                )
+
+            print(
+                f"    IF Holding Penalty       : {cost_details['if_holding_penalty']:.2f}"
+            )
+            # Note: To make IF Holding an energy component (kWh):
+            # 1. Define IF_STANDBY_POWER_KW = {"A": val, "B": val}
+            # 2. Modify simulate_mh_consumption_v2 to calculate actual holding time per furnace IF A and B.
+            # 3. In scheduling_cost, calculate holding_energy_kwh = (holding_mins_A/60 * standby_A_kw) + (holding_mins_B/60 * standby_B_kw)
+            # 4. Replace if_holding_penalty_cost with this holding_energy_kwh in total cost and here.
+            # For now, if IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is set to a kW value, and if total_if_holding_minutes is for one furnace type:
+            # actual_holding_energy_kwh = (total_if_holding_minutes / 60.0) * IF_HOLDING_ENERGY_PENALTY_PER_MINUTE (if it was kW)
+            # Since IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is currently 0, this part is 0.
+
+            print(
+                f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f} (Overlaps, Gaps, Breaks)"
+            )
+            print(
+                f"    MH Idle Penalty          : {cost_details['mh_idle_penalty']:.2f}"
+            )
+            print(
+                f"    MH Reheat Penalty        : {cost_details['mh_reheat_penalty']:.2f} (Placeholder)"
+            )
+            print(
+                f"    MH Overflow Penalty      : {cost_details['mh_overflow_penalty']:.2f}"
+            )
+            print(
+                f"    Unpoured Batch Penalty   : {cost_details['unpoured_batch_penalty']:.2f}"
+            )
+            print(
+                f"    MH Energy (kWh)          : {cost_details['mh_energy_kwh']:.2f} (Placeholder)"
+            )
+            print(f"  --------------------------------------------------")
+        else:
+            # Fallback if cost_details are not available for some reason
+            print(f"  Total Cost (from F)      : {energy:.2f}")
+            print(f"  Makespan (from F)        : {makespan:.2f} min")
 
         # --- Plot ตารางเวลา using the retrieved x_vector ---
         if x_vector is not None:

@@ -180,11 +180,12 @@ if __name__ == "__main__":
     # replay_episode(env, agent)
 
     # # ตัวอย่างการโหลด Checkpoint
-    # checkpoint_path = "models/dqn_final_model_6.pth"
+    # checkpoint_path = "models/dqn_final_model_10.pth"
     # env = AluminumMeltingEnvironment()
     # agent = DQNAgent.load_checkpoint(checkpoint_path, state_dim=6, action_dim=5)
 
     # # ทดสอบ Agent ที่โหลดมา
+    # agent.epsilon = 0.0  # ตั้งค่า epsilon เป็นค่าต่ำสุดก่อนเรียก replay_episode
     # replay_episode(env, agent)
 
     # # ประเมิน Agent
