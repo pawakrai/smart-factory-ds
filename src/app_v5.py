@@ -23,7 +23,7 @@ SLOT_DURATION = 5  # 1 slot = 10 นาที
 TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
 
 T_MELT = 18  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
-NUM_BATCHES = 10  # <<< DEFINE GLOBALLY HERE
+NUM_BATCHES = 13  # <<< DEFINE GLOBALLY HERE
 
 # กำหนดว่าเตาไหนใช้งานได้บ้าง
 USE_FURNACE_A = True
@@ -31,11 +31,11 @@ USE_FURNACE_B = True
 
 # --- New Constants for Advanced Simulation Logic ---
 # Penalty rate per minute for an IF holding a batch after melt completion
-IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 0  # Example value, adjust as needed
+IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 7.5  # Example value, adjust as needed
 # Very high penalty for any batch that cannot be poured by the end of simulation
 UNPOURED_BATCH_PENALTY = 1e13  # Increased penalty
 # Penalty for idle time between consecutive batches on the same IF furnace
-IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 0.5  # Example: 0.5 cost unit per minute of gap
+IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 0  # Example: 0.5 cost unit per minute of gap
 # Penalty for IF working during designated break times
 IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
     10000  # Example: 100 cost unit per minute of work in break
@@ -45,9 +45,9 @@ IF_POWER_RATING_KW = {"A": 550.0, "B": 600.0}  # เตา A = 550 kW, เตา
 
 # เตา M&H (โค้ดเดิมไว้ plot)
 MH_MAX_CAPACITY_KG = {"A": 300.0, "B": 300.0}  # ความจุสูงสุดแต่ละเตา (kg)
-MH_INITIAL_LEVEL_KG = {"A": 250.0, "B": 250.0}  # ระดับเริ่มต้น (kg)
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 3.0, "B": 2.56}  # อัตราการใช้ kg/min แต่ละเตา
-MH_EMPTY_THRESHOLD_KG = 20  # ระดับต่ำสุดที่ยอมรับได้ (kg)
+MH_INITIAL_LEVEL_KG = {"A": 200.0, "B": 250.0}  # ระดับเริ่มต้น (kg)
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
+MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
 MH_REFILL_PER_FURNACE_KG = (
     IF_BATCH_OUTPUT_KG / 2
@@ -59,8 +59,8 @@ MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
 # กำหนดช่วงเวลาพัก (นาทีตั้งแต่เริ่มวัน 0 - 1440)
 # ตัวอย่าง: 9:00-9:15 และ 12:00-13:00
 BREAK_TIMES_MINUTES = [
-    (0 * 60, 0 * 60 + 40),  # 08:00 - 08:40
-    (9 * 60, 9 * 60 + 40),  # 20:00 - 20:40
+    # (8 * 60, 8 * 60 + 40),  # 08:00 - 08:40
+    # (20 * 60, 20 * 60 + 40),  # 20:00 - 20:40
 ]
 
 # --- Plotting Config ---
@@ -71,7 +71,7 @@ MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
 furnace_y = {0: 10, 1: 25}
 height = 8
 
-SHIFT_START = 0 * 60
+SHIFT_START = 8 * 60
 
 
 def scheduling_cost(x):

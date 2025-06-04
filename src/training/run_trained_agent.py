@@ -99,7 +99,7 @@ if __name__ == "__main__":
     from src.agents.agent2 import DQNAgent  # สมมุติว่า Agent ถูกนิยามในไฟล์นี้
 
     # สร้าง Environment และ Agent
-    env = AluminumMeltingEnvironment(initial_weight_kg=300, target_temp_c=880)
+    env = AluminumMeltingEnvironment(initial_weight_kg=500, target_temp_c=900)
     checkpoint_path = "models/dqn_final_model_10.pth"
     agent = DQNAgent.load_checkpoint(checkpoint_path, state_dim=6, action_dim=5)
 
