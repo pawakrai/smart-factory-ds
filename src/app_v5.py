@@ -23,7 +23,7 @@ SLOT_DURATION = 5  # 1 slot = 10 นาที
 TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
 
 T_MELT = 18  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
-NUM_BATCHES = 13  # <<< DEFINE GLOBALLY HERE
+NUM_BATCHES = 9  # <<< DEFINE GLOBALLY HERE
 
 # กำหนดว่าเตาไหนใช้งานได้บ้าง
 USE_FURNACE_A = True
@@ -41,17 +41,14 @@ IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
     10000  # Example: 100 cost unit per minute of work in break
 )
 # Average Power Rating for each IF in kW
-IF_POWER_RATING_KW = {"A": 550.0, "B": 600.0}  # เตา A = 550 kW, เตา B = 600 kW
+IF_POWER_RATING_KW = {"A": 535.0, "B": 6000.0}  # เตา A = 550 kW, เตา B = 600 kW
 
 # เตา M&H (โค้ดเดิมไว้ plot)
-MH_MAX_CAPACITY_KG = {"A": 300.0, "B": 300.0}  # ความจุสูงสุดแต่ละเตา (kg)
-MH_INITIAL_LEVEL_KG = {"A": 200.0, "B": 250.0}  # ระดับเริ่มต้น (kg)
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
+MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
+MH_INITIAL_LEVEL_KG = {"A": 300.0, "B": 200.0}  # ระดับเริ่มต้น (kg)
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.80, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
 MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
-MH_REFILL_PER_FURNACE_KG = (
-    IF_BATCH_OUTPUT_KG / 2
-)  # ปริมาณที่เติมให้ M&H แต่ละเตาต่อ batch IF (kg)
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
 MH_IDLE_PENALTY_RATE = 0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ต่ำกว่า threshold)
 MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
@@ -62,6 +59,11 @@ BREAK_TIMES_MINUTES = [
     # (8 * 60, 8 * 60 + 40),  # 08:00 - 08:40
     # (20 * 60, 20 * 60 + 40),  # 20:00 - 20:40
 ]
+
+# +++ NEW CONFIG FOR MH FILLING PREFERENCE +++
+PREFERRED_MH_FURNACE_TO_FILL_FIRST = (
+    "B"  # Options: "A", "B", or None for default/other logic
+)
 
 # --- Plotting Config ---
 FURNACE_COLORS = {"A": "blue", "B": "green"}
@@ -410,27 +412,74 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
                 # print(f"Minute {t}: Attempting to pour Batch {batch_id_q}. Total M&H available: {total_available_mh_capacity:.1f} kg.") # Debug
                 # Sufficient total capacity, proceed with pour
 
-                pour_action_A_kg = MH_REFILL_PER_FURNACE_KG
-                pour_action_B_kg = MH_REFILL_PER_FURNACE_KG
+                # --- NEW PRIORITIZED POURING LOGIC ---
+                poured_amount_A_this_batch = 0
+                poured_amount_B_this_batch = 0
+                remaining_metal_to_distribute = IF_BATCH_OUTPUT_KG
+
+                furnaces_in_fill_order = []
+                preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
+
+                if preferred_f == "A":
+                    furnaces_in_fill_order = ["A", "B"]
+                elif preferred_f == "B":
+                    furnaces_in_fill_order = ["B", "A"]
+                else:
+                    # Default behavior if PREFERRED_MH_FURNACE_TO_FILL_FIRST is None or invalid
+                    # Fallback: try to fill the one with more space first, then the other.
+                    # For now, if not "A" or "B", let's default to A then B as a simple fallback.
+                    # print(f"Warning: PREFERRED_MH_FURNACE_TO_FILL_FIRST ('{preferred_f}') is not 'A' or 'B'. Defaulting to A then B.")
+                    furnaces_in_fill_order = ["A", "B"]
+
+                for f_id in furnaces_in_fill_order:
+                    if remaining_metal_to_distribute <= 0:
+                        break
+
+                    space_in_this_furnace = (
+                        MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
+                    )
+                    amount_to_pour_here = min(
+                        remaining_metal_to_distribute, space_in_this_furnace
+                    )
+
+                    if amount_to_pour_here > 0:
+                        if f_id == "A":
+                            poured_amount_A_this_batch = amount_to_pour_here
+                        else:  # f_id == "B"
+                            poured_amount_B_this_batch = amount_to_pour_here
+                        remaining_metal_to_distribute -= amount_to_pour_here
 
                 # Check for individual M&H overflow before adding
-                if current_level["A"] + pour_action_A_kg > MH_MAX_CAPACITY_KG["A"]:
+                if (
+                    current_level["A"] + poured_amount_A_this_batch
+                    > MH_MAX_CAPACITY_KG["A"]
+                ):
                     pour_induced_mh_overflow_penalty += (
-                        current_level["A"] + pour_action_A_kg - MH_MAX_CAPACITY_KG["A"]
+                        current_level["A"]
+                        + poured_amount_A_this_batch
+                        - MH_MAX_CAPACITY_KG["A"]
                     ) * 1  # Penalty per kg overflow
                     # print(f"Minute {t}: Batch {batch_id_q} pour caused overflow in M&H A.") # Debug
-                if current_level["B"] + pour_action_B_kg > MH_MAX_CAPACITY_KG["B"]:
+                if (
+                    current_level["B"] + poured_amount_B_this_batch
+                    > MH_MAX_CAPACITY_KG["B"]
+                ):
                     pour_induced_mh_overflow_penalty += (
-                        current_level["B"] + pour_action_B_kg - MH_MAX_CAPACITY_KG["B"]
+                        current_level["B"]
+                        + poured_amount_B_this_batch
+                        - MH_MAX_CAPACITY_KG["B"]
                     ) * 1
                     # print(f"Minute {t}: Batch {batch_id_q} pour caused overflow in M&H B.") # Debug
 
                 current_level["A"] = min(
-                    current_level["A"] + pour_action_A_kg, MH_MAX_CAPACITY_KG["A"]
+                    current_level["A"] + poured_amount_A_this_batch,
+                    MH_MAX_CAPACITY_KG["A"],
                 )
                 current_level["B"] = min(
-                    current_level["B"] + pour_action_B_kg, MH_MAX_CAPACITY_KG["B"]
+                    current_level["B"] + poured_amount_B_this_batch,
+                    MH_MAX_CAPACITY_KG["B"],
                 )
+                # --- END NEW PRIORITIZED POURING LOGIC ---
 
                 for furnace_id_mh in ["A", "B"]:
                     downtime_remaining[furnace_id_mh] = POST_POUR_DOWNTIME_MIN
@@ -915,16 +964,46 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             internal_mh_levels_kg = selected_mh_levels_before_pour
             internal_mh_downtime_remaining_min = selected_mh_downtime_before_pour
 
-            # Perform the pour
-            pour_A_kg = MH_REFILL_PER_FURNACE_KG
-            pour_B_kg = MH_REFILL_PER_FURNACE_KG
+            # --- NEW PRIORITIZED POUR LOGIC FOR GREEDY ---
+            g_poured_amount_A = 0
+            g_poured_amount_B = 0
+            g_remaining_metal = IF_BATCH_OUTPUT_KG
 
+            g_furnaces_in_fill_order = []
+            g_preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
+
+            if g_preferred_f == "A":
+                g_furnaces_in_fill_order = ["A", "B"]
+            elif g_preferred_f == "B":
+                g_furnaces_in_fill_order = ["B", "A"]
+            else:  # Fallback
+                # print(f"Greedy Warning: PREFERRED_MH_FURNACE_TO_FILL_FIRST ('{g_preferred_f}') is not 'A' or 'B'. Defaulting to A then B for pour prediction.")
+                g_furnaces_in_fill_order = ["A", "B"]
+
+            for g_f_id in g_furnaces_in_fill_order:
+                if g_remaining_metal <= 0:
+                    break
+
+                g_space_in_furnace = (
+                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
+                )
+                g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
+
+                if g_amount_to_pour > 0:
+                    if g_f_id == "A":
+                        g_poured_amount_A = g_amount_to_pour
+                    else:  # g_f_id == "B"
+                        g_poured_amount_B = g_amount_to_pour
+                    g_remaining_metal -= g_amount_to_pour
+
+            # Update internal levels (greedy doesn't track overflow penalty, just levels)
             internal_mh_levels_kg["A"] = min(
-                internal_mh_levels_kg["A"] + pour_A_kg, MH_MAX_CAPACITY_KG["A"]
+                internal_mh_levels_kg["A"] + g_poured_amount_A, MH_MAX_CAPACITY_KG["A"]
             )
             internal_mh_levels_kg["B"] = min(
-                internal_mh_levels_kg["B"] + pour_B_kg, MH_MAX_CAPACITY_KG["B"]
+                internal_mh_levels_kg["B"] + g_poured_amount_B, MH_MAX_CAPACITY_KG["B"]
             )
+            # --- END NEW PRIORITIZED POUR LOGIC FOR GREEDY ---
 
             internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
             internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
@@ -1092,30 +1171,37 @@ def main():
             )
             print(f"  --------------------------------------------------")
             print(f"  Cost Component Details:")
+            base_if_energy_kwh = cost_details["base_if_energy_kwh"]
+            if_holding_penalty_cost = cost_details["if_holding_penalty"]
+            actual_if_energy_kwh = base_if_energy_kwh + if_holding_penalty_cost
+
+            print(f"    Base IF Energy (kWh)     : {base_if_energy_kwh:.2f}")
+            print(f"    IF Holding Penalty       : {if_holding_penalty_cost:.2f}")
             print(
-                f"    Base IF Energy (kWh)     : {cost_details['base_if_energy_kwh']:.2f}"
+                f"    Actual IF Energy (Base + Holding) (kWh): {actual_if_energy_kwh:.2f}"
             )
 
             num_actual_batches = NUM_BATCHES  # Assumes all batches are processed
-            if cost_details["base_if_energy_kwh"] > 0 and num_actual_batches > 0:
-                avg_if_energy_per_batch = (
+            if (
+                actual_if_energy_kwh >= 0 and num_actual_batches > 0
+            ):  # Use actual_if_energy_kwh, allow 0
+                avg_actual_if_energy_per_batch = (
+                    actual_if_energy_kwh / num_actual_batches
+                    if num_actual_batches > 0
+                    else 0
+                )
+                print(
+                    f"      -> Avg Actual IF Energy/Batch (kWh): {avg_actual_if_energy_per_batch:.2f}"
+                )
+            elif (
+                cost_details["base_if_energy_kwh"] > 0 and num_actual_batches > 0
+            ):  # Fallback for old logic display if needed, though covered
+                avg_base_if_energy_per_batch = (
                     cost_details["base_if_energy_kwh"] / num_actual_batches
                 )
                 print(
-                    f"      -> Avg Base IF Energy/Batch (kWh): {avg_if_energy_per_batch:.2f}"
+                    f"      -> Avg Base IF Energy/Batch (kWh): {avg_base_if_energy_per_batch:.2f} (Holding penalty was zero or not included here)"
                 )
-
-            print(
-                f"    IF Holding Penalty       : {cost_details['if_holding_penalty']:.2f}"
-            )
-            # Note: To make IF Holding an energy component (kWh):
-            # 1. Define IF_STANDBY_POWER_KW = {"A": val, "B": val}
-            # 2. Modify simulate_mh_consumption_v2 to calculate actual holding time per furnace IF A and B.
-            # 3. In scheduling_cost, calculate holding_energy_kwh = (holding_mins_A/60 * standby_A_kw) + (holding_mins_B/60 * standby_B_kw)
-            # 4. Replace if_holding_penalty_cost with this holding_energy_kwh in total cost and here.
-            # For now, if IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is set to a kW value, and if total_if_holding_minutes is for one furnace type:
-            # actual_holding_energy_kwh = (total_if_holding_minutes / 60.0) * IF_HOLDING_ENERGY_PENALTY_PER_MINUTE (if it was kW)
-            # Since IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is currently 0, this part is 0.
 
             print(
                 f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f} (Overlaps, Gaps, Breaks)"
@@ -1152,7 +1238,7 @@ def main():
                 schedule = decode_schedule(x_vector)
                 if schedule:  # Ensure schedule is not empty
                     # Use makespan from F_results for the title, as it's the 'evaluated' makespan
-                    plot_title = f"HGA Schedule - Sol {i+1} (Energy: {energy:.0f}, Makespan: {makespan:.0f})"
+                    plot_title = f"HGA Schedule - Sol {i+1} (Actual IF Energy: {actual_if_energy_kwh:.0f} kWh, Total Cost: {cost_details['total_cost']:.0f}, Makespan: {cost_details['makespan_minutes']:.0f} min)"
 
                     plot_schedule_and_mh(
                         schedule,
