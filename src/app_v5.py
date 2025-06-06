@@ -23,7 +23,7 @@ SLOT_DURATION = 5  # 1 slot = 10 นาที
 TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
 
 T_MELT = 18  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
-NUM_BATCHES = 9  # <<< DEFINE GLOBALLY HERE
+NUM_BATCHES = 10  # <<< DEFINE GLOBALLY HERE
 
 # กำหนดว่าเตาไหนใช้งานได้บ้าง
 USE_FURNACE_A = True
@@ -41,12 +41,12 @@ IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
     10000  # Example: 100 cost unit per minute of work in break
 )
 # Average Power Rating for each IF in kW
-IF_POWER_RATING_KW = {"A": 535.0, "B": 6000.0}  # เตา A = 550 kW, เตา B = 600 kW
+IF_POWER_RATING_KW = {"A": 535.0, "B": 535.0}  # เตา A = 550 kW, เตา B = 600 kW
 
 # เตา M&H (โค้ดเดิมไว้ plot)
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
-MH_INITIAL_LEVEL_KG = {"A": 300.0, "B": 200.0}  # ระดับเริ่มต้น (kg)
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.80, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
+MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 200.0}  # ระดับเริ่มต้น (kg)
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
 MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
@@ -281,8 +281,9 @@ def scheduling_cost(x):
 
         if furnace_id_for_power and furnace_id_for_power in IF_POWER_RATING_KW:
             power_rating_kw = IF_POWER_RATING_KW[furnace_id_for_power]
-            melting_duration_hours = (T_MELT * SLOT_DURATION) / 60.0
-            energy_for_batch_kwh = power_rating_kw * melting_duration_hours
+            # melting_duration_hours = (T_MELT * SLOT_DURATION) / 60.0
+            # energy_for_batch_kwh = power_rating_kw * melting_duration_hours
+            energy_for_batch_kwh = power_rating_kw
             base_total_energy_if_kwh += energy_for_batch_kwh
         # else:
         # This case should ideally not happen if schedule is valid and furnaces are defined
