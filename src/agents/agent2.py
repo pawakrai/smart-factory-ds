@@ -19,13 +19,15 @@ class DQNAgent:
 
         # Deeper network for better feature extraction
         self.model = nn.Sequential(
-            nn.Linear(state_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, action_dim),
+            nn.Linear(state_dim, 512),  # Layer 0: รับ state (6 ค่า) เข้า 512 neurons
+            nn.ReLU(),  # Layer 1
+            nn.Linear(512, 256),  # Layer 2: จาก 512 ไป 256 neurons
+            nn.ReLU(),  # Layer 3
+            nn.Linear(256, 128),  # Layer 4: จาก 256 ไป 128 neurons
+            nn.ReLU(),  # Layer 5
+            nn.Linear(
+                128, action_dim
+            ),  # Layer 6: จาก 128 neurons ออกเป็น Q-value ของแต่ละ action (5 ค่า)
         )
 
         # Target network for stable learning
