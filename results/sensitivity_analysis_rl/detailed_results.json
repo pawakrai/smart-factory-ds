@@ -1,0 +1,230 @@
+{
+  "learning_rate": [
+    {
+      "parameter": "learning_rate",
+      "value": 0.0001,
+      "final_reward": 96.11177301422104,
+      "convergence_episodes": 605.2634395745644,
+      "training_stability": 0.0815187307030794,
+      "final_accuracy": 0.7992948349851938,
+      "training_time": 70.2747113842746
+    },
+    {
+      "parameter": "learning_rate",
+      "value": 0.0005,
+      "final_reward": 99.36552547344981,
+      "convergence_episodes": 498.5068637610972,
+      "training_stability": 0.10004740347506003,
+      "final_accuracy": 0.8483813076485243,
+      "training_time": 59.77551142470708
+    },
+    {
+      "parameter": "learning_rate",
+      "value": 0.001,
+      "final_reward": 103.26195616327763,
+      "convergence_episodes": 451.1535871213662,
+      "training_stability": 0.1334695536489454,
+      "final_accuracy": 0.8748417157100824,
+      "training_time": 54.95150214550962
+    },
+    {
+      "parameter": "learning_rate",
+      "value": 0.005,
+      "final_reward": 90.27786825372307,
+      "convergence_episodes": 393.65407191115594,
+      "training_stability": 0.18199464579254093,
+      "final_accuracy": 0.7693818286788969,
+      "training_time": 49.63457227436466
+    }
+  ],
+  "gamma": [
+    {
+      "parameter": "gamma",
+      "value": 0.9,
+      "final_reward": 84.51816892899652,
+      "convergence_episodes": 560.3312256174443,
+      "training_stability": 0.10940712914319764,
+      "final_accuracy": 0.771027046401851,
+      "training_time": 64.69904959723492
+    },
+    {
+      "parameter": "gamma",
+      "value": 0.95,
+      "final_reward": 95.63289198499474,
+      "convergence_episodes": 521.7747499800413,
+      "training_stability": 0.10102883361111191,
+      "final_accuracy": 0.8269632590109263,
+      "training_time": 62.016401490077214
+    },
+    {
+      "parameter": "gamma",
+      "value": 0.99,
+      "final_reward": 99.36552547344981,
+      "convergence_episodes": 498.5068637610972,
+      "training_stability": 0.10004740347506003,
+      "final_accuracy": 0.8483813076485243,
+      "training_time": 59.77551142470708
+    },
+    {
+      "parameter": "gamma",
+      "value": 0.995,
+      "final_reward": 101.99712791653019,
+      "convergence_episodes": 536.5906070414675,
+      "training_stability": 0.09017926780048088,
+      "final_accuracy": 0.8527837458002919,
+      "training_time": 62.237714049969014
+    }
+  ],
+  "epsilon_decay": [
+    {
+      "parameter": "epsilon_decay",
+      "value": 0.995,
+      "final_reward": 99.70391857510285,
+      "convergence_episodes": 500.9911129809294,
+      "training_stability": 0.10245067095067432,
+      "final_accuracy": 0.8448527887073239,
+      "training_time": 59.421065926470206
+    },
+    {
+      "parameter": "epsilon_decay",
+      "value": 0.999,
+      "final_reward": 99.36552547344981,
+      "convergence_episodes": 498.5068637610972,
+      "training_stability": 0.10004740347506003,
+      "final_accuracy": 0.8483813076485243,
+      "training_time": 59.77551142470708
+    },
+    {
+      "parameter": "epsilon_decay",
+      "value": 0.9995,
+      "final_reward": 100.85624501368423,
+      "convergence_episodes": 488.39738355089884,
+      "training_stability": 0.10127711598053868,
+      "final_accuracy": 0.8557405892891782,
+      "training_time": 59.62429737853748
+    },
+    {
+      "parameter": "epsilon_decay",
+      "value": 0.9999,
+      "final_reward": 100.76428230938254,
+      "convergence_episodes": 504.9189759258966,
+      "training_stability": 0.10208509670394462,
+      "final_accuracy": 0.8487885639056236,
+      "training_time": 59.477754676260254
+    }
+  ],
+  "batch_size": [
+    {
+      "parameter": "batch_size",
+      "value": 32,
+      "final_reward": 99.92126825292912,
+      "convergence_episodes": 499.5972868143057,
+      "training_stability": 0.10329030378869733,
+      "final_accuracy": 0.852287904761085,
+      "training_time": 60.13359747911594
+    },
+    {
+      "parameter": "batch_size",
+      "value": 64,
+      "final_reward": 99.36552547344981,
+      "convergence_episodes": 498.5068637610972,
+      "training_stability": 0.10004740347506003,
+      "final_accuracy": 0.8483813076485243,
+      "training_time": 59.77551142470708
+    },
+    {
+      "parameter": "batch_size",
+      "value": 128,
+      "final_reward": 98.93416582534776,
+      "convergence_episodes": 506.0624292278702,
+      "training_stability": 0.09790132263759091,
+      "final_accuracy": 0.8497688103488653,
+      "training_time": 60.45037218379399
+    },
+    {
+      "parameter": "batch_size",
+      "value": 256,
+      "final_reward": 100.04244086144809,
+      "convergence_episodes": 498.9709837824663,
+      "training_stability": 0.10015508945569163,
+      "final_accuracy": 0.8471329418976278,
+      "training_time": 59.74131059158241
+    }
+  ],
+  "hidden_size": [
+    {
+      "parameter": "hidden_size",
+      "value": 64,
+      "final_reward": 99.57246624138249,
+      "convergence_episodes": 494.3854947852041,
+      "training_stability": 0.09651626085716539,
+      "final_accuracy": 0.8555525645621965,
+      "training_time": 60.28379395059185
+    },
+    {
+      "parameter": "hidden_size",
+      "value": 128,
+      "final_reward": 99.36552547344981,
+      "convergence_episodes": 498.5068637610972,
+      "training_stability": 0.10004740347506003,
+      "final_accuracy": 0.8483813076485243,
+      "training_time": 59.77551142470708
+    },
+    {
+      "parameter": "hidden_size",
+      "value": 256,
+      "final_reward": 99.57762365551001,
+      "convergence_episodes": 510.7342171482017,
+      "training_stability": 0.09789228682766835,
+      "final_accuracy": 0.8499411420365431,
+      "training_time": 59.65975440064921
+    },
+    {
+      "parameter": "hidden_size",
+      "value": 512,
+      "final_reward": 101.02276590397362,
+      "convergence_episodes": 502.5626561462661,
+      "training_stability": 0.10129346816717132,
+      "final_accuracy": 0.8578864937140867,
+      "training_time": 60.671136903079486
+    }
+  ],
+  "target_update_freq": [
+    {
+      "parameter": "target_update_freq",
+      "value": 100,
+      "final_reward": 99.06425075570931,
+      "convergence_episodes": 493.1207237013135,
+      "training_stability": 0.09800525664629106,
+      "final_accuracy": 0.8497293031848118,
+      "training_time": 59.78388188060262
+    },
+    {
+      "parameter": "target_update_freq",
+      "value": 500,
+      "final_reward": 99.95547011764565,
+      "convergence_episodes": 497.37942655774845,
+      "training_stability": 0.09885838623055607,
+      "final_accuracy": 0.8448648199737357,
+      "training_time": 59.97760789456356
+    },
+    {
+      "parameter": "target_update_freq",
+      "value": 1000,
+      "final_reward": 99.36552547344981,
+      "convergence_episodes": 498.5068637610972,
+      "training_stability": 0.10004740347506003,
+      "final_accuracy": 0.8483813076485243,
+      "training_time": 59.77551142470708
+    },
+    {
+      "parameter": "target_update_freq",
+      "value": 2000,
+      "final_reward": 100.245311981803,
+      "convergence_episodes": 503.5646892519847,
+      "training_stability": 0.10751411909631547,
+      "final_accuracy": 0.8580669551039544,
+      "training_time": 60.127867342455914
+    }
+  ]
+}
