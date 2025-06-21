@@ -12,7 +12,7 @@ from pymoo.operators.mutation.pm import PolynomialMutation
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
-from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.algorithms.soo.nonconvex.ga import GA
 import random
 
 
@@ -1053,7 +1053,7 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
     def __init__(self, num_batches_hga=NUM_BATCHES):  # Renamed num_batches
         super().__init__(
             n_var=num_batches_hga,
-            n_obj=2,
+            n_obj=1,  # <-- CHANGE: Set to 1 objective (minimum cost)
             n_constr=0,
             xl=0,
             xu=num_batches_hga - 1,  # Use num_batches_hga
@@ -1061,9 +1061,7 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
 
     def _evaluate(self, P, out, *args, **kwargs):
         # P คือ population ณ generation ปัจจุบัน (array of permutations)
-        results_f = []  # เก็บ objective values [energy, makespan]
-        evaluated_schedules_x = []  # Store x_schedule_vector for each individual in P
-        all_cost_components = []  # Store cost_components for each individual
+        results_f = []  # เก็บ objective values [cost]
 
         # วนลูปแต่ละ Permutation ใน Population
         for batch_order_perm in P:  # Renamed batch_order
@@ -1071,105 +1069,92 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
             x_sched_vec = greedy_assignment(
                 batch_order_perm, num_batches=self.n_var
             )  # Renamed x
-            evaluated_schedules_x.append(x_sched_vec)  # Store the generated schedule
 
-            # 2. คำนวณ Objectives โดยใช้ scheduling_cost เดิม
-            energy, makespan, cost_components = scheduling_cost(x_sched_vec)
-            all_cost_components.append(cost_components)  # Store the detailed components
+            # 2. คำนวณ Objectives โดยใช้ scheduling_cost
+            cost, makespan, cost_components = scheduling_cost(x_sched_vec)
 
             # เพิ่ม penalty สูงมากถ้า greedy assignment ล้มเหลว (เช่น หา slot ไม่ได้)
             # (ตรวจจาก x_sched_vec ที่ได้ หรือเพิ่ม flag จาก greedy_assignment)
             # ตัวอย่าง: ตรวจสอบว่า makespan ดูสมเหตุสมผลไหม
             if makespan > TOTAL_SLOTS * SLOT_DURATION * 1.1:  # ถ้า makespan ยาวผิดปกติ
-                energy += 1e15  # ลงโทษหนักๆ
+                cost += 1e15  # ลงโทษหนักๆ
 
-            results_f.append([energy, makespan])
+            results_f.append(
+                [cost]
+            )  # <-- CHANGE: Append only the single cost objective
 
         # กำหนดค่า Objectives ให้กับ Population
         out["F"] = np.array(results_f)
-        out["schedules"] = np.array(
-            evaluated_schedules_x
-        )  # Attach all generated schedules to the output
-        out["cost_details"] = all_cost_components  # Attach all cost component dicts
 
 
 def main():
-    # ===== Run HGA using NSGA-II =====
-    problem = HGAProblem(NUM_BATCHES)  # <--- ใช้ HGAProblem
+    # ===== Run Standard GA for Single-Objective Optimization =====
+    problem = HGAProblem(NUM_BATCHES)  # <--- HGAProblem is now Single-Objective
 
-    # --- Operators สำหรับ Permutation ---
+    # --- Operators สำหรับ Permutation (still correct for this problem) ---
     sampling = PermutationRandomSampling()
     crossover = OrderCrossover()
     mutation = InversionMutation()
 
-    algorithm = NSGA2(
-        pop_size=50,
-        sampling=sampling,  # <--- ใช้ Permutation Sampling
-        crossover=crossover,  # <--- ใช้ Permutation Crossover
-        mutation=mutation,  # <--- ใช้ Permutation Mutation
-        eliminate_duplicates=True,  # อาจจะต้อง custom duplicate detection สำหรับ permutation ถ้าจำเป็น
+    algorithm = GA(  # <-- CHANGE: Use standard GA
+        pop_size=150,
+        sampling=sampling,
+        crossover=crossover,
+        mutation=mutation,
+        eliminate_duplicates=True,
     )
 
     termination = get_termination("n_gen", 100)  # หรือเกณฑ์อื่นๆ
 
-    print("Running HGA optimization...")
+    print("Running Standard GA optimization...")
     result = minimize(
-        problem, algorithm, termination, seed=42, verbose=True, save_history=False
-    )  # ปิด history ถ้าไม่ได้ใช้ เพื่อประหยัด memory
+        problem,
+        algorithm,
+        termination,
+        seed=42,
+        verbose=True,
+        save_history=True,  # <-- CHANGE: Enable history saving for plotting
+    )
 
     print("Optimization finished.")
 
-    # ===== Plot Result (Pareto Front) =====
-    F_results = result.F  # Renamed F to F_results Objective values [energy, makespan]
-    plt.figure(figsize=(10, 6))
-    plt.scatter(
-        F_results[:, 0],
-        F_results[:, 1],
-        c="red",
-        s=40,
-        edgecolors="k",
-        label="HGA Pareto Front",
-    )  # เปลี่ยนสี/label
-    plt.xlabel("Total Energy Consumption")
-    plt.ylabel("Makespan (minutes)")
-    plt.title("HGA Pareto Front for Melting Schedule")
-    plt.grid(True)
-    plt.legend()
-    plt.show()
+    # ===== NEW: Plot Cost Convergence =====
+    # Extract the best cost from each generation in the history
+    if result.history:
+        best_cost_per_gen = [np.min(gen.opt.get("F")) for gen in result.history]
 
-    # ===== แสดงผลลัพธ์และ Plot ตารางเวลาสำหรับ Solutions ที่ดีที่สุด =====
+        plt.figure(figsize=(12, 6))
+        plt.plot(
+            np.arange(len(best_cost_per_gen)),
+            best_cost_per_gen,
+            marker="o",
+            linestyle="-",
+        )
+        plt.title("Cost Convergence Over Generations (Greedy Assignment)")
+        plt.xlabel("Generation")
+        plt.ylabel("Best Cost Found")
+        plt.grid(True)
+        plt.show()
+
+    # ===== แสดงผลลัพธ์และ Plot ตารางเวลาสำหรับ Solution ที่ดีที่สุด =====
     print("\nProcessing results...")
 
-    opt_population = (
-        result.opt
-    )  # Population object containing non-dominated individuals
-
-    num_to_show = min(5, len(opt_population) if opt_population is not None else 0)
-
-    if num_to_show == 0:
-        print("\nNo solutions found in the Pareto front to display.")
+    if result.X is None:
+        print("\nNo solution found.")
     else:
-        print(f"\nShowing top {num_to_show} (up to 5) solutions from the Pareto front:")
+        print(f"\nFound Best Solution:")
+        best_permutation = result.X
+        best_cost_value = result.F[0]
 
-    for i in range(num_to_show):
-        individual = opt_population[i]
-        permutation = individual.X  # The permutation (decision variables)
-        energy, makespan = individual.F  # The objective values
+        # Recalculate all details for the single best solution
+        x_vector = greedy_assignment(best_permutation, num_batches=NUM_BATCHES)
+        final_cost, final_makespan, cost_details = scheduling_cost(x_vector)
 
-        # Retrieve the stored x_vector (schedule) generated during evaluation
-        x_vector = individual.get("schedules")
-        cost_details = individual.get("cost_details")  # Retrieve cost details
-
-        print(f"\nSolution #{i+1}")
-        print(f"  Batch Order (Permutation): {permutation}")
-        # print(f"  Total Energy (from F): {energy:.2f}") # This is 'cost' which includes penalties
-        # print(f"  Makespan (from F)    : {makespan:.2f}")
+        print(f"  Best Permutation: {best_permutation}")
+        print(f"  Best Cost (Objective): {best_cost_value:.2f}")
 
         if cost_details:
-            print(f"  Total Cost (Objective 1) : {cost_details['total_cost']:.2f}")
-            print(
-                f"  Makespan (Objective 2)   : {cost_details['makespan_minutes']:.2f} min"
-            )
+            print(f"  Makespan: {cost_details['makespan_minutes']:.2f} min")
             print(f"  --------------------------------------------------")
             print(f"  Cost Component Details:")
             base_if_energy_kwh = cost_details["base_if_energy_kwh"]
@@ -1194,15 +1179,6 @@ def main():
                 print(
                     f"      -> Avg Actual IF Energy/Batch (kWh): {avg_actual_if_energy_per_batch:.2f}"
                 )
-            elif (
-                cost_details["base_if_energy_kwh"] > 0 and num_actual_batches > 0
-            ):  # Fallback for old logic display if needed, though covered
-                avg_base_if_energy_per_batch = (
-                    cost_details["base_if_energy_kwh"] / num_actual_batches
-                )
-                print(
-                    f"      -> Avg Base IF Energy/Batch (kWh): {avg_base_if_energy_per_batch:.2f} (Holding penalty was zero or not included here)"
-                )
 
             print(
                 f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f} (Overlaps, Gaps, Breaks)"
@@ -1223,24 +1199,16 @@ def main():
                 f"    MH Energy (kWh)          : {cost_details['mh_energy_kwh']:.2f} (Placeholder)"
             )
             print(f"  --------------------------------------------------")
-        else:
-            # Fallback if cost_details are not available for some reason
-            print(f"  Total Cost (from F)      : {energy:.2f}")
-            print(f"  Makespan (from F)        : {makespan:.2f} min")
 
-        # --- Plot ตารางเวลา using the retrieved x_vector ---
+        # --- Plot the schedule for the best solution ---
         if x_vector is not None:
-            print(f"  Retrieved Schedule Vec (x): {np.round(x_vector, 2)}")
-            # Check if the schedule vector indicates any valid scheduling attempt
-            # (e.g., not all default -1 if greedy_assignment could return that for full failure)
-            # The current greedy_assignment assigns TOTAL_SLOTS for fallback.
-            # decode_schedule handles clamping.
             try:
                 schedule = decode_schedule(x_vector)
                 if schedule:  # Ensure schedule is not empty
-                    # Use makespan from F_results for the title, as it's the 'evaluated' makespan
-                    plot_title = f"HGA Schedule - Sol {i+1} (Actual IF Energy: {actual_if_energy_kwh:.0f} kWh, Total Cost: {cost_details['total_cost']:.0f}, Makespan: {cost_details['makespan_minutes']:.0f} min)"
-
+                    plot_title = (
+                        f"Standard GA - Best Schedule Found\n"
+                        f"Total Cost: {best_cost_value:.0f}, Makespan: {final_makespan:.0f} min"
+                    )
                     plot_schedule_and_mh(
                         schedule,
                         title=plot_title,
@@ -1252,13 +1220,13 @@ def main():
                         "  Could not decode schedule for plotting (empty or invalid schedule returned from evaluation)."
                     )
             except Exception as e:
-                print(f"  Error plotting schedule for solution {i+1}: {e}")
+                print(f"  Error plotting schedule for solution: {e}")
                 import traceback
 
                 print(traceback.format_exc())
         else:
             print(
-                f"  Could not retrieve schedule vector (x) for plotting for solution {i+1} (x_vector is None)."
+                f"  Could not retrieve schedule vector (x) for plotting (x_vector is None)."
             )
 
 
