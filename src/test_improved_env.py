@@ -132,21 +132,8 @@ def create_simulation_plots(
     # Temperature vs Time
     axes[0, 0].plot(time_history, temp_history, "r-", linewidth=2, label="Simulated")
     # เพิ่มข้อมูลจริงจากตาราง (ตัวอย่าง)
-    real_times = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91]
-    real_temps = [
-        892.1,
-        893.3,
-        894.3,
-        895.2,
-        896.0,
-        896.8,
-        897.5,
-        898.1,
-        898.7,
-        899.2,
-        899.7,
-        900.0,
-    ]
+    real_times = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
+    real_temps = [676, 698, 735, 759, 784, 809, 820, 845, 863, 888, 910]
     axes[0, 0].plot(
         real_times, real_temps, "bo-", linewidth=2, label="Real Data", alpha=0.7
     )

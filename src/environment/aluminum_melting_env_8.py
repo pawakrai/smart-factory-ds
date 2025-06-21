@@ -139,11 +139,13 @@ class AluminumMeltingEnvironment:
 
         # 1. คำนวณพลังงานเข้า (Q_input) - ปรับ efficiency ตามช่วงเวลา
         if current_minute < 30:
-            efficiency_factor = 0.45  # ช่วงแรกประสิทธิภาพต่ำ
+            efficiency_factor = 0.25  # ช่วงแรกประสิทธิภาพต่ำ
         elif current_minute < 60:
             efficiency_factor = 0.65  # ช่วงกลางประสิทธิภาพดี
+        elif current_minute < 80:
+            efficiency_factor = 0.15  # วงหลังลดลงเพราะมี scrap
         else:
-            efficiency_factor = 0.55  # ช่วงหลังลดลงเพราะมี scrap
+            efficiency_factor = 0.80  # ช่วงท้ายระสิทธิภาพดีมาก
 
         Q_input = self.state["power"] * 1000 * efficiency_factor  # (W)
 
@@ -154,7 +156,7 @@ class AluminumMeltingEnvironment:
         elif self.state["temperature"] < 700:
             h = 18.0  # W/m²·K - เพิ่มขึ้นเมื่ออุณหภูมิสูง
         else:
-            h = 25.0  # W/m²·K - สูงสุดในช่วงอุณหภูมิสูง
+            h = 20.0  # W/m²·K - สูงสุดในช่วงอุณหภูมิสูง
 
         A = 3.5  # m² - ปรับลดพื้นที่ผิว
         Q_conv = h * A * (self.state["temperature"] - self.ambient_temp)
@@ -180,7 +182,7 @@ class AluminumMeltingEnvironment:
         elif self.state["temperature"] < 660:  # ใกล้จุดหลอม
             effective_specific_heat = 1400  # เพิ่มขึ้นมากเนื่องจาก latent heat
         else:
-            effective_specific_heat = 1200  # ลดลงหลังจากหลอมแล้ว
+            effective_specific_heat = 1000  # ลดลงหลังจากหลอมแล้ว
 
         basic_delta_T = (net_heat * self.dt) / (m * effective_specific_heat)
 
