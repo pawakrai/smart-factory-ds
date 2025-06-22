@@ -13,6 +13,13 @@ from datetime import datetime
 import itertools
 from multiprocessing import Pool
 import subprocess
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
+import copy
+from collections import deque
+import time
 
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,14 +27,19 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Import custom modules
+from src.environment.aluminum_melting_env_4 import AluminumMeltingEnvironment
+from src.agents.agent2 import DQNAgent
+
 
 class RLSensitivityAnalyzer:
     """
     Comprehensive sensitivity analysis for RL hyperparameters
     """
 
-    def __init__(self, output_dir="results/sensitivity_analysis_rl"):
+    def __init__(self, output_dir="results/sensitivity_analysis_rl", use_real_training=True):
         self.output_dir = output_dir
+        self.use_real_training = use_real_training
         os.makedirs(output_dir, exist_ok=True)
 
         # Define parameter ranges for sensitivity analysis
@@ -48,7 +60,7 @@ class RLSensitivityAnalyzer:
             "batch_size": 64,
             "hidden_size": 128,
             "target_update_freq": 1000,
-            "episodes": 1000,
+            "episodes": 200 if use_real_training else 1000,  # Fewer episodes for real training
             "max_steps_per_episode": 500,
         }
 
@@ -119,7 +131,7 @@ class RLSensitivityAnalyzer:
 
     def _run_training_with_config(self, config):
         """
-        Run training with specific configuration and return metrics
+        Run training (real or simulated) with specific configuration and return metrics
 
         Args:
             config: Dictionary with training parameters
@@ -127,22 +139,134 @@ class RLSensitivityAnalyzer:
         Returns:
             Dictionary with training metrics
         """
-        # This is a placeholder for actual training implementation
-        # In practice, you would:
-        # 1. Create environment with config
-        # 2. Initialize agent with config
-        # 3. Run training
-        # 4. Extract metrics
+        if self.use_real_training:
+            return self._run_real_training(config)
+        else:
+            return self._simulate_training_metrics(config)
+    
+    def _run_real_training(self, config):
+        """
+        Run REAL training with specific configuration and return metrics
 
-        # For demonstration, we'll use synthetic data based on realistic parameter effects
-        metrics = self._simulate_training_metrics(config)
+        Args:
+            config: Dictionary with training parameters
 
+        Returns:
+            Dictionary with training metrics
+        """
+        print(f"Starting real training with config: {config}")
+        
+        # Create environment
+        env = AluminumMeltingEnvironment()
+        
+        # Create agent with custom parameters
+        agent = DQNAgent(state_dim=7, action_dim=2)
+        
+        # Apply configuration to agent
+        agent.epsilon = 1.0  # Always start with full exploration
+        agent.epsilon_min = 0.01
+        agent.epsilon_decay = config.get('epsilon_decay', 0.999)
+        agent.batch_size = config.get('batch_size', 64)
+        agent.gamma = config.get('gamma', 0.99)
+        agent.target_update_freq = config.get('target_update_freq', 1000)
+        
+        # Recreate optimizer with new learning rate
+        learning_rate = config.get('learning_rate', 0.0005)
+        agent.optimizer = torch.optim.Adam(agent.model.parameters(), lr=learning_rate)
+        
+        # Recreate model with custom hidden size if needed
+        hidden_size = config.get('hidden_size', 128)
+        if hidden_size != 128:  # Default is 128
+            agent.model = nn.Sequential(
+                nn.Linear(7, hidden_size),
+                nn.ReLU(),
+                nn.Linear(hidden_size, hidden_size//2),
+                nn.ReLU(),
+                nn.Linear(hidden_size//2, hidden_size//4),
+                nn.ReLU(),
+                nn.Linear(hidden_size//4, 2),
+            )
+            agent.target_model = copy.deepcopy(agent.model)
+            agent.optimizer = torch.optim.Adam(agent.model.parameters(), lr=learning_rate)
+        
+        # Training parameters
+        episodes = config.get('episodes', 200)  # Reduced for sensitivity analysis
+        max_steps_per_episode = config.get('max_steps_per_episode', 500)
+        
+        # Training metrics tracking
+        episode_rewards = []
+        episode_lengths = []
+        episode_losses = []
+        convergence_threshold = -50  # Define when we consider the model "converged"
+        convergence_episode = episodes  # Default to max episodes if no convergence
+        
+        start_time = time.time()
+        
+        # Training loop
+        for episode in range(episodes):
+            state = env.reset()
+            done = False
+            total_reward = 0.0
+            steps = 0
+            losses = []
+            
+            while not done and steps < max_steps_per_episode:
+                steps += 1
+                
+                # Select action
+                action = agent.select_action(state)
+                next_state, reward, done = env.step(action)
+                
+                # Update agent
+                loss = agent.update(state, action, reward, next_state, done)
+                if loss is not None:
+                    losses.append(loss)
+                
+                state = next_state
+                total_reward += reward
+            
+            # Record episode metrics
+            episode_rewards.append(total_reward)
+            episode_lengths.append(steps)
+            avg_loss = np.mean(losses) if losses else 0
+            episode_losses.append(avg_loss)
+            
+            # Check for convergence (if recent average reward is above threshold)
+            if episode >= 50:  # Start checking after 50 episodes
+                recent_rewards = episode_rewards[-50:]  # Last 50 episodes
+                if np.mean(recent_rewards) >= convergence_threshold and convergence_episode == episodes:
+                    convergence_episode = episode + 1
+            
+            # Progress logging every 25 episodes
+            if (episode + 1) % 25 == 0:
+                recent_avg = np.mean(episode_rewards[-25:]) if len(episode_rewards) >= 25 else np.mean(episode_rewards)
+                print(f"  Episode {episode+1}/{episodes}, Recent Avg Reward: {recent_avg:.2f}, Epsilon: {agent.epsilon:.3f}")
+        
+        training_time = (time.time() - start_time) / 60  # Convert to minutes
+        
+        # Calculate final metrics
+        final_reward = np.mean(episode_rewards[-20:]) if len(episode_rewards) >= 20 else np.mean(episode_rewards)
+        training_stability = np.std(episode_rewards[-50:]) if len(episode_rewards) >= 50 else np.std(episode_rewards)
+        final_accuracy = max(0.0, min(1.0, (final_reward + 100) / 100))  # Normalize reward to 0-1 accuracy scale
+        
+        metrics = {
+            "final_reward": final_reward,
+            "convergence_episodes": convergence_episode,
+            "training_stability": training_stability,
+            "final_accuracy": final_accuracy,
+            "training_time": training_time,
+            "all_rewards": episode_rewards,
+            "all_losses": episode_losses
+        }
+        
+        print(f"  Training completed - Final reward: {final_reward:.2f}, Time: {training_time:.1f}min")
+        
         return metrics
 
     def _simulate_training_metrics(self, config):
         """
         Simulate training metrics based on parameter configuration
-        This would be replaced with actual training in production
+        This is a fast approximation for testing purposes
         """
         # Base performance
         base_reward = 100.0
@@ -153,65 +277,17 @@ class RLSensitivityAnalyzer:
 
         # Parameter effects (simplified modeling)
         lr_effect = {
-            0.0001: {
-                "reward": -5,
-                "episodes": +100,
-                "stability": -0.02,
-                "accuracy": -0.05,
-                "time": +10,
-            },
-            0.0005: {
-                "reward": 0,
-                "episodes": 0,
-                "stability": 0,
-                "accuracy": 0,
-                "time": 0,
-            },
-            0.001: {
-                "reward": +3,
-                "episodes": -50,
-                "stability": +0.03,
-                "accuracy": +0.02,
-                "time": -5,
-            },
-            0.005: {
-                "reward": -10,
-                "episodes": -100,
-                "stability": +0.08,
-                "accuracy": -0.08,
-                "time": -10,
-            },
+            0.0001: {"reward": -5, "episodes": +100, "stability": -0.02, "accuracy": -0.05, "time": +10},
+            0.0005: {"reward": 0, "episodes": 0, "stability": 0, "accuracy": 0, "time": 0},
+            0.001: {"reward": +3, "episodes": -50, "stability": +0.03, "accuracy": +0.02, "time": -5},
+            0.005: {"reward": -10, "episodes": -100, "stability": +0.08, "accuracy": -0.08, "time": -10},
         }
 
         gamma_effect = {
-            0.90: {
-                "reward": -15,
-                "episodes": +50,
-                "stability": +0.01,
-                "accuracy": -0.08,
-                "time": +5,
-            },
-            0.95: {
-                "reward": -5,
-                "episodes": +20,
-                "stability": 0,
-                "accuracy": -0.03,
-                "time": +2,
-            },
-            0.99: {
-                "reward": 0,
-                "episodes": 0,
-                "stability": 0,
-                "accuracy": 0,
-                "time": 0,
-            },
-            0.995: {
-                "reward": +2,
-                "episodes": +30,
-                "stability": -0.01,
-                "accuracy": +0.01,
-                "time": +3,
-            },
+            0.90: {"reward": -15, "episodes": +50, "stability": +0.01, "accuracy": -0.08, "time": +5},
+            0.95: {"reward": -5, "episodes": +20, "stability": 0, "accuracy": -0.03, "time": +2},
+            0.99: {"reward": 0, "episodes": 0, "stability": 0, "accuracy": 0, "time": 0},
+            0.995: {"reward": +2, "episodes": +30, "stability": -0.01, "accuracy": +0.01, "time": +3},
         }
 
         # Add parameter effects
@@ -231,15 +307,9 @@ class RLSensitivityAnalyzer:
 
         metrics = {
             "final_reward": base_reward + effects["reward"] + noise[0] * 5,
-            "convergence_episodes": max(
-                100, base_episodes + effects["episodes"] + noise[1] * 50
-            ),
-            "training_stability": max(
-                0.01, base_stability + effects["stability"] + noise[2] * 0.02
-            ),
-            "final_accuracy": max(
-                0.5, min(1.0, base_accuracy + effects["accuracy"] + noise[3] * 0.05)
-            ),
+            "convergence_episodes": max(100, base_episodes + effects["episodes"] + noise[1] * 50),
+            "training_stability": max(0.01, base_stability + effects["stability"] + noise[2] * 0.02),
+            "final_accuracy": max(0.5, min(1.0, base_accuracy + effects["accuracy"] + noise[3] * 0.05)),
             "training_time": max(10, base_time + effects["time"] + noise[4] * 5),
         }
 
