@@ -17,7 +17,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
-    from src.environment.aluminum_melting_env_7 import AluminumMeltingEnvironment
+    from src.environment.aluminum_melting_env_8 import AluminumMeltingEnvironment
     from src.agents.agent2 import DQNAgent
     from src.training.run_trained_agent import run_episode_and_plot
 
@@ -32,7 +32,7 @@ class RLModelValidator:
     Comprehensive validation framework for RL models
     """
 
-    def __init__(self, model_path, state_dim=6, action_dim=5):
+    def __init__(self, model_path, state_dim=7, action_dim=5):
         self.model_path = model_path
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -424,7 +424,7 @@ def main():
     print("Starting RL Model Validation...")
 
     # Configuration
-    MODEL_PATH = "models/dqn_final_model_10.pth"
+    MODEL_PATH = "models/dqn_final_model_11.pth"
 
     # Initialize validator
     validator = RLModelValidator(MODEL_PATH)
@@ -447,20 +447,20 @@ def main():
     baseline_data = [
         {
             "scenario": "500kg_900C",
-            "energy_consumption": 565.3,
-            "melting_time": 90,
+            "energy_consumption": 578.39,
+            "melting_time": 110,
             "temp_accuracy": 95.0,
         },
         {
             "scenario": "400kg_900C",
-            "energy_consumption": 450.0,  # Estimated
-            "melting_time": 75,  # Estimated
+            "energy_consumption": 560.0,  # Estimated
+            "melting_time": 90,  # Estimated
             "temp_accuracy": 95.0,
         },
         {
             "scenario": "500kg_850C",
-            "energy_consumption": 420.0,  # Estimated
-            "melting_time": 70,  # Estimated
+            "energy_consumption": 570.0,  # Estimated
+            "melting_time": 92,  # Estimated
             "temp_accuracy": 95.0,
         },
     ]

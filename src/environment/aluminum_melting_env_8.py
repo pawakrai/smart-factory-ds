@@ -9,7 +9,7 @@ class AluminumMeltingEnvironment:
         self.current_mass = initial_weight_kg  # kg - น้ำหนักปัจจุบัน
         self.max_capacity = 500  # kg - ความจุสูงสุด
         self.ambient_temp = 25  # °C
-        self.max_temp = 900  # °C
+        self.max_temp = 1000  # °C
         self.target_temp = target_temp_c  # Target temperature
 
         # Scrap addition parameters
@@ -90,13 +90,13 @@ class AluminumMeltingEnvironment:
             if len(self.scrap_additions) == 0 or time_since_last_scrap >= 5 * 60:
                 # คำนวณน้ำหนัก scrap ที่จะเพิ่ม
                 if len(self.scrap_additions) == 0:
-                    scrap_weight = np.random.uniform(70, 90)  # รอบแรก
+                    scrap_weight = np.random.uniform(40, 70)  # รอบแรก
                 elif len(self.scrap_additions) == 1:
-                    scrap_weight = np.random.uniform(60, 80)  # รอบสอง
+                    scrap_weight = np.random.uniform(50, 80)  # รอบสอง
                 else:
                     # รอบสาม - เพิ่มให้ใกล้เคียง 500 kg
                     remaining_capacity = self.max_capacity - self.current_mass
-                    scrap_weight = min(remaining_capacity, np.random.uniform(50, 70))
+                    scrap_weight = min(remaining_capacity, np.random.uniform(40, 70))
 
                 # ตรวจสอบไม่ให้เกินความจุสูงสุด
                 if self.current_mass + scrap_weight <= self.max_capacity:
@@ -145,7 +145,7 @@ class AluminumMeltingEnvironment:
         elif current_minute < 80:
             efficiency_factor = 0.15  # วงหลังลดลงเพราะมี scrap
         else:
-            efficiency_factor = 0.80  # ช่วงท้ายระสิทธิภาพดีมาก
+            efficiency_factor = 0.90  # ช่วงท้ายระสิทธิภาพดีมาก
 
         Q_input = self.state["power"] * 1000 * efficiency_factor  # (W)
 
@@ -180,9 +180,9 @@ class AluminumMeltingEnvironment:
         elif self.state["temperature"] < 600:
             effective_specific_heat = 1050  # เพิ่มขึ้นเมื่ออุณหภูมิสูง
         elif self.state["temperature"] < 660:  # ใกล้จุดหลอม
-            effective_specific_heat = 1400  # เพิ่มขึ้นมากเนื่องจาก latent heat
+            effective_specific_heat = 1200  # เพิ่มขึ้นมากเนื่องจาก latent heat
         else:
-            effective_specific_heat = 1000  # ลดลงหลังจากหลอมแล้ว
+            effective_specific_heat = 900  # ลดลงหลังจากหลอมแล้ว
 
         basic_delta_T = (net_heat * self.dt) / (m * effective_specific_heat)
 
@@ -249,7 +249,7 @@ class AluminumMeltingEnvironment:
             max_power = 350
         elif 30 <= current_minute < 32:
             max_power = 0  # ปิดไฟเพื่อเติม Dose [Si + Fe]
-        elif 32 <= current_minute < 40:
+        elif 32 <= current_minute < 35:
             max_power = 400
         else:
             max_power = 450
@@ -342,10 +342,10 @@ class AluminumMeltingEnvironment:
         norm_time = max(min(norm_time, 1.0), 0.0)
 
         # --- กำหนดน้ำหนักสำหรับแต่ละองค์ประกอบ ---
-        w_temp = 0.5
-        w_energy = 0.35
-        w_scrap = 0.05
-        w_time = 0.1
+        w_temp = 0.7
+        w_energy = 0.30
+        w_scrap = 0
+        w_time = 0
 
         reward = (
             w_temp * temp_component

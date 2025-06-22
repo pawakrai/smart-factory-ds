@@ -94,14 +94,22 @@ def run_episode_and_plot(env, agent, render=False):
 
 
 if __name__ == "__main__":
+    import sys
+    import os
+
+    # Add the project root to the Python path to allow for absolute imports
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
     import torch
-    from src.environment.aluminum_melting_env_7 import AluminumMeltingEnvironment
+    from src.environment.aluminum_melting_env_8 import AluminumMeltingEnvironment
     from src.agents.agent2 import DQNAgent  # สมมุติว่า Agent ถูกนิยามในไฟล์นี้
 
     # สร้าง Environment และ Agent
-    env = AluminumMeltingEnvironment(initial_weight_kg=500, target_temp_c=900)
-    checkpoint_path = "models/dqn_final_model_10.pth"
-    agent = DQNAgent.load_checkpoint(checkpoint_path, state_dim=6, action_dim=5)
+    env = AluminumMeltingEnvironment(initial_weight_kg=500, target_temp_c=850)
+    checkpoint_path = "models/dqn_final_model_11.pth"
+    agent = DQNAgent.load_checkpoint(checkpoint_path, state_dim=7, action_dim=5)
 
     # โหลด model จาก checkpoint และตั้งให้เป็น evaluation mode
     # state_dict = torch.load(checkpoint_path, map_location=torch.device("cpu"))
