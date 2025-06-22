@@ -1,0 +1,150 @@
+{
+  "crossover_rate": [
+    {
+      "parameter": "crossover_rate",
+      "value": 0.6,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.658926,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "crossover_rate",
+      "value": 0.7,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.656729,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "crossover_rate",
+      "value": 0.8,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.646604,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "crossover_rate",
+      "value": 0.9,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.641526,
+      "diversity_maintenance": 0.0
+    }
+  ],
+  "mutation_rate": [
+    {
+      "parameter": "mutation_rate",
+      "value": 0.01,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.537323,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "mutation_rate",
+      "value": 0.05,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.466501,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "mutation_rate",
+      "value": 0.1,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 72.837781,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "mutation_rate",
+      "value": 0.2,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.539336,
+      "diversity_maintenance": 0.0
+    }
+  ],
+  "population_size": [
+    {
+      "parameter": "population_size",
+      "value": 50,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 26.837564,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "population_size",
+      "value": 100,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.512994,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "population_size",
+      "value": 200,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 107.286368,
+      "diversity_maintenance": 0.0
+    }
+  ],
+  "num_generations": [
+    {
+      "parameter": "num_generations",
+      "value": 100,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 26.842422,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "num_generations",
+      "value": 200,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 53.651994,
+      "diversity_maintenance": 0.0
+    },
+    {
+      "parameter": "num_generations",
+      "value": 300,
+      "best_fitness": 5425.0,
+      "convergence_generation": 21,
+      "optimization_stability": 0.0,
+      "final_solution_quality": 5425.0,
+      "execution_time": 80.590549,
+      "diversity_maintenance": 0.0
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+parameter,fitness_sensitivity,convergence_sensitivity,stability_sensitivity,best_value,best_fitness
+crossover_rate,0.0,0.0,,0.6,5425.0
+mutation_rate,0.0,0.0,,0.01,5425.0
+population_size,0.0,0.0,,50.0,5425.0
+num_generations,0.0,0.0,,100.0,5425.0

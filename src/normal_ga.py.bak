@@ -1,0 +1,3073 @@
+# This is a new file, populated with the content of app_v3.py
+
+import numpy as np
+import matplotlib.pyplot as plt
+from pymoo.core.problem import Problem
+from pymoo.operators.sampling.rnd import PermutationRandomSampling
+from pymoo.operators.crossover.ox import OrderCrossover
+from pymoo.operators.mutation.inversion import InversionMutation
+
+# from pymoo.operators.mutation import SwapMutation
+from pymoo.operators.mutation.pm import PolynomialMutation
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+from pymoo.algorithms.soo.nonconvex.ga import GA
+import random
+
+
+# =============== CONFIG ==================
+
+HOURS_A_DAY = 24 * 60  # 1440
+SLOT_DURATION = 5  # 1 slot = 10 นาที
+TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
+
+T_MELT = 18  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
+NUM_BATCHES = 10  # <<< DEFINE GLOBALLY HERE
+
+# กำหนดว่าเตาไหนใช้งานได้บ้าง
+USE_FURNACE_A = True
+USE_FURNACE_B = True
+
+# --- New Constants for Advanced Simulation Logic ---
+# Penalty rate per minute for an IF holding a batch after melt completion
+IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 7.5  # Example value, adjust as needed
+# Very high penalty for any batch that cannot be poured by the end of simulation
+UNPOURED_BATCH_PENALTY = 1e13  # Increased penalty
+# Penalty for idle time between consecutive batches on the same IF furnace
+IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 0  # Example: 0.5 cost unit per minute of gap
+# Penalty for IF working during designated break times
+IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
+    10000  # Example: 100 cost unit per minute of work in break
+)
+# Average Power Rating for each IF in kW
+IF_POWER_RATING_KW = {"A": 535.0, "B": 535.0}  # เตา A = 550 kW, เตา B = 600 kW
+
+# เตา M&H (โค้ดเดิมไว้ plot)
+MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
+MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 200.0}  # ระดับเริ่มต้น (kg)
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.55}  # อัตราการใช้ kg/min แต่ละเตา
+MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
+IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
+POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
+MH_IDLE_PENALTY_RATE = 0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ต่ำกว่า threshold)
+MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
+
+# กำหนดช่วงเวลาพัก (นาทีตั้งแต่เริ่มวัน 0 - 1440)
+# ตัวอย่าง: 9:00-9:15 และ 12:00-13:00
+BREAK_TIMES_MINUTES = [
+    # (8 * 60, 8 * 60 + 40),  # 08:00 - 08:40
+    # (20 * 60, 20 * 60 + 40),  # 20:00 - 20:40
+]
+
+# +++ NEW CONFIG FOR MH FILLING PREFERENCE +++
+PREFERRED_MH_FURNACE_TO_FILL_FIRST = (
+    "B"  # Options: "A", "B", or None for default/other logic
+)
+
+# --- Plotting Config ---
+FURNACE_COLORS = {"A": "blue", "B": "green"}
+MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
+
+# furnace plot position (สำหรับ IF Gantt)
+furnace_y = {0: 10, 1: 25}
+height = 8
+
+SHIFT_START = 8 * 60
+
+
+def scheduling_cost(x):
+    """
+    1) สร้างตาราง schedule ของ IF
+    2) ตรวจ overlap / penalty IF
+    3) ทำ mini-simulation M&H เพื่อคำนวณ Energy + penalty
+    4) รวมทั้งหมดเป็น cost
+    """
+
+    # ----------------------------
+    # 1) สร้างตาราง (start, end, furnace, batch_id)
+    # ----------------------------
+    n = len(x) // 2
+    schedule = []
+    for i in range(n):
+        start = int(x[2 * i])
+        furnace = int(round(x[2 * i + 1]))
+
+        # กันไม่ให้หลุด slot
+        start = max(0, min(start, TOTAL_SLOTS - T_MELT))
+        end = start + T_MELT
+        schedule.append((start, end, furnace, i + 1))
+
+    # ----------------------------
+    # 2) ตรวจ Overlap IF -> penalty_if
+    # ----------------------------
+    # ตัวอย่างเช็คเช่นเดิม:
+    penalty_if = 0.0
+
+    # (2.1) ลงโทษถ้าเตาไหนปิดแต่ x ระบุใช้เตานั้น
+    for s, e, f, b_id in schedule:
+        if f == 0 and not USE_FURNACE_A:
+            penalty_if += 1e12
+        if f == 1 and not USE_FURNACE_B:
+            penalty_if += 1e12
+
+    # (2.2) ห้ามซ้อนในเตาเดียวกัน
+    usage_for_furnace = {0: [0] * TOTAL_SLOTS, 1: [0] * TOTAL_SLOTS}
+    for s, e, f, b_id in schedule:
+        for t_slot in range(s, e):  # Renamed t to t_slot to avoid conflict
+            usage_for_furnace[f][t_slot] += 1
+
+    if USE_FURNACE_A:
+        for t_slot in range(TOTAL_SLOTS):
+            if usage_for_furnace[0][t_slot] > 1:
+                penalty_if += (usage_for_furnace[0][t_slot] - 1) * 1e9
+
+    if USE_FURNACE_B:
+        for t_slot in range(TOTAL_SLOTS):
+            if usage_for_furnace[1][t_slot] > 1:
+                penalty_if += (usage_for_furnace[1][t_slot] - 1) * 1e9
+
+    # (2.3) ถ้าเปิดทั้ง A,B => global check + Penalty if overlap
+    global_usage = [0] * TOTAL_SLOTS
+    # Constraint: ห้ามซ้อนทับกันเลย ไม่ว่าจะเตาไหน (สำหรับ IF)
+    for s, e, f, b_id in schedule:
+        for t_slot in range(s, e):
+            # เช็คว่า slot นี้ถูกใช้ไปหรือยัง (โดย IF อื่น)
+            if global_usage[t_slot] > 0:
+                # ซ้อนทับ! ลงโทษหนักๆ
+                penalty_if += 1e12  # Penalty สูงมากสำหรับการซ้อนทับของ IF
+            global_usage[t_slot] += 1  # นับว่า slot นี้ถูกใช้แล้วโดย IF
+
+    # (2.4) Penalty for Gap Time within the same IF furnace
+    if_gap_time_penalty = 0.0
+    schedule_by_furnace = {0: [], 1: []}
+    for s, e, f, b_id in schedule:
+        schedule_by_furnace[f].append((s, e, f, b_id))
+
+    for f_idx in [0, 1]:
+        if (f_idx == 0 and not USE_FURNACE_A) or (f_idx == 1 and not USE_FURNACE_B):
+            continue
+
+        furnace_schedule = sorted(schedule_by_furnace[f_idx], key=lambda item: item[0])
+        last_batch_end_slot = (
+            0  # Assuming work can start from slot 0 or after previous batch
+        )
+        is_first_batch_in_furnace = True
+        for s, e, f, b_id in furnace_schedule:
+            if not is_first_batch_in_furnace:
+                gap_slots = s - last_batch_end_slot
+                if gap_slots > 0:
+                    gap_minutes = gap_slots * SLOT_DURATION
+                    if_gap_time_penalty += (
+                        gap_minutes * IF_GAP_TIME_PENALTY_RATE_PER_MINUTE
+                    )
+            last_batch_end_slot = e
+            is_first_batch_in_furnace = False
+
+    penalty_if += if_gap_time_penalty  # Add to existing IF penalties
+
+    # (2.5) Penalty for IF working during break times
+    if_working_in_break_penalty = 0.0
+    for s, e, f, b_id in schedule:
+        start_minute_abs = s * SLOT_DURATION
+        end_minute_abs = e * SLOT_DURATION  # exclusive end minute
+        for break_start_abs, break_end_abs in BREAK_TIMES_MINUTES:
+            # Calculate overlap duration
+            overlap_start = max(start_minute_abs, break_start_abs)
+            overlap_end = min(end_minute_abs, break_end_abs)
+            if overlap_end > overlap_start:
+                overlap_duration_minutes = overlap_end - overlap_start
+                if_working_in_break_penalty += (
+                    overlap_duration_minutes * IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE
+                )
+
+    penalty_if += if_working_in_break_penalty  # Add to existing IF penalties
+
+    # ----------------------------
+    # 2.6) คำนวณ makespan slot => makespan (นาที)
+    # ----------------------------
+    makespan_slot = max(e for (s, e, f, b_id) in schedule) if schedule else 0
+    makespan_min = makespan_slot * SLOT_DURATION
+
+    # ----------------------------
+    # 3) สร้าง water_events สำหรับ M&H
+    # สมมติ 1 batch = 500 kg => มีน้ำหลอม 500 kg ทันทีที่ batch_i finish
+    # (ถ้าคุณมี partial batch capacity จริง ๆ ก็ปรับ logic)
+    # water_events will now store (melt_finish_minute, batch_id)
+    # ----------------------------
+    melt_completion_events = []  # list of (melt_finish_minute, batch_id)
+    for s, e, f, b_id in schedule:
+        finish_minute = e * SLOT_DURATION
+        melt_completion_events.append((finish_minute, b_id))
+
+    melt_completion_events.sort(key=lambda w: w[0])  # เรียงตามเวลา
+
+    # ----------------------------
+    # 4) เรียก mini-simulation M&H V2 (Modified)
+    # ----------------------------
+    # ใช้ makespan_min เพื่อกำหนดช่วงเวลาที่ต้องพิจารณา แต่ simulation อาจรันนานกว่านั้น
+    (
+        MH_idle_penalty,
+        MH_reheat_penalty,  # Still placeholder
+        total_energy_mh,  # Still placeholder
+        time_points,
+        mh_levels,
+        actual_pour_events,  # New output
+        unpoured_batches_at_end,  # New output
+        total_if_holding_minutes,  # New output
+        pour_induced_mh_overflow_penalty,  # New output
+    ) = simulate_mh_consumption_v2(
+        melt_completion_events
+    )  # Pass melt_completion_events
+
+    # --- ลบการตรวจสอบ M&H Overflow Penalty แบบเดิมออก ---
+    # penalty_mh_overflow = 0.0 (This is now handled by pour_induced_mh_overflow_penalty from sim)
+
+    # ----------------------------
+    # 5) รวม cost
+    # ----------------------------
+    # --- NEW IF ENERGY CALCULATION (in kWh) ---
+    base_total_energy_if_kwh = 0.0
+    # Map furnace index (0, 1) to furnace ID ("A", "B") - assuming 0 is A, 1 is B
+    # This mapping should be consistent with how USE_FURNACE_A/B is handled or defined
+    if_furnace_id_map = {}
+    if USE_FURNACE_A:
+        if_furnace_id_map[0] = "A"
+    if USE_FURNACE_B:
+        if (
+            len(if_furnace_id_map) == 1 and 0 not in if_furnace_id_map
+        ):  # e.g. only B is used, assign 0 to B
+            if_furnace_id_map[0] = "B"  # This case for B only and f=0
+        elif 1 not in if_furnace_id_map and USE_FURNACE_B:  # e.g. A and B used, B is 1
+            if_furnace_id_map[1] = "B"
+        elif (
+            0 not in if_furnace_id_map and USE_FURNACE_A
+        ):  # e.g. A and B used, A is 0 (already handled)
+            pass  # Already handled if USE_FURNACE_A is true, 0 is A
+        elif len(if_furnace_id_map) == 0:  # Neither A or B is used.
+            pass  # Should not happen if schedule has items
+        # If only one furnace is active, its index in schedule (0) will map to its ID ("A" or "B")
+        # If both are active, 0 maps to "A", 1 maps to "B" (needs careful check if USE_FURNACE_A/B allows gaps)
+
+    # Fallback for furnace mapping if only one furnace is used, assume it's index 0
+    # This logic needs to be robust if furnace indices in `schedule` are not always 0 or 1 or if only one is used.
+    # For simplicity, let's assume if only one furnace type is active, its ID is used for index 0.
+    # And if both are active, 0 is A, 1 is B.
+
+    # Simplified mapping based on active furnaces
+    # This mapping is crucial. Let's refine it.
+    # if_map_for_power = {0: "A", 1: "B"} # Default if both used
+    # if USE_FURNACE_A and not USE_FURNACE_B:
+    #     if_map_for_power = {0: "A"}
+    # elif not USE_FURNACE_A and USE_FURNACE_B:
+    #     if_map_for_power = {0: "B"}
+    # elif not USE_FURNACE_A and not USE_FURNACE_B:
+    #     if_map_for_power = {}
+
+    for s, e, f, b_id in schedule:
+        furnace_idx_in_schedule = f  # f is the furnace index (0 or 1) from schedule
+        furnace_id_for_power = None
+
+        if USE_FURNACE_A and USE_FURNACE_B:
+            furnace_id_for_power = "A" if furnace_idx_in_schedule == 0 else "B"
+        elif USE_FURNACE_A:  # Only Furnace A is active
+            furnace_id_for_power = (
+                "A"  # All scheduled batches must be on furnace A (index 0)
+            )
+        elif USE_FURNACE_B:  # Only Furnace B is active
+            furnace_id_for_power = (
+                "B"  # All scheduled batches must be on furnace B (index 0)
+            )
+
+        if furnace_id_for_power and furnace_id_for_power in IF_POWER_RATING_KW:
+            power_rating_kw = IF_POWER_RATING_KW[furnace_id_for_power]
+            # melting_duration_hours = (T_MELT * SLOT_DURATION) / 60.0
+            # energy_for_batch_kwh = power_rating_kw * melting_duration_hours
+            energy_for_batch_kwh = power_rating_kw
+            base_total_energy_if_kwh += energy_for_batch_kwh
+        # else:
+        # This case should ideally not happen if schedule is valid and furnaces are defined
+        # print(f"Warning: Could not map furnace index {furnace_idx_in_schedule} to power rating for batch {b_id}")
+
+    # Add IF holding energy penalty
+    # IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is currently 50.
+    # If this is meant to be an actual energy cost, it needs to be kW * (minutes/60)
+    # For now, let's assume it's a separate penalty, not directly kWh.
+    # If you want to convert this to kWh based on a standby power:
+    # standby_power_A_kw = ... (define this)
+    # standby_power_B_kw = ... (define this)
+    # holding_energy_kwh = (total_if_holding_minutes_A / 60.0 * standby_power_A_kw) + ...
+    if_holding_penalty_cost = (
+        total_if_holding_minutes * IF_HOLDING_ENERGY_PENALTY_PER_MINUTE
+    )
+
+    # Add penalty for unpoured batches
+    unpoured_batches_penalty_cost = (
+        len(unpoured_batches_at_end) * UNPOURED_BATCH_PENALTY
+    )
+
+    # final cost (Objective 1: Energy/Cost)
+    # The 'cost' objective now primarily reflects energy in kWh plus other penalties
+    cost = 0.0
+    cost += base_total_energy_if_kwh  # Base IF melting energy in kWh
+    cost += if_holding_penalty_cost  # This is still a penalty value, not kWh unless redefined
+    cost += total_energy_mh  # พลังงาน M&H (ยังเป็น placeholder)
+    cost += (
+        penalty_if  # Overlap IF / ปิดเตา / Gap Time / IF in Break (จากการวางแผนเบื้องต้น)
+    )
+    cost += MH_idle_penalty  # Penalty จาก M&H idle
+    cost += MH_reheat_penalty  # Penalty M&H reheat (ยังเป็น placeholder)
+    cost += pour_induced_mh_overflow_penalty  # Penalty M&H overflow จากการเทจริง
+    cost += unpoured_batches_penalty_cost  # Penalty สำหรับ batch ที่ไม่ได้เท
+
+    # Objective 2: Makespan
+    # Recalculate makespan based on actual pour times
+    if actual_pour_events:
+        makespan_min_actual = max(ape[0] for ape in actual_pour_events)
+    elif schedule:  # If schedule exists but no pours happened (all unpoured)
+        makespan_min_actual = (
+            1440  # Max simulation time, heavily penalized by unpoured_penalty
+        )
+    else:  # No schedule
+        makespan_min_actual = 0
+
+    # If there are unpoured batches, makespan is effectively very bad.
+    # The unpoured_batches_penalty_cost already makes the solution undesirable.
+    # We can let makespan_min_actual reflect the last pour, or be max sim time if all failed.
+
+    # Return detailed cost components as well
+    cost_components = {
+        "total_cost": cost,
+        "makespan_minutes": makespan_min_actual,
+        "base_if_energy_kwh": base_total_energy_if_kwh,
+        "if_holding_penalty": if_holding_penalty_cost,
+        "if_general_penalty": penalty_if,  # Contains overlap, gap, break penalties
+        "mh_idle_penalty": MH_idle_penalty,
+        "mh_reheat_penalty": MH_reheat_penalty,  # Placeholder
+        "mh_overflow_penalty": pour_induced_mh_overflow_penalty,
+        "unpoured_batch_penalty": unpoured_batches_penalty_cost,
+        "mh_energy_kwh": total_energy_mh,  # Placeholder
+    }
+
+    return cost, makespan_min_actual, cost_components
+
+
+def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
+    """
+    จำลองระดับน้ำในเตา M&H A และ B แบบนาทีต่อนาที
+    คำนวณ penalties และคืน time series สำหรับ plot
+    NEW: Handles pour queue, M&H capacity check before pour, IF holding times, and pour-induced overflow.
+    """
+    simulation_duration_min = 1440
+    time_points = np.arange(simulation_duration_min)
+    mh_levels = {
+        "A": np.zeros(simulation_duration_min),
+        "B": np.zeros(simulation_duration_min),
+    }
+    mh_status = {"A": "idle", "B": "idle"}
+
+    current_level = MH_INITIAL_LEVEL_KG.copy()
+    downtime_remaining = {"A": 0, "B": 0}
+    idle_duration = {"A": 0, "B": 0}
+
+    total_idle_penalty = 0.0
+    total_reheat_penalty = 0.0  # Placeholder
+    pour_induced_mh_overflow_penalty = 0.0  # New
+
+    ready_to_pour_queue = []  # Stores (melt_finish_minute, batch_id)
+    actual_pour_events = []  # Stores (actual_pour_minute, batch_id)
+    total_if_holding_minutes = 0
+
+    melt_event_idx = 0
+
+    for t in range(simulation_duration_min):
+        minute_of_day = t
+
+        # Add newly completed IF batches to ready_to_pour_queue
+        while (
+            melt_event_idx < len(melt_completion_events)
+            and melt_completion_events[melt_event_idx][0] <= minute_of_day
+        ):
+            if melt_completion_events[melt_event_idx][0] == minute_of_day:
+                ready_to_pour_queue.append(melt_completion_events[melt_event_idx])
+                # print(f"Minute {t}: Batch {melt_completion_events[melt_event_idx][1]} melt complete, added to pour queue.") # Debug
+            melt_event_idx += 1
+
+        # Increment IF holding time for batches in queue
+        total_if_holding_minutes += len(ready_to_pour_queue)
+
+        # Attempt to pour batches from the queue
+        poured_this_minute_batch_ids = []  # To avoid modifying queue while iterating
+
+        # Sort queue by melt_finish_time (FIFO for pouring attempts) - already sorted by append order if events are sorted
+        # ready_to_pour_queue.sort(key=lambda x: x[0]) # Might not be necessary if events added in order
+
+        for i in range(len(ready_to_pour_queue)):
+            melt_finish_min_q, batch_id_q = ready_to_pour_queue[i]
+
+            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
+            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
+            total_available_mh_capacity = available_capacity_A + available_capacity_B
+
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+                # print(f"Minute {t}: Attempting to pour Batch {batch_id_q}. Total M&H available: {total_available_mh_capacity:.1f} kg.") # Debug
+                # Sufficient total capacity, proceed with pour
+
+                # --- NEW PRIORITIZED POURING LOGIC ---
+                poured_amount_A_this_batch = 0
+                poured_amount_B_this_batch = 0
+                remaining_metal_to_distribute = IF_BATCH_OUTPUT_KG
+
+                furnaces_in_fill_order = []
+                preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
+
+                if preferred_f == "A":
+                    furnaces_in_fill_order = ["A", "B"]
+                elif preferred_f == "B":
+                    furnaces_in_fill_order = ["B", "A"]
+                else:
+                    # Default behavior if PREFERRED_MH_FURNACE_TO_FILL_FIRST is None or invalid
+                    # Fallback: try to fill the one with more space first, then the other.
+                    # For now, if not "A" or "B", let's default to A then B as a simple fallback.
+                    # print(f"Warning: PREFERRED_MH_FURNACE_TO_FILL_FIRST ('{preferred_f}') is not 'A' or 'B'. Defaulting to A then B.")
+                    furnaces_in_fill_order = ["A", "B"]
+
+                for f_id in furnaces_in_fill_order:
+                    if remaining_metal_to_distribute <= 0:
+                        break
+
+                    space_in_this_furnace = (
+                        MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
+                    )
+                    amount_to_pour_here = min(
+                        remaining_metal_to_distribute, space_in_this_furnace
+                    )
+
+                    if amount_to_pour_here > 0:
+                        if f_id == "A":
+                            poured_amount_A_this_batch = amount_to_pour_here
+                        else:  # f_id == "B"
+                            poured_amount_B_this_batch = amount_to_pour_here
+                        remaining_metal_to_distribute -= amount_to_pour_here
+
+                # Check for individual M&H overflow before adding
+                if (
+                    current_level["A"] + poured_amount_A_this_batch
+                    > MH_MAX_CAPACITY_KG["A"]
+                ):
+                    pour_induced_mh_overflow_penalty += (
+                        current_level["A"]
+                        + poured_amount_A_this_batch
+                        - MH_MAX_CAPACITY_KG["A"]
+                    ) * 1  # Penalty per kg overflow
+                    # print(f"Minute {t}: Batch {batch_id_q} pour caused overflow in M&H A.") # Debug
+                if (
+                    current_level["B"] + poured_amount_B_this_batch
+                    > MH_MAX_CAPACITY_KG["B"]
+                ):
+                    pour_induced_mh_overflow_penalty += (
+                        current_level["B"]
+                        + poured_amount_B_this_batch
+                        - MH_MAX_CAPACITY_KG["B"]
+                    ) * 1
+                    # print(f"Minute {t}: Batch {batch_id_q} pour caused overflow in M&H B.") # Debug
+
+                current_level["A"] = min(
+                    current_level["A"] + poured_amount_A_this_batch,
+                    MH_MAX_CAPACITY_KG["A"],
+                )
+                current_level["B"] = min(
+                    current_level["B"] + poured_amount_B_this_batch,
+                    MH_MAX_CAPACITY_KG["B"],
+                )
+                # --- END NEW PRIORITIZED POURING LOGIC ---
+
+                for furnace_id_mh in ["A", "B"]:
+                    downtime_remaining[furnace_id_mh] = POST_POUR_DOWNTIME_MIN
+                    mh_status[furnace_id_mh] = "downtime"
+
+                actual_pour_events.append((t, batch_id_q))
+                poured_this_minute_batch_ids.append(batch_id_q)
+                # print(f"Minute {t}: Batch {batch_id_q} poured successfully. M&H A: {current_level['A']:.1f}, B: {current_level['B']:.1f}") # Debug
+
+                # Since one pour happens per minute (conceptual simplification), break from trying other queued batches this minute
+                # Or, allow multiple if sim logic handles it. For now, assume one pour action can be processed.
+                # To allow multiple pours if capacity allows for subsequent batches in the same minute:
+                # we need to update current_level *immediately* and re-check for next in queue.
+                # For simplicity, let's assume the check for total_available_mh_capacity uses levels *at the start of the minute*.
+                # A single batch pour event is resolved. If other batches are also ready, they wait for next minute's check.
+                # This means if multiple batches become ready and M&H has huge capacity, they still pour one per minute.
+                # This simplification might be acceptable.
+                break  # Only one pour attempt resolution per minute from the queue
+            # else: # Debug
+            # print(f"Minute {t}: Batch {batch_id_q} cannot pour. Total M&H available: {total_available_mh_capacity:.1f} kg. Needed: {IF_BATCH_OUTPUT_KG} kg.")
+
+        # Remove poured batches from the main queue
+        if poured_this_minute_batch_ids:
+            ready_to_pour_queue = [
+                item
+                for item in ready_to_pour_queue
+                if item[1] not in poured_this_minute_batch_ids
+            ]
+
+        for furnace_id in ["A", "B"]:
+            # Handle Downtime
+            if downtime_remaining[furnace_id] > 0:
+                downtime_remaining[furnace_id] -= 1
+                mh_status[furnace_id] = "downtime"
+                if downtime_remaining[furnace_id] == 0:
+                    mh_status[furnace_id] = (
+                        "running"
+                        if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG
+                        else "idle"
+                    )
+                mh_levels[furnace_id][t] = current_level[furnace_id]
+                continue  # Skip consumption and idle penalty if in downtime
+
+            if mh_status[furnace_id] == "downtime":
+                mh_levels[furnace_id][t] = current_level[furnace_id]
+                continue
+
+            if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG:
+                current_level[furnace_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[furnace_id]
+                current_level[furnace_id] = max(current_level[furnace_id], 0)
+                mh_status[furnace_id] = "running"
+                if current_level[furnace_id] <= MH_EMPTY_THRESHOLD_KG:
+                    mh_status[furnace_id] = "idle"
+                    # idle_duration[furnace_id] = 1 # Start/reset idle duration counter
+            else:  # Already at or below threshold
+                mh_status[furnace_id] = "idle"
+                # if mh_status was already "idle", increment idle_duration
+                # idle_duration[furnace_id] += 1
+
+            # Apply idle penalty if the furnace is idle (and not in downtime or break)
+            if mh_status[furnace_id] == "idle":
+                total_idle_penalty += MH_IDLE_PENALTY_RATE
+
+            mh_levels[furnace_id][t] = current_level[furnace_id]
+
+    total_energy_mh = 0.0  # Placeholder
+    unpoured_batches_at_end = [
+        item[1] for item in ready_to_pour_queue
+    ]  # Batches remaining in queue
+
+    return (
+        total_idle_penalty,
+        total_reheat_penalty,
+        total_energy_mh,
+        time_points,
+        mh_levels,
+        actual_pour_events,
+        unpoured_batches_at_end,
+        total_if_holding_minutes,
+        pour_induced_mh_overflow_penalty,
+    )
+
+
+def decode_schedule(x_vector):
+    x = x_vector
+    n = len(x) // 2
+    schedule = []
+    for i in range(n):
+        start = int(x[2 * i])
+        f = int(round(x[2 * i + 1]))
+        start = max(0, min(start, TOTAL_SLOTS - T_MELT))
+        end = start + T_MELT
+        schedule.append((start, end, f, i + 1))
+    schedule.sort(key=lambda s: s[0])
+    return schedule
+
+
+def plot_schedule_and_mh(
+    schedule,
+    title="Melting Schedule & M&H",
+    simulated_time_points=None,
+    simulated_mh_levels=None,
+):
+    """
+    พล็อต Gantt chart ของ IF และ กราฟระดับน้ำใน M&H A, B
+    Now accepts pre-simulated M&H data.
+    """
+    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(18, 9), sharex=True)
+
+    # --- Use pre-simulated M&H levels if provided ---
+    if simulated_time_points is not None and simulated_mh_levels is not None:
+        time_points_shifted = simulated_time_points + SHIFT_START
+        mh_levels_to_plot = simulated_mh_levels
+    # --- Fallback to re-simulating if not provided (should be avoided for consistency) ---
+    elif (
+        schedule
+    ):  # Fallback, ideally this branch is not hit from main optimization flow
+        print(
+            "Warning: Re-simulating M&H for plotting. Use pre-simulated data for consistency."
+        )
+        # makespan_slot = (
+        #     max(e for (s, e, f, b_id) in schedule) if schedule else 0
+        # )  # Ensure schedule is not empty
+        # # makespan_min = makespan_slot * SLOT_DURATION # Not directly used by v2 sim for duration
+
+        melt_completion_events_plot = []
+        for s, e, f, b_id in schedule:
+            finish_minute = e * SLOT_DURATION
+            melt_completion_events_plot.append((finish_minute, b_id))
+        melt_completion_events_plot.sort(key=lambda w: w[0])
+
+        (
+            _,
+            _,
+            _,  # Penalties not needed for plotting
+            time_points_plot,
+            mh_levels_plot,
+            _,
+            _,
+            _,
+            _,  # Other outputs not needed for basic plot
+        ) = simulate_mh_consumption_v2(melt_completion_events_plot)
+        time_points_shifted = time_points_plot + SHIFT_START
+        mh_levels_to_plot = mh_levels_plot
+    else:  # Empty schedule
+        time_points_shifted = np.arange(SHIFT_START, SHIFT_START + 1440)
+        mh_levels_to_plot = {
+            "A": np.full(1440, MH_INITIAL_LEVEL_KG["A"]),
+            "B": np.full(1440, MH_INITIAL_LEVEL_KG["B"]),
+        }
+
+    # ---------------------------
+    # พล็อต Gantt chart (ax1)
+    # ---------------------------
+    for start, end, f, b_id in schedule:
+        if (
+            f not in furnace_y
+        ):  # Using global furnace_y here, ensure it's what's intended
+            print(f"Warning: Invalid IF index '{f}' for batch {b_id}. Skipping plot.")
+            continue
+        melt_start_t = SHIFT_START + start * SLOT_DURATION
+        melt_dur = (end - start) * SLOT_DURATION
+        ax1.broken_barh(
+            [(melt_start_t, melt_dur)],
+            (furnace_y[f], height),  # Using global furnace_y and height
+            facecolors=FURNACE_COLORS.get(f, "gray"),  # ใช้สีจาก config
+            edgecolor="black",
+        )
+        ax1.text(
+            melt_start_t + melt_dur / 2,
+            furnace_y[f] + height / 2,  # Using global furnace_y and height
+            f"{b_id}",
+            ha="center",
+            va="center",
+            color="white",
+            fontsize=10,
+        )
+
+    ax1.set_xlim(SHIFT_START, SHIFT_START + 1440)
+    ax1.set_ylabel("IF Furnace")
+    ax1.set_yticks(
+        [furnace_y[0] + height / 2, furnace_y[1] + height / 2]
+    )  # Using global furnace_y and height
+    ax1.set_yticklabels(["Furnace A", "Furnace B"])
+    ax1.set_title(title)
+    ax1.grid(True, axis="y", linestyle="-", alpha=0.5)
+
+    # เส้นแบ่ง slot
+    for slot_i in range(TOTAL_SLOTS + 1):
+        line_x = SHIFT_START + slot_i * SLOT_DURATION
+        ax1.axvline(x=line_x, color="gray", alpha=0.3, linestyle="--")
+
+    # ---------------------------
+    # subplot ล่าง (ax2) - M&H levels
+    # ---------------------------
+    max_plot_capacity = max(MH_MAX_CAPACITY_KG.values()) * 1.1
+
+    for furnace_id_mh_plot in ["A", "B"]:  # Renamed furnace_id to furnace_id_mh_plot
+        ax2.plot(
+            time_points_shifted,
+            mh_levels_to_plot[furnace_id_mh_plot],  # Use mh_levels_to_plot
+            color=MH_FURNACE_COLORS[furnace_id_mh_plot],
+            linewidth=2,
+            label=f"M&H {furnace_id_mh_plot} Level",
+        )
+        # เส้น Max Capacity
+        ax2.axhline(
+            y=MH_MAX_CAPACITY_KG[furnace_id_mh_plot],
+            color=MH_FURNACE_COLORS[furnace_id_mh_plot],
+            linestyle=":",
+            alpha=0.7,
+            label=f"M&H {furnace_id_mh_plot} Max Cap ({MH_MAX_CAPACITY_KG[furnace_id_mh_plot]} kg)",
+        )
+
+    # เส้น Empty Threshold
+    ax2.axhline(
+        y=MH_EMPTY_THRESHOLD_KG,
+        color="black",
+        linestyle="--",
+        alpha=0.7,
+        label=f"Empty Threshold ({MH_EMPTY_THRESHOLD_KG} kg)",
+    )
+
+    ax2.set_ylim(0, max_plot_capacity)
+    ax2.set_xlabel("Time (HH:MM)")
+    ax2.set_ylabel("Metal in M&H (kg)")
+
+    # xticks ราย ชม.
+    xticks_ax2 = np.arange(SHIFT_START, SHIFT_START + 1441, 60)  # Renamed xticks
+    ax2.set_xticks(xticks_ax2)
+    xlabels_ax2 = [
+        f"{(x_val // 60) % 24:02d}:{x_val % 60:02d}" for x_val in xticks_ax2
+    ]  # Renamed xlabels and x
+    ax2.set_xticklabels(xlabels_ax2)
+    ax2.set_title("Simulated M&H Levels")
+    ax2.grid(True, which="major", axis="both", alpha=0.5)
+    ax2.legend(loc="upper right")
+
+    # Add shaded regions for break times on both subplots
+    for break_start, break_end in BREAK_TIMES_MINUTES:
+        # Adjust for SHIFT_START for plotting coordinates
+        plot_break_start = break_start  # Break times are absolute day minutes
+        plot_break_end = break_end
+
+        # Ensure breaks are within the plotted x-axis range (0 to 1440 relative to day start for sim data,
+        # then shifted by SHIFT_START for plot)
+        # The time_points_shifted already accounts for SHIFT_START
+        # We need to ensure the axvspan uses coordinates relative to the plot's x-axis
+
+        # For ax1 (IF Gantt)
+        ax1.axvspan(
+            plot_break_start,
+            plot_break_end,
+            facecolor="grey",
+            alpha=0.2,
+            zorder=-1,
+        )
+        # For ax2 (M&H Levels)
+        ax2.axvspan(
+            plot_break_start,
+            plot_break_end,
+            facecolor="grey",
+            alpha=0.2,
+            zorder=-1,
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+
+# +++ NEW HELPER FUNCTION for greedy_assignment +++
+def _greedy_simulate_mh_state_to_minute(
+    target_minute,
+    current_levels_kg,  # dict: {"A": level, "B": level}
+    downtime_remaining_min,  # dict: {"A": minutes, "B": minutes}
+    last_simulated_minute,
+):
+    """
+    Simulates M&H consumption and status from last_simulated_minute up to (but not including) target_minute.
+    Returns the predicted M&H levels and downtime state at the BEGINNING of target_minute.
+    This is a simplified forward simulation for greedy's lookahead.
+    It does NOT handle new pours, only consumption, downtime ticks, and breaks.
+    """
+    new_levels_kg = current_levels_kg.copy()
+    new_downtime_remaining_min = downtime_remaining_min.copy()
+
+    # Simulate minute by minute from (last_simulated_minute + 1) up to target_minute -1
+    # The state at the *beginning* of target_minute is what we want.
+    for t_sim in range(last_simulated_minute + 1, target_minute):
+        minute_of_day_sim = t_sim
+
+        for furnace_id_mh in ["A", "B"]:
+            if new_downtime_remaining_min[furnace_id_mh] > 0:
+                new_downtime_remaining_min[furnace_id_mh] -= 1
+                # Status becomes "running" or "idle" when downtime hits 0, handled by consumption logic below
+
+            if new_downtime_remaining_min[furnace_id_mh] > 0:
+                # No consumption during break or active downtime
+                continue
+
+            # If not in break and not in downtime, consume
+            if new_levels_kg[furnace_id_mh] > MH_EMPTY_THRESHOLD_KG:
+                new_levels_kg[furnace_id_mh] -= MH_CONSUMPTION_RATE_KG_PER_MIN[
+                    furnace_id_mh
+                ]
+                new_levels_kg[furnace_id_mh] = max(new_levels_kg[furnace_id_mh], 0)
+            # Idle penalty logic is not needed for this feasibility check, only levels and downtime.
+
+    return new_levels_kg, new_downtime_remaining_min
+
+
+# --- ฟังก์ชัน Greedy Assignment (Level 2) ---
+def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
+    """
+    กำหนด start_slot และ furnace สำหรับลำดับ batch ที่กำหนด
+    โดยห้ามมี batch ใดๆ ทำงานซ้อนทับกันเลย (Global Constraint for IFs)
+    และพยายามจัดตาราง IF ให้สอดคล้องกับความพร้อมของ M&H (M&H-aware).
+    NEW: Introduces randomness in choosing among viable M&H-aware slots.
+    """
+    MAX_VIABLE_SLOTS_TO_CONSIDER = (
+        5  # Max number of early viable slots to consider for random choice
+    )
+
+    x_schedule_vector = np.full(
+        num_batches * 2, -1, dtype=int
+    )  # Initialize with -1 (unscheduled)
+    global_if_used_slots = np.zeros(TOTAL_SLOTS, dtype=int)
+
+    available_if_furnaces_for_assignment = []
+    if USE_FURNACE_A:
+        available_if_furnaces_for_assignment.append(0)
+    if USE_FURNACE_B:
+        available_if_furnaces_for_assignment.append(1)
+
+    if not available_if_furnaces_for_assignment:
+        print("Error in greedy_assignment: No available IF furnaces!")
+        return x_schedule_vector.astype(float)
+
+    # Internal M&H state for greedy's simulation
+    internal_mh_levels_kg = MH_INITIAL_LEVEL_KG.copy()
+    internal_mh_downtime_remaining_min = {"A": 0, "B": 0}
+    internal_last_mh_sim_minute = -1  # Simulates from minute 0 onwards
+
+    if_furnace_assignment_counter = 0
+
+    MAX_SEARCH_MINUTES = (
+        1440 + T_MELT * SLOT_DURATION
+    )  # Search a bit beyond one day if needed
+
+    for (
+        batch_idx_in_order
+    ) in batch_order:  # batch_idx_in_order is the actual batch ID (0 to N-1)
+        chosen_if_furnace_idx = -1
+        if len(available_if_furnaces_for_assignment) == 1:
+            chosen_if_furnace_idx = available_if_furnaces_for_assignment[0]
+        elif len(available_if_furnaces_for_assignment) > 1:
+            chosen_if_furnace_idx = available_if_furnaces_for_assignment[
+                if_furnace_assignment_counter
+                % len(available_if_furnaces_for_assignment)
+            ]
+            # Cycle through furnaces more robustly for subsequent batches
+            # if_furnace_assignment_counter is advanced per BATCH, not per furnace chosen
+        else:  # Should be caught by earlier check
+            continue
+
+        found_slot_for_batch = False
+        viable_slots_data = (
+            []
+        )  # Stores (potential_if_start_slot, mh_levels_before_pour, mh_downtime_before_pour, potential_if_melt_finish_minute)
+
+        # Start searching for an IF start slot from the end of the last IF operation,
+        # or from 0 if this is the first batch.
+        # More accurately, from the earliest possible time considering M&H readiness.
+        # The search for if_start_slot is in SLOTS.
+        # The M&H simulation is in MINUTES.
+
+        # Determine the earliest minute this batch *could* start melting based on IF availability
+        # This means searching for a free IF slot first.
+        # --- REMOVED BREAK TIME CHECK FROM HERE ---
+        # The greedy assignment will no longer try to avoid IF operations during breaks;
+        # this will be handled by a penalty in scheduling_cost.
+
+        min_possible_if_start_minute_overall = internal_last_mh_sim_minute + 1
+
+        for potential_if_start_slot in range(TOTAL_SLOTS - T_MELT + 1):
+            # Constraint 1: Global IF slot availability
+            is_if_globally_free = True
+            for t_if_check_slot in range(
+                potential_if_start_slot, potential_if_start_slot + T_MELT
+            ):
+                if (
+                    t_if_check_slot >= TOTAL_SLOTS
+                    or global_if_used_slots[t_if_check_slot] == 1
+                ):
+                    is_if_globally_free = False
+                    break
+
+            if not is_if_globally_free:
+                continue  # Try next potential_if_start_slot
+
+            # # NEW Constraint: Check if IF operation falls into any break time
+            # if_op_start_minute = potential_if_start_slot * SLOT_DURATION
+            # if_op_end_minute = (potential_if_start_slot + T_MELT) * SLOT_DURATION
+            # is_in_break = False
+            # for break_start_abs, break_end_abs in BREAK_TIMES_MINUTES:
+            #     # Check for overlap:
+            #     # (IF_start < Break_end) and (IF_end > Break_start)
+            #     if (
+            #         if_op_start_minute < break_end_abs
+            #         and if_op_end_minute > break_start_abs
+            #     ):
+            #         is_in_break = True
+            #         break
+
+            # if is_in_break:
+            #     continue  # Skip this slot as it overlaps with a break time
+
+            potential_if_melt_finish_minute = (
+                potential_if_start_slot + T_MELT
+            ) * SLOT_DURATION
+
+            # Ensure we are not trying to schedule IF to finish in the past relative to M&H sim
+            if potential_if_melt_finish_minute < internal_last_mh_sim_minute:
+                continue
+
+            # Constraint 2: M&H readiness at potential_if_melt_finish_minute
+            # Simulate M&H state up to the point just before this potential pour
+            mh_levels_before_pour, mh_downtime_before_pour = (
+                _greedy_simulate_mh_state_to_minute(
+                    potential_if_melt_finish_minute,
+                    internal_mh_levels_kg,
+                    internal_mh_downtime_remaining_min,
+                    internal_last_mh_sim_minute,
+                )
+            )
+
+            # --- REMOVED BREAK TIME CHECK FOR POURING FROM HERE ---
+            # The original check `is_break_at_pour_minute` is removed from greedy_assignment.
+            # If a pour happens during a break, simulate_mh_consumption_v2 will handle M&H downtime correctly.
+            # The IF working during break penalty is now the main deterrent for IF activity during breaks.
+
+            # Check if M&H furnaces are in post-pour downtime from a *previous* pour
+            # The _greedy_simulate_mh_state_to_minute updates downtimes, so mh_downtime_before_pour reflects this.
+
+            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - mh_levels_before_pour["A"]
+            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - mh_levels_before_pour["B"]
+            total_available_mh_capacity = available_capacity_A + available_capacity_B
+
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+                # This slot is viable for IF and M&H! Store it.
+                viable_slots_data.append(
+                    (
+                        potential_if_start_slot,
+                        mh_levels_before_pour.copy(),
+                        mh_downtime_before_pour.copy(),
+                        potential_if_melt_finish_minute,
+                    )
+                )
+                if len(viable_slots_data) >= MAX_VIABLE_SLOTS_TO_CONSIDER:
+                    break  # Found enough viable slots, move to selection
+
+        # After checking potential slots, choose one if any were found
+        if viable_slots_data:
+            # Randomly select one of the found viable slots
+            (
+                selected_start_slot,
+                selected_mh_levels_before_pour,
+                selected_mh_downtime_before_pour,
+                selected_melt_finish_minute,
+            ) = random.choice(viable_slots_data)
+
+            x_schedule_vector[2 * batch_idx_in_order] = selected_start_slot
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+            for t_slot_update in range(
+                selected_start_slot, selected_start_slot + T_MELT
+            ):
+                global_if_used_slots[t_slot_update] = 1
+
+            # Update internal M&H state to reflect this pour
+            # Set M&H state to what it was just before this chosen pour
+            internal_mh_levels_kg = selected_mh_levels_before_pour
+            internal_mh_downtime_remaining_min = selected_mh_downtime_before_pour
+
+            # --- NEW PRIORITIZED POUR LOGIC FOR GREEDY ---
+            g_poured_amount_A = 0
+            g_poured_amount_B = 0
+            g_remaining_metal = IF_BATCH_OUTPUT_KG
+
+            g_furnaces_in_fill_order = []
+            g_preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
+
+            if g_preferred_f == "A":
+                g_furnaces_in_fill_order = ["A", "B"]
+            elif g_preferred_f == "B":
+                g_furnaces_in_fill_order = ["B", "A"]
+            else:  # Fallback
+                # print(f"Greedy Warning: PREFERRED_MH_FURNACE_TO_FILL_FIRST ('{g_preferred_f}') is not 'A' or 'B'. Defaulting to A then B for pour prediction.")
+                g_furnaces_in_fill_order = ["A", "B"]
+
+            for g_f_id in g_furnaces_in_fill_order:
+                if g_remaining_metal <= 0:
+                    break
+
+                g_space_in_furnace = (
+                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
+                )
+                g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
+
+                if g_amount_to_pour > 0:
+                    if g_f_id == "A":
+                        g_poured_amount_A = g_amount_to_pour
+                    else:  # g_f_id == "B"
+                        g_poured_amount_B = g_amount_to_pour
+                    g_remaining_metal -= g_amount_to_pour
+
+            # Update internal levels (greedy doesn't track overflow penalty, just levels)
+            internal_mh_levels_kg["A"] = min(
+                internal_mh_levels_kg["A"] + g_poured_amount_A, MH_MAX_CAPACITY_KG["A"]
+            )
+            internal_mh_levels_kg["B"] = min(
+                internal_mh_levels_kg["B"] + g_poured_amount_B, MH_MAX_CAPACITY_KG["B"]
+            )
+            # --- END NEW PRIORITIZED POUR LOGIC FOR GREEDY ---
+
+            internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
+            internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
+
+            internal_last_mh_sim_minute = selected_melt_finish_minute  # M&H state is now known AT this minute, after pour
+
+            if_furnace_assignment_counter += (
+                1  # Advance furnace assignment for next batch
+            )
+            found_slot_for_batch = True
+            # No break here, as we've processed one batch and will continue to the next in batch_order
+
+        if not found_slot_for_batch:
+            # If no slot could be found (e.g. M&H never becomes ready or IF slots all conflict)
+            # Assign a fallback (e.g. very late, or rely on -1 to be penalized by scheduling_cost)
+            # For now, leave as -1, to be heavily penalized by scheduling_cost if it can't handle it.
+            # This should ideally be caught by high penalties in scheduling_cost for unplaced batches.
+            # print(
+            #     f"Warning in greedy_assignment: Could not find M&H-aware slot for batch {batch_idx_in_order + 1}."
+            # )
+            # As a simple fallback, try to place it like the old greedy, ignoring M&H, but this might be bad.
+            # For now, we let it remain -1 if truly no M&H-aware slot is found.
+            # This means scheduling_cost MUST be robust to x values of -1 (or handle them).
+            # The current scheduling_cost converts x to int, so -1 might cause issues if not bounded.
+            # Let's ensure scheduling_cost handles negative start times by clamping them.
+            # Or, assign a very late slot that will likely be invalid and heavily penalized.
+            x_schedule_vector[2 * batch_idx_in_order] = (
+                TOTAL_SLOTS  # Invalid start, will be clamped/penalized
+            )
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+    # Ensure any -1 are replaced, e.g., with a highly penalized slot or handle in scheduling_cost
+    # The current fallback above assigns TOTAL_SLOTS, which scheduling_cost should clamp.
+    # If a batch truly couldn't be scheduled, its x entries would be TOTAL_SLOTS.
+    # `scheduling_cost` clamps `start = max(0, min(start, TOTAL_SLOTS - T_MELT))`.
+    # So `TOTAL_SLOTS` becomes `TOTAL_SLOTS - T_MELT`. This is a valid placement, but likely suboptimal.
+    # A batch that is "unscheduled" (still -1) would need special handling in scheduling_cost or a huge penalty.
+    # The penalty for unpoured_batches in scheduling_cost (via simulate_mh_consumption_v2) might cover this
+    # if unscheduled batches translate to unpoured.
+
+    return x_schedule_vector.astype(float)
+
+
+# เพิ่ม debug function ใหม่
+def debug_greedy_assignment(batch_order, num_batches=NUM_BATCHES):
+    """
+    Debug version ของ greedy_assignment เพื่อดูว่าทำไม solution ทุกตัวถึงเหมือนกัน
+    """
+    print(f"DEBUG: Input batch_order = {batch_order}")
+
+    MAX_VIABLE_SLOTS_TO_CONSIDER = 5
+    x_schedule_vector = np.full(num_batches * 2, -1, dtype=int)
+    global_if_used_slots = np.zeros(TOTAL_SLOTS, dtype=int)
+
+    available_if_furnaces_for_assignment = []
+    if USE_FURNACE_A:
+        available_if_furnaces_for_assignment.append(0)
+    if USE_FURNACE_B:
+        available_if_furnaces_for_assignment.append(1)
+
+    if not available_if_furnaces_for_assignment:
+        print("Error in greedy_assignment: No available IF furnaces!")
+        return x_schedule_vector.astype(float)
+
+    # Internal M&H state for greedy's simulation
+    internal_mh_levels_kg = MH_INITIAL_LEVEL_KG.copy()
+    internal_mh_downtime_remaining_min = {"A": 0, "B": 0}
+    internal_last_mh_sim_minute = -1
+
+    if_furnace_assignment_counter = 0
+
+    for batch_idx_in_order in batch_order:
+        print(f"DEBUG: Processing batch {batch_idx_in_order}")
+
+        chosen_if_furnace_idx = -1
+        if len(available_if_furnaces_for_assignment) == 1:
+            chosen_if_furnace_idx = available_if_furnaces_for_assignment[0]
+        elif len(available_if_furnaces_for_assignment) > 1:
+            chosen_if_furnace_idx = available_if_furnaces_for_assignment[
+                if_furnace_assignment_counter
+                % len(available_if_furnaces_for_assignment)
+            ]
+
+        print(
+            f"DEBUG: Chosen furnace for batch {batch_idx_in_order}: {chosen_if_furnace_idx}"
+        )
+
+        found_slot_for_batch = False
+        viable_slots_data = []
+
+        for potential_if_start_slot in range(TOTAL_SLOTS - T_MELT + 1):
+            # Check IF slot availability
+            is_if_globally_free = True
+            for t_if_check_slot in range(
+                potential_if_start_slot, potential_if_start_slot + T_MELT
+            ):
+                if (
+                    t_if_check_slot >= TOTAL_SLOTS
+                    or global_if_used_slots[t_if_check_slot] == 1
+                ):
+                    is_if_globally_free = False
+                    break
+
+            if not is_if_globally_free:
+                continue
+
+            potential_if_melt_finish_minute = (
+                potential_if_start_slot + T_MELT
+            ) * SLOT_DURATION
+
+            if potential_if_melt_finish_minute < internal_last_mh_sim_minute:
+                continue
+
+            # Check M&H capacity
+            mh_levels_before_pour, mh_downtime_before_pour = (
+                _greedy_simulate_mh_state_to_minute(
+                    potential_if_melt_finish_minute,
+                    internal_mh_levels_kg,
+                    internal_mh_downtime_remaining_min,
+                    internal_last_mh_sim_minute,
+                )
+            )
+
+            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - mh_levels_before_pour["A"]
+            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - mh_levels_before_pour["B"]
+            total_available_mh_capacity = available_capacity_A + available_capacity_B
+
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+                viable_slots_data.append(
+                    (
+                        potential_if_start_slot,
+                        mh_levels_before_pour.copy(),
+                        mh_downtime_before_pour.copy(),
+                        potential_if_melt_finish_minute,
+                    )
+                )
+                if len(viable_slots_data) >= MAX_VIABLE_SLOTS_TO_CONSIDER:
+                    break
+
+        print(
+            f"DEBUG: Found {len(viable_slots_data)} viable slots for batch {batch_idx_in_order}"
+        )
+
+        if viable_slots_data:
+            # แทนที่จะใช้ random.choice ให้เลือก slot แรกเสมอเพื่อ debug
+            selected_data = viable_slots_data[0]  # เลือก slot แรกเสมอ
+            selected_start_slot = selected_data[0]
+
+            print(
+                f"DEBUG: Selected slot {selected_start_slot} for batch {batch_idx_in_order}"
+            )
+
+            x_schedule_vector[2 * batch_idx_in_order] = selected_start_slot
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+            # Update global IF slots
+            for t_slot_update in range(
+                selected_start_slot, selected_start_slot + T_MELT
+            ):
+                global_if_used_slots[t_slot_update] = 1
+
+            # Update M&H state
+            internal_mh_levels_kg = selected_data[1]
+            internal_mh_downtime_remaining_min = selected_data[2]
+
+            # Simulate pour
+            g_poured_amount_A = 0
+            g_poured_amount_B = 0
+            g_remaining_metal = IF_BATCH_OUTPUT_KG
+
+            if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A":
+                g_furnaces_in_fill_order = ["A", "B"]
+            elif PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B":
+                g_furnaces_in_fill_order = ["B", "A"]
+            else:
+                g_furnaces_in_fill_order = ["A", "B"]
+
+            for g_f_id in g_furnaces_in_fill_order:
+                if g_remaining_metal <= 0:
+                    break
+                g_space_in_furnace = (
+                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
+                )
+                g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
+                if g_amount_to_pour > 0:
+                    if g_f_id == "A":
+                        g_poured_amount_A = g_amount_to_pour
+                    else:
+                        g_poured_amount_B = g_amount_to_pour
+                    g_remaining_metal -= g_amount_to_pour
+
+            internal_mh_levels_kg["A"] = min(
+                internal_mh_levels_kg["A"] + g_poured_amount_A, MH_MAX_CAPACITY_KG["A"]
+            )
+            internal_mh_levels_kg["B"] = min(
+                internal_mh_levels_kg["B"] + g_poured_amount_B, MH_MAX_CAPACITY_KG["B"]
+            )
+
+            internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
+            internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
+            internal_last_mh_sim_minute = selected_data[3]
+
+            if_furnace_assignment_counter += 1
+            found_slot_for_batch = True
+        else:
+            print(f"DEBUG: No viable slot found for batch {batch_idx_in_order}")
+            x_schedule_vector[2 * batch_idx_in_order] = TOTAL_SLOTS
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+    print(f"DEBUG: Final schedule vector = {x_schedule_vector}")
+    return x_schedule_vector.astype(float)
+
+
+# เพิ่ม test function
+def test_different_permutations():
+    """
+    ทดสอบ permutation ต่างๆ เพื่อดูว่า greedy assignment ให้ผลเหมือนกันหรือไม่
+    """
+    print("=== Testing Different Permutations ===")
+
+    # ทดสอบ 3 permutation ที่ต่างกัน
+    test_perms = [
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  # Sequential
+        [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],  # Reverse
+        [5, 2, 8, 1, 9, 0, 4, 7, 3, 6],  # Random
+    ]
+
+    results = []
+    for i, perm in enumerate(test_perms):
+        print(f"\n--- Test Permutation {i+1}: {perm} ---")
+        x_vec = debug_greedy_assignment(perm)
+        cost, makespan, components = scheduling_cost(x_vec)
+        results.append((perm, cost, makespan, x_vec))
+        print(f"Cost: {cost}, Makespan: {makespan}")
+
+    # เปรียบเทียบผลลัพธ์
+    print("\n=== Comparison Results ===")
+    for i, (perm, cost, makespan, x_vec) in enumerate(results):
+        print(f"Perm {i+1}: Cost={cost}, Makespan={makespan}")
+        print(f"  Schedule: {x_vec}")
+
+    # ตรวจสอบว่าผลลัพธ์เหมือนกันหรือไม่
+    costs = [r[1] for r in results]
+    if len(set(costs)) == 1:
+        print("⚠️  WARNING: All permutations give the same cost!")
+    else:
+        print("✅ Different permutations give different costs")
+
+    return results
+
+
+# --- คลาส HGA Problem (Level 1) ---
+class HGAProblem(Problem):  # สืบทอดจาก Problem
+    def __init__(self, num_batches_hga=NUM_BATCHES):  # Renamed num_batches
+        super().__init__(
+            n_var=num_batches_hga,
+            n_obj=1,  # <-- CHANGE: Set to 1 objective (minimum cost)
+            n_constr=0,
+            xl=0,
+            xu=num_batches_hga - 1,  # Use num_batches_hga
+        )  # Bounds สำหรับ Permutation
+
+    def _evaluate(self, P, out, *args, **kwargs):
+        # P คือ population ณ generation ปัจจุบัน (array of permutations)
+        results_f = []  # เก็บ objective values [cost]
+
+        # วนลูปแต่ละ Permutation ใน Population
+        for batch_order_perm in P:  # Renamed batch_order
+            # 1. แปลง Permutation เป็น x_schedule_vector (schedule) โดย Greedy Assignment
+            x_sched_vec = greedy_assignment(
+                batch_order_perm, num_batches=self.n_var
+            )  # Renamed x
+
+            # 2. คำนวณ Objectives โดยใช้ scheduling_cost
+            cost, makespan, cost_components = scheduling_cost(x_sched_vec)
+
+            # เพิ่ม penalty สูงมากถ้า greedy assignment ล้มเหลว (เช่น หา slot ไม่ได้)
+            # (ตรวจจาก x_sched_vec ที่ได้ หรือเพิ่ม flag จาก greedy_assignment)
+            # ตัวอย่าง: ตรวจสอบว่า makespan ดูสมเหตุสมผลไหม
+            if makespan > TOTAL_SLOTS * SLOT_DURATION * 1.1:  # ถ้า makespan ยาวผิดปกติ
+                cost += 1e15  # ลงโทษหนักๆ
+
+            results_f.append(
+                [cost]
+            )  # <-- CHANGE: Append only the single cost objective
+
+        # กำหนดค่า Objectives ให้กับ Population
+        out["F"] = np.array(results_f)
+
+
+def main():
+    # ===== Run Standard GA for Single-Objective Optimization =====
+    problem = HGAProblem(NUM_BATCHES)  # <--- HGAProblem is now Single-Objective
+
+    # --- Operators สำหรับ Permutation (still correct for this problem) ---
+    sampling = PermutationRandomSampling()
+    crossover = OrderCrossover()
+    mutation = InversionMutation()
+
+    algorithm = GA(  # <-- CHANGE: Use standard GA
+        pop_size=150,
+        sampling=sampling,
+        crossover=crossover,
+        mutation=mutation,
+        eliminate_duplicates=True,
+    )
+
+    termination = get_termination("n_gen", 100)  # หรือเกณฑ์อื่นๆ
+
+    print("Running Standard GA optimization...")
+    result = minimize(
+        problem,
+        algorithm,
+        termination,
+        seed=42,
+        verbose=True,
+        save_history=True,  # <-- CHANGE: Enable history saving for plotting
+    )
+
+    print("Optimization finished.")
+
+    # ===== NEW: Plot Cost Convergence =====
+    # Extract the best cost from each generation in the history
+    if result.history:
+        best_cost_per_gen = [np.min(gen.opt.get("F")) for gen in result.history]
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(
+            np.arange(len(best_cost_per_gen)),
+            best_cost_per_gen,
+            marker="o",
+            linestyle="-",
+        )
+        plt.title("Cost Convergence Over Generations (Greedy Assignment)")
+        plt.xlabel("Generation")
+        plt.ylabel("Best Cost Found")
+        plt.grid(True)
+        plt.show()
+
+    # ===== แสดงผลลัพธ์และ Plot ตารางเวลาสำหรับ Solution ที่ดีที่สุด =====
+    print("\nProcessing results...")
+
+    if result.X is None:
+        print("\nNo solution found.")
+    else:
+        print(f"\nFound Best Solution:")
+        best_permutation = result.X
+        best_cost_value = result.F[0]
+
+        # Recalculate all details for the single best solution
+        x_vector = greedy_assignment(best_permutation, num_batches=NUM_BATCHES)
+        final_cost, final_makespan, cost_details = scheduling_cost(x_vector)
+
+        print(f"  Best Permutation: {best_permutation}")
+        print(f"  Best Cost (Objective): {best_cost_value:.2f}")
+
+        if cost_details:
+            print(f"  Makespan: {cost_details['makespan_minutes']:.2f} min")
+            print(f"  --------------------------------------------------")
+            print(f"  Cost Component Details:")
+            base_if_energy_kwh = cost_details["base_if_energy_kwh"]
+            if_holding_penalty_cost = cost_details["if_holding_penalty"]
+            actual_if_energy_kwh = base_if_energy_kwh + if_holding_penalty_cost
+
+            print(f"    Base IF Energy (kWh)     : {base_if_energy_kwh:.2f}")
+            print(f"    IF Holding Penalty       : {if_holding_penalty_cost:.2f}")
+            print(
+                f"    Actual IF Energy (Base + Holding) (kWh): {actual_if_energy_kwh:.2f}"
+            )
+
+            num_actual_batches = NUM_BATCHES  # Assumes all batches are processed
+            if (
+                actual_if_energy_kwh >= 0 and num_actual_batches > 0
+            ):  # Use actual_if_energy_kwh, allow 0
+                avg_actual_if_energy_per_batch = (
+                    actual_if_energy_kwh / num_actual_batches
+                    if num_actual_batches > 0
+                    else 0
+                )
+                print(
+                    f"      -> Avg Actual IF Energy/Batch (kWh): {avg_actual_if_energy_per_batch:.2f}"
+                )
+
+            print(
+                f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f} (Overlaps, Gaps, Breaks)"
+            )
+            print(
+                f"    MH Idle Penalty          : {cost_details['mh_idle_penalty']:.2f}"
+            )
+            print(
+                f"    MH Reheat Penalty        : {cost_details['mh_reheat_penalty']:.2f} (Placeholder)"
+            )
+            print(
+                f"    MH Overflow Penalty      : {cost_details['mh_overflow_penalty']:.2f}"
+            )
+            print(
+                f"    Unpoured Batch Penalty   : {cost_details['unpoured_batch_penalty']:.2f}"
+            )
+            print(
+                f"    MH Energy (kWh)          : {cost_details['mh_energy_kwh']:.2f} (Placeholder)"
+            )
+            print(f"  --------------------------------------------------")
+
+        # --- Plot the schedule for the best solution ---
+        if x_vector is not None:
+            try:
+                schedule = decode_schedule(x_vector)
+                if schedule:  # Ensure schedule is not empty
+                    plot_title = (
+                        f"Standard GA - Best Schedule Found\n"
+                        f"Total Cost: {best_cost_value:.0f}, Makespan: {final_makespan:.0f} min"
+                    )
+                    plot_schedule_and_mh(
+                        schedule,
+                        title=plot_title,
+                        simulated_time_points=None,  # Trigger re-simulation in plot function for M&H
+                        simulated_mh_levels=None,  # Trigger re-simulation in plot function for M&H
+                    )
+                else:
+                    print(
+                        "  Could not decode schedule for plotting (empty or invalid schedule returned from evaluation)."
+                    )
+            except Exception as e:
+                print(f"  Error plotting schedule for solution: {e}")
+                import traceback
+
+                print(traceback.format_exc())
+        else:
+            print(
+                f"  Could not retrieve schedule vector (x) for plotting (x_vector is None)."
+            )
+
+
+# เพิ่ม improved greedy assignment
+def improved_greedy_assignment(
+    batch_order, num_batches=NUM_BATCHES, diversity_factor=0.3
+):
+    """
+    ปรับปรุง greedy assignment ให้มีความหลากหลายมากขึ้น
+
+    Args:
+        batch_order: ลำดับ batch
+        num_batches: จำนวน batch
+        diversity_factor: ปัจจัยความหลากหลาย (0.0-1.0)
+                         0.0 = pure greedy, 1.0 = more random
+    """
+    MAX_VIABLE_SLOTS_TO_CONSIDER = max(3, int(10 * diversity_factor))
+
+    x_schedule_vector = np.full(num_batches * 2, -1, dtype=int)
+    global_if_used_slots = np.zeros(TOTAL_SLOTS, dtype=int)
+
+    available_if_furnaces_for_assignment = []
+    if USE_FURNACE_A:
+        available_if_furnaces_for_assignment.append(0)
+    if USE_FURNACE_B:
+        available_if_furnaces_for_assignment.append(1)
+
+    if not available_if_furnaces_for_assignment:
+        return x_schedule_vector.astype(float)
+
+    # Internal M&H state for greedy's simulation
+    internal_mh_levels_kg = MH_INITIAL_LEVEL_KG.copy()
+    internal_mh_downtime_remaining_min = {"A": 0, "B": 0}
+    internal_last_mh_sim_minute = -1
+
+    if_furnace_assignment_counter = 0
+
+    for batch_idx_in_order in batch_order:
+        # 1. เลือก furnace แบบมีความหลากหลาย
+        if len(available_if_furnaces_for_assignment) == 1:
+            chosen_if_furnace_idx = available_if_furnaces_for_assignment[0]
+        else:
+            # แทนที่จะ cycle แบบ deterministic ให้มี randomness บ้าง
+            if random.random() < diversity_factor:
+                chosen_if_furnace_idx = random.choice(
+                    available_if_furnaces_for_assignment
+                )
+            else:
+                chosen_if_furnace_idx = available_if_furnaces_for_assignment[
+                    if_furnace_assignment_counter
+                    % len(available_if_furnaces_for_assignment)
+                ]
+
+        found_slot_for_batch = False
+        viable_slots_data = []
+
+        # 2. หา viable slots แต่ไม่หยุดที่ 5 slots แรก
+        for potential_if_start_slot in range(TOTAL_SLOTS - T_MELT + 1):
+            # Check IF slot availability
+            is_if_globally_free = True
+            for t_if_check_slot in range(
+                potential_if_start_slot, potential_if_start_slot + T_MELT
+            ):
+                if (
+                    t_if_check_slot >= TOTAL_SLOTS
+                    or global_if_used_slots[t_if_check_slot] == 1
+                ):
+                    is_if_globally_free = False
+                    break
+
+            if not is_if_globally_free:
+                continue
+
+            potential_if_melt_finish_minute = (
+                potential_if_start_slot + T_MELT
+            ) * SLOT_DURATION
+
+            if potential_if_melt_finish_minute < internal_last_mh_sim_minute:
+                continue
+
+            # Check M&H capacity
+            mh_levels_before_pour, mh_downtime_before_pour = (
+                _greedy_simulate_mh_state_to_minute(
+                    potential_if_melt_finish_minute,
+                    internal_mh_levels_kg,
+                    internal_mh_downtime_remaining_min,
+                    internal_last_mh_sim_minute,
+                )
+            )
+
+            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - mh_levels_before_pour["A"]
+            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - mh_levels_before_pour["B"]
+            total_available_mh_capacity = available_capacity_A + available_capacity_B
+
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+                # เพิ่ม score สำหรับการเลือก slot
+                # ยิ่งเร็วยิ่งดี แต่ให้โอกาส slot ที่ช้ากว่าบ้าง
+                earliness_score = 1.0 / (potential_if_start_slot + 1)  # ยิ่งเร็วยิ่งสูง
+                mh_utilization_score = total_available_mh_capacity / (
+                    MH_MAX_CAPACITY_KG["A"] + MH_MAX_CAPACITY_KG["B"]
+                )
+
+                slot_score = earliness_score * 0.7 + mh_utilization_score * 0.3
+
+                viable_slots_data.append(
+                    (
+                        potential_if_start_slot,
+                        mh_levels_before_pour.copy(),
+                        mh_downtime_before_pour.copy(),
+                        potential_if_melt_finish_minute,
+                        slot_score,
+                    )
+                )
+
+                # เก็บ slots มากขึ้นเพื่อให้มีตัวเลือก
+                if len(viable_slots_data) >= MAX_VIABLE_SLOTS_TO_CONSIDER:
+                    break
+
+        if viable_slots_data:
+            # 3. เลือก slot แบบ weighted random แทนที่จะเลือก slot แรกเสมอ
+            if diversity_factor > 0 and len(viable_slots_data) > 1:
+                # Sort by score (descending)
+                viable_slots_data.sort(key=lambda x: x[4], reverse=True)
+
+                # เลือกจากสุดท้าย 3 slots ที่ดีที่สุด หรือทั้งหมดถ้ามีน้อยกว่า
+                top_slots = viable_slots_data[: min(3, len(viable_slots_data))]
+
+                # Weighted selection
+                weights = [slot[4] for slot in top_slots]
+                if random.random() < diversity_factor:
+                    # Random selection from top slots
+                    selected_data = random.choice(top_slots)
+                else:
+                    # Select best slot
+                    selected_data = top_slots[0]
+            else:
+                # Pure greedy: select first viable slot
+                selected_data = viable_slots_data[0]
+
+            selected_start_slot = selected_data[0]
+
+            x_schedule_vector[2 * batch_idx_in_order] = selected_start_slot
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+            # Update global IF slots
+            for t_slot_update in range(
+                selected_start_slot, selected_start_slot + T_MELT
+            ):
+                global_if_used_slots[t_slot_update] = 1
+
+            # Update M&H state
+            internal_mh_levels_kg = selected_data[1]
+            internal_mh_downtime_remaining_min = selected_data[2]
+
+            # Simulate pour (same as before)
+            g_poured_amount_A = 0
+            g_poured_amount_B = 0
+            g_remaining_metal = IF_BATCH_OUTPUT_KG
+
+            if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A":
+                g_furnaces_in_fill_order = ["A", "B"]
+            elif PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B":
+                g_furnaces_in_fill_order = ["B", "A"]
+            else:
+                g_furnaces_in_fill_order = ["A", "B"]
+
+            for g_f_id in g_furnaces_in_fill_order:
+                if g_remaining_metal <= 0:
+                    break
+                g_space_in_furnace = (
+                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
+                )
+                g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
+                if g_amount_to_pour > 0:
+                    if g_f_id == "A":
+                        g_poured_amount_A = g_amount_to_pour
+                    else:
+                        g_poured_amount_B = g_amount_to_pour
+                    g_remaining_metal -= g_amount_to_pour
+
+            internal_mh_levels_kg["A"] = min(
+                internal_mh_levels_kg["A"] + g_poured_amount_A, MH_MAX_CAPACITY_KG["A"]
+            )
+            internal_mh_levels_kg["B"] = min(
+                internal_mh_levels_kg["B"] + g_poured_amount_B, MH_MAX_CAPACITY_KG["B"]
+            )
+
+            internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
+            internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
+            internal_last_mh_sim_minute = selected_data[3]
+
+            if_furnace_assignment_counter += 1
+            found_slot_for_batch = True
+        else:
+            # Fallback
+            x_schedule_vector[2 * batch_idx_in_order] = TOTAL_SLOTS
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+    return x_schedule_vector.astype(float)
+
+
+# เพิ่ม alternative approach: Relaxed Greedy
+def relaxed_greedy_assignment(batch_order, num_batches=NUM_BATCHES):
+    """
+    Relaxed version ที่ยอมให้มี small violations เพื่อเพิ่มความหลากหลาย
+    """
+    x_schedule_vector = np.full(num_batches * 2, -1, dtype=int)
+
+    # Simple time-based assignment with some randomness
+    current_time_slot = {"A": 0, "B": 0}  # Track last used slot for each furnace
+
+    available_furnaces = []
+    if USE_FURNACE_A:
+        available_furnaces.append(0)
+    if USE_FURNACE_B:
+        available_furnaces.append(1)
+
+    if not available_furnaces:
+        return x_schedule_vector.astype(float)
+
+    for i, batch_idx in enumerate(batch_order):
+        # เลือก furnace
+        if len(available_furnaces) == 1:
+            furnace_idx = available_furnaces[0]
+        else:
+            # Add some randomness in furnace selection
+            if random.random() < 0.3:  # 30% chance for random selection
+                furnace_idx = random.choice(available_furnaces)
+            else:
+                # เลือก furnace ที่ว่างเร็วที่สุด
+                furnace_idx = min(
+                    available_furnaces, key=lambda f: current_time_slot.get(f, 0)
+                )
+
+        # กำหนด start slot
+        furnace_key = "A" if furnace_idx == 0 else "B"
+        start_slot = current_time_slot[furnace_key]
+
+        # เพิ่ม randomness ในการเลือก start time (ภายในขอบเขตที่สมเหตุสมผล)
+        if random.random() < 0.2:  # 20% chance to add small delay
+            delay_slots = random.randint(1, 3)  # 1-3 slots delay
+            start_slot += delay_slots
+
+        # ตรวจสอบขอบเขต
+        start_slot = max(0, min(start_slot, TOTAL_SLOTS - T_MELT))
+
+        x_schedule_vector[2 * batch_idx] = start_slot
+        x_schedule_vector[2 * batch_idx + 1] = furnace_idx
+
+        # Update current time for this furnace
+        current_time_slot[furnace_key] = start_slot + T_MELT
+
+    return x_schedule_vector.astype(float)
+
+
+# ทดสอบ improved versions
+def test_improved_permutations():
+    """
+    ทดสอบ improved greedy assignment versions
+    """
+    print("=== Testing Improved Greedy Assignment ===")
+
+    test_perms = [
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  # Sequential
+        [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],  # Reverse
+        [5, 2, 8, 1, 9, 0, 4, 7, 3, 6],  # Random
+    ]
+
+    print("\n--- Testing Improved Greedy (diversity_factor=0.5) ---")
+    improved_results = []
+    for i, perm in enumerate(test_perms):
+        print(f"Perm {i+1}: {perm}")
+        x_vec = improved_greedy_assignment(perm, diversity_factor=0.5)
+        cost, makespan, components = scheduling_cost(x_vec)
+        improved_results.append((perm, cost, makespan, x_vec))
+        print(f"  Cost: {cost}, Makespan: {makespan}")
+
+    print("\n--- Testing Relaxed Greedy ---")
+    relaxed_results = []
+    for i, perm in enumerate(test_perms):
+        print(f"Perm {i+1}: {perm}")
+        x_vec = relaxed_greedy_assignment(perm)
+        cost, makespan, components = scheduling_cost(x_vec)
+        relaxed_results.append((perm, cost, makespan, x_vec))
+        print(f"  Cost: {cost}, Makespan: {makespan}")
+
+    # เปรียบเทียบผลลัพธ์
+    print("\n=== Improved Greedy Results ===")
+    improved_costs = [r[1] for r in improved_results]
+    print(f"Costs: {improved_costs}")
+    if len(set(improved_costs)) == 1:
+        print("⚠️  Still same costs with improved greedy")
+    else:
+        print("✅ Different costs with improved greedy!")
+
+    print("\n=== Relaxed Greedy Results ===")
+    relaxed_costs = [r[1] for r in relaxed_results]
+    print(f"Costs: {relaxed_costs}")
+    if len(set(relaxed_costs)) == 1:
+        print("⚠️  Still same costs with relaxed greedy")
+    else:
+        print("✅ Different costs with relaxed greedy!")
+
+    return improved_results, relaxed_results
+
+
+# เพิ่ม Balanced Greedy Assignment
+def balanced_greedy_assignment(
+    batch_order, num_batches=NUM_BATCHES, randomness_level=0.3
+):
+    """
+    Balanced approach ที่ให้ความหลากหลายแต่ยังคงคุณภาพ
+
+    Args:
+        batch_order: ลำดับ batch
+        num_batches: จำนวน batch
+        randomness_level: ระดับความสุ่ม (0.0-1.0)
+    """
+    x_schedule_vector = np.full(num_batches * 2, -1, dtype=int)
+    global_if_used_slots = np.zeros(TOTAL_SLOTS, dtype=int)
+
+    available_if_furnaces_for_assignment = []
+    if USE_FURNACE_A:
+        available_if_furnaces_for_assignment.append(0)
+    if USE_FURNACE_B:
+        available_if_furnaces_for_assignment.append(1)
+
+    if not available_if_furnaces_for_assignment:
+        return x_schedule_vector.astype(float)
+
+    # Internal M&H state
+    internal_mh_levels_kg = MH_INITIAL_LEVEL_KG.copy()
+    internal_mh_downtime_remaining_min = {"A": 0, "B": 0}
+    internal_last_mh_sim_minute = -1
+    if_furnace_assignment_counter = 0
+
+    # เพิ่ม batch priority based on order
+    batch_priorities = {batch_order[i]: i for i in range(len(batch_order))}
+
+    for batch_idx_in_order in batch_order:
+        # 1. Furnace selection with controlled randomness
+        if len(available_if_furnaces_for_assignment) == 1:
+            chosen_if_furnace_idx = available_if_furnaces_for_assignment[0]
+        else:
+            # Mix deterministic and random selection
+            if random.random() < randomness_level * 0.5:  # ลด randomness ลง
+                chosen_if_furnace_idx = random.choice(
+                    available_if_furnaces_for_assignment
+                )
+            else:
+                chosen_if_furnace_idx = available_if_furnaces_for_assignment[
+                    if_furnace_assignment_counter
+                    % len(available_if_furnaces_for_assignment)
+                ]
+
+        found_slot_for_batch = False
+        viable_slots_data = []
+
+        # 2. Find viable slots with extended search
+        max_slots_to_check = min(50, TOTAL_SLOTS - T_MELT + 1)  # เพิ่มจาก 5 เป็น 50
+
+        for potential_if_start_slot in range(max_slots_to_check):
+            # Check IF slot availability
+            is_if_globally_free = True
+            for t_if_check_slot in range(
+                potential_if_start_slot, potential_if_start_slot + T_MELT
+            ):
+                if (
+                    t_if_check_slot >= TOTAL_SLOTS
+                    or global_if_used_slots[t_if_check_slot] == 1
+                ):
+                    is_if_globally_free = False
+                    break
+
+            if not is_if_globally_free:
+                continue
+
+            potential_if_melt_finish_minute = (
+                potential_if_start_slot + T_MELT
+            ) * SLOT_DURATION
+
+            if potential_if_melt_finish_minute < internal_last_mh_sim_minute:
+                continue
+
+            # Check M&H capacity
+            mh_levels_before_pour, mh_downtime_before_pour = (
+                _greedy_simulate_mh_state_to_minute(
+                    potential_if_melt_finish_minute,
+                    internal_mh_levels_kg,
+                    internal_mh_downtime_remaining_min,
+                    internal_last_mh_sim_minute,
+                )
+            )
+
+            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - mh_levels_before_pour["A"]
+            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - mh_levels_before_pour["B"]
+            total_available_mh_capacity = available_capacity_A + available_capacity_B
+
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+                # Multi-criteria scoring
+                earliness_score = 1.0 / (potential_if_start_slot + 1)
+                mh_utilization_score = total_available_mh_capacity / (
+                    MH_MAX_CAPACITY_KG["A"] + MH_MAX_CAPACITY_KG["B"]
+                )
+
+                # เพิ่ม batch priority score
+                batch_priority_score = 1.0 / (batch_priorities[batch_idx_in_order] + 1)
+
+                # Combined score
+                slot_score = (
+                    earliness_score * 0.5
+                    + mh_utilization_score * 0.3
+                    + batch_priority_score * 0.2
+                )
+
+                viable_slots_data.append(
+                    (
+                        potential_if_start_slot,
+                        mh_levels_before_pour.copy(),
+                        mh_downtime_before_pour.copy(),
+                        potential_if_melt_finish_minute,
+                        slot_score,
+                    )
+                )
+
+        if viable_slots_data:
+            # 3. Smart slot selection
+            viable_slots_data.sort(key=lambda x: x[4], reverse=True)  # Sort by score
+
+            # เลือกจาก top candidates แต่มี randomness
+            num_top_candidates = min(5, len(viable_slots_data))
+            top_candidates = viable_slots_data[:num_top_candidates]
+
+            if random.random() < randomness_level:
+                # Random selection from top candidates
+                selected_data = random.choice(top_candidates)
+            else:
+                # Select best candidate
+                selected_data = top_candidates[0]
+
+            selected_start_slot = selected_data[0]
+
+            x_schedule_vector[2 * batch_idx_in_order] = selected_start_slot
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+            # Update global IF slots
+            for t_slot_update in range(
+                selected_start_slot, selected_start_slot + T_MELT
+            ):
+                global_if_used_slots[t_slot_update] = 1
+
+            # Update M&H state (same as before)
+            internal_mh_levels_kg = selected_data[1]
+            internal_mh_downtime_remaining_min = selected_data[2]
+
+            # Simulate pour
+            g_poured_amount_A = 0
+            g_poured_amount_B = 0
+            g_remaining_metal = IF_BATCH_OUTPUT_KG
+
+            if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A":
+                g_furnaces_in_fill_order = ["A", "B"]
+            elif PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B":
+                g_furnaces_in_fill_order = ["B", "A"]
+            else:
+                g_furnaces_in_fill_order = ["A", "B"]
+
+            for g_f_id in g_furnaces_in_fill_order:
+                if g_remaining_metal <= 0:
+                    break
+                g_space_in_furnace = (
+                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
+                )
+                g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
+                if g_amount_to_pour > 0:
+                    if g_f_id == "A":
+                        g_poured_amount_A = g_amount_to_pour
+                    else:
+                        g_poured_amount_B = g_amount_to_pour
+                    g_remaining_metal -= g_amount_to_pour
+
+            internal_mh_levels_kg["A"] = min(
+                internal_mh_levels_kg["A"] + g_poured_amount_A, MH_MAX_CAPACITY_KG["A"]
+            )
+            internal_mh_levels_kg["B"] = min(
+                internal_mh_levels_kg["B"] + g_poured_amount_B, MH_MAX_CAPACITY_KG["B"]
+            )
+
+            internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
+            internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
+            internal_last_mh_sim_minute = selected_data[3]
+
+            if_furnace_assignment_counter += 1
+            found_slot_for_batch = True
+        else:
+            # Fallback
+            x_schedule_vector[2 * batch_idx_in_order] = TOTAL_SLOTS
+            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+
+    return x_schedule_vector.astype(float)
+
+
+# ทดสอบ balanced approach
+def test_balanced_permutations():
+    """
+    ทดสอบ balanced greedy assignment
+    """
+    print("=== Testing Balanced Greedy Assignment ===")
+
+    test_perms = [
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  # Sequential
+        [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],  # Reverse
+        [5, 2, 8, 1, 9, 0, 4, 7, 3, 6],  # Random
+        [2, 7, 1, 9, 4, 0, 8, 3, 6, 5],  # Another random
+        [4, 6, 2, 8, 1, 9, 3, 0, 7, 5],  # Another random
+    ]
+
+    print("\n--- Testing Balanced Greedy (randomness=0.3) ---")
+    balanced_results = []
+    for i, perm in enumerate(test_perms):
+        print(f"Perm {i+1}: {perm}")
+        x_vec = balanced_greedy_assignment(perm, randomness_level=0.3)
+        cost, makespan, components = scheduling_cost(x_vec)
+        balanced_results.append((perm, cost, makespan, x_vec))
+        print(f"  Cost: {cost}, Makespan: {makespan}")
+
+    # เปรียบเทียบผลลัพธ์
+    print("\n=== Balanced Greedy Results ===")
+    balanced_costs = [r[1] for r in balanced_results]
+    balanced_makespans = [r[2] for r in balanced_results]
+
+    print(f"Costs: {balanced_costs}")
+    print(f"Makespans: {balanced_makespans}")
+
+    unique_costs = len(set(balanced_costs))
+    unique_makespans = len(set(balanced_makespans))
+
+    if unique_costs > 1 or unique_makespans > 1:
+        print(
+            f"✅ Success! Found {unique_costs} different costs and {unique_makespans} different makespans"
+        )
+        print(f"   Cost range: {min(balanced_costs):.1f} - {max(balanced_costs):.1f}")
+        print(
+            f"   Makespan range: {min(balanced_makespans):.1f} - {max(balanced_makespans):.1f}"
+        )
+    else:
+        print("⚠️  Still similar results")
+
+    return balanced_results
+
+
+# แก้ไข HGAProblem ให้ใช้ balanced approach
+class ImprovedHGAProblem(Problem):
+    def __init__(self, num_batches_hga=NUM_BATCHES):
+        super().__init__(
+            n_var=num_batches_hga,
+            n_obj=1,  # Single objective
+            n_constr=0,
+            xl=0,
+            xu=num_batches_hga - 1,
+        )
+        self.generation_count = 0  # Track generation for adaptive randomness
+
+    def _evaluate(self, P, out, *args, **kwargs):
+        results_f = []
+
+        # Adaptive randomness: ลด randomness เมื่อ generation เพิ่มขึ้น
+        base_randomness = 0.4  # เริ่มต้นที่ 0.4
+        adaptive_randomness = max(
+            0.1, base_randomness - (self.generation_count * 0.003)
+        )
+
+        for batch_order_perm in P:
+            # ใช้ balanced_greedy_assignment แทน greedy_assignment
+            x_sched_vec = balanced_greedy_assignment(
+                batch_order_perm,
+                num_batches=self.n_var,
+                randomness_level=adaptive_randomness,
+            )
+
+            cost, makespan, cost_components = scheduling_cost(x_sched_vec)
+
+            # เพิ่ม penalty สำหรับ makespan ที่ผิดปกติ
+            if makespan > TOTAL_SLOTS * SLOT_DURATION * 1.2:
+                cost += 1e12
+
+            # ปรับ cost ให้อยู่ในช่วงที่เหมาะสม
+            # ถ้า cost สูงมากเพราะ penalty ให้ปรับลง
+            if cost > 1e10:  # ถ้า cost สูงมากเพราะ penalty
+                # ลด penalty ลงแต่ยังคงรักษาการเรียงลำดับ
+                base_cost = cost_components.get("base_if_energy_kwh", 5000)
+                penalty_cost = cost - base_cost
+                # ปรับ penalty ให้อยู่ในช่วงที่สมเหตุสมผล
+                adjusted_penalty = min(
+                    penalty_cost, base_cost * 2
+                )  # penalty ไม่เกิน 2 เท่าของ base
+                cost = base_cost + adjusted_penalty
+
+            results_f.append([cost])
+
+        # เพิ่ม generation count
+        self.generation_count += 1
+
+        out["F"] = np.array(results_f)
+
+
+# สร้าง main function ใหม่ที่ใช้ ImprovedHGAProblem
+def run_improved_ga():
+    """
+    รัน improved GA ที่ใช้ balanced greedy assignment
+    """
+    print("=== Running Improved GA with Balanced Greedy Assignment ===")
+
+    problem = ImprovedHGAProblem(NUM_BATCHES)
+
+    # ใช้ parameters ที่เหมาะสม
+    sampling = PermutationRandomSampling()
+    crossover = OrderCrossover()
+    mutation = InversionMutation()
+
+    algorithm = GA(
+        pop_size=100,  # ลดขนาด population
+        sampling=sampling,
+        crossover=crossover,
+        mutation=mutation,
+        eliminate_duplicates=True,
+    )
+
+    termination = get_termination("n_gen", 50)  # ลดจำนวน generation
+
+    print("Starting optimization...")
+    result = minimize(
+        problem,
+        algorithm,
+        termination,
+        seed=42,
+        verbose=True,
+        save_history=True,
+    )
+
+    print("Optimization finished.")
+
+    # Plot convergence
+    if result.history:
+        best_cost_per_gen = [np.min(gen.opt.get("F")) for gen in result.history]
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(
+            np.arange(len(best_cost_per_gen)),
+            best_cost_per_gen,
+            marker="o",
+            linestyle="-",
+        )
+        plt.title("Improved GA Cost Convergence (Balanced Greedy Assignment)")
+        plt.xlabel("Generation")
+        plt.ylabel("Best Cost Found")
+        plt.grid(True)
+        plt.show()
+
+    # แสดงผลลัพธ์
+    print("\nProcessing results...")
+    if result.X is None:
+        print("\nNo solution found.")
+    else:
+        print(f"\nFound Best Solution:")
+        best_permutation = result.X
+        best_cost_value = result.F[0]
+
+        # คำนวณรายละเอียดของ solution ที่ดีที่สุด
+        x_vector = balanced_greedy_assignment(best_permutation, num_batches=NUM_BATCHES)
+        final_cost, final_makespan, cost_details = scheduling_cost(x_vector)
+
+        print(f"  Best Permutation: {best_permutation}")
+        print(f"  Best Cost (Objective): {best_cost_value:.2f}")
+        print(f"  Actual Cost: {final_cost:.2f}")
+        print(f"  Makespan: {final_makespan:.2f} min")
+
+        if cost_details:
+            print(f"  --------------------------------------------------")
+            print(f"  Cost Component Details:")
+            print(
+                f"    Base IF Energy (kWh)     : {cost_details['base_if_energy_kwh']:.2f}"
+            )
+            print(
+                f"    IF Holding Penalty       : {cost_details['if_holding_penalty']:.2f}"
+            )
+            print(
+                f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f}"
+            )
+            print(
+                f"    MH Idle Penalty          : {cost_details['mh_idle_penalty']:.2f}"
+            )
+            print(
+                f"    MH Overflow Penalty      : {cost_details['mh_overflow_penalty']:.2f}"
+            )
+            print(
+                f"    Unpoured Batch Penalty   : {cost_details['unpoured_batch_penalty']:.2f}"
+            )
+
+        # Plot schedule
+        try:
+            schedule = decode_schedule(x_vector)
+            if schedule:
+                plot_title = (
+                    f"Improved GA - Best Schedule Found\n"
+                    f"Cost: {best_cost_value:.0f}, Makespan: {final_makespan:.0f} min"
+                )
+                plot_schedule_and_mh(schedule, title=plot_title)
+            else:
+                print("  Could not decode schedule for plotting.")
+        except Exception as e:
+            print(f"  Error plotting schedule: {e}")
+
+    return result
+
+
+# สร้าง Final Improved GA Solution
+def final_balanced_greedy_assignment(
+    batch_order, num_batches=NUM_BATCHES, randomness_level=0.2
+):
+    """
+    Final version ที่แก้ไขปัญหา penalty สูงเกินไป
+    ลดความซับซ้อนแต่เพิ่มความหลากหลาย
+    """
+    x_schedule_vector = np.full(num_batches * 2, -1, dtype=int)
+
+    # ใช้ simple time-based assignment แต่มี randomness ที่ควบคุมได้
+    current_time_slot = 0  # Track current time for sequential assignment
+
+    available_furnaces = []
+    if USE_FURNACE_A:
+        available_furnaces.append(0)
+    if USE_FURNACE_B:
+        available_furnaces.append(1)
+
+    if not available_furnaces:
+        return x_schedule_vector.astype(float)
+
+    # เพิ่ม batch order influence
+    batch_priorities = {batch_order[i]: i for i in range(len(batch_order))}
+
+    for i, batch_idx in enumerate(batch_order):
+        # เลือก furnace แบบ smart
+        if len(available_furnaces) == 1:
+            furnace_idx = available_furnaces[0]
+        else:
+            # Mix deterministic and random selection
+            if random.random() < randomness_level:
+                furnace_idx = random.choice(available_furnaces)
+            else:
+                # Alternate between furnaces based on batch priority
+                furnace_idx = available_furnaces[
+                    batch_priorities[batch_idx] % len(available_furnaces)
+                ]
+
+        # กำหนด start slot แบบ controlled
+        base_start_slot = current_time_slot
+
+        # เพิ่ม small randomness ในการเลือก start time
+        if random.random() < randomness_level:
+            # เพิ่ม delay เล็กน้อย (1-2 slots)
+            delay_slots = random.randint(0, 2)
+            start_slot = base_start_slot + delay_slots
+        else:
+            start_slot = base_start_slot
+
+        # ตรวจสอบขอบเขต
+        start_slot = max(0, min(start_slot, TOTAL_SLOTS - T_MELT))
+
+        x_schedule_vector[2 * batch_idx] = start_slot
+        x_schedule_vector[2 * batch_idx + 1] = furnace_idx
+
+        # Update current time for next batch
+        current_time_slot = start_slot + T_MELT
+
+        # เพิ่ม small gap เพื่อหลีกเลี่ยง overlap
+        if random.random() < 0.1:  # 10% chance to add gap
+            current_time_slot += random.randint(1, 2)
+
+    return x_schedule_vector.astype(float)
+
+
+# สร้าง Final Problem Class
+class FinalHGAProblem(Problem):
+    def __init__(self, num_batches_hga=NUM_BATCHES):
+        super().__init__(
+            n_var=num_batches_hga,
+            n_obj=1,
+            n_constr=0,
+            xl=0,
+            xu=num_batches_hga - 1,
+        )
+        self.generation_count = 0
+
+    def _evaluate(self, P, out, *args, **kwargs):
+        results_f = []
+
+        # Adaptive randomness ที่ลดลงเรื่อยๆ
+        base_randomness = 0.3
+        adaptive_randomness = max(
+            0.05, base_randomness - (self.generation_count * 0.005)
+        )
+
+        for batch_order_perm in P:
+            # ใช้ final_balanced_greedy_assignment
+            x_sched_vec = final_balanced_greedy_assignment(
+                batch_order_perm,
+                num_batches=self.n_var,
+                randomness_level=adaptive_randomness,
+            )
+
+            cost, makespan, cost_components = scheduling_cost(x_sched_vec)
+
+            # แทนที่จะปรับ cost หลังได้รับ penalty สูง
+            # ให้ใช้ weighted sum ที่เหมาะสม
+            base_cost = cost_components.get("base_if_energy_kwh", 5000)
+            holding_penalty = cost_components.get("if_holding_penalty", 0)
+            general_penalty = cost_components.get("if_general_penalty", 0)
+            mh_penalties = (
+                cost_components.get("mh_idle_penalty", 0)
+                + cost_components.get("mh_overflow_penalty", 0)
+                + cost_components.get("unpoured_batch_penalty", 0)
+            )
+
+            # ใช้ scaled penalties แทนที่จะใช้ penalty ตัวเต็ม
+            scaled_general_penalty = min(
+                general_penalty, base_cost * 0.5
+            )  # จำกัด penalty
+            scaled_mh_penalties = min(mh_penalties, base_cost * 0.3)
+
+            # รวม cost แบบ controlled
+            final_cost = (
+                base_cost
+                + holding_penalty
+                + scaled_general_penalty
+                + scaled_mh_penalties
+                + (makespan * 0.1)  # เพิ่ม makespan penalty เล็กน้อย
+            )
+
+            results_f.append([final_cost])
+
+        self.generation_count += 1
+        out["F"] = np.array(results_f)
+
+
+# Final test function
+def test_final_approach():
+    """
+    ทดสอบ final approach
+    """
+    print("=== Testing Final Approach ===")
+
+    test_perms = [
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  # Sequential
+        [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],  # Reverse
+        [5, 2, 8, 1, 9, 0, 4, 7, 3, 6],  # Random
+        [2, 7, 1, 9, 4, 0, 8, 3, 6, 5],  # Another random
+        [4, 6, 2, 8, 1, 9, 3, 0, 7, 5],  # Another random
+    ]
+
+    print("\n--- Testing Final Balanced Greedy ---")
+    final_results = []
+    for i, perm in enumerate(test_perms):
+        print(f"Perm {i+1}: {perm}")
+        x_vec = final_balanced_greedy_assignment(perm, randomness_level=0.2)
+        cost, makespan, components = scheduling_cost(x_vec)
+
+        # คำนวณ final cost แบบเดียวกับ FinalHGAProblem
+        base_cost = components.get("base_if_energy_kwh", 5000)
+        holding_penalty = components.get("if_holding_penalty", 0)
+        general_penalty = components.get("if_general_penalty", 0)
+        mh_penalties = (
+            components.get("mh_idle_penalty", 0)
+            + components.get("mh_overflow_penalty", 0)
+            + components.get("unpoured_batch_penalty", 0)
+        )
+
+        scaled_general_penalty = min(general_penalty, base_cost * 0.5)
+        scaled_mh_penalties = min(mh_penalties, base_cost * 0.3)
+
+        final_cost = (
+            base_cost
+            + holding_penalty
+            + scaled_general_penalty
+            + scaled_mh_penalties
+            + (makespan * 0.1)
+        )
+
+        final_results.append((perm, final_cost, makespan, x_vec))
+        print(
+            f"  Original Cost: {cost:.1f}, Final Cost: {final_cost:.1f}, Makespan: {makespan}"
+        )
+
+    # เปรียบเทียบผลลัพธ์
+    print("\n=== Final Results ===")
+    final_costs = [r[1] for r in final_results]
+    final_makespans = [r[2] for r in final_results]
+
+    print(f"Final Costs: {[f'{c:.1f}' for c in final_costs]}")
+    print(f"Makespans: {final_makespans}")
+
+    unique_costs = len(set([round(c, 1) for c in final_costs]))
+    unique_makespans = len(set(final_makespans))
+
+    if unique_costs > 1 or unique_makespans > 1:
+        print(
+            f"✅ Success! Found {unique_costs} different costs and {unique_makespans} different makespans"
+        )
+        print(f"   Cost range: {min(final_costs):.1f} - {max(final_costs):.1f}")
+        print(
+            f"   Makespan range: {min(final_makespans):.1f} - {max(final_makespans):.1f}"
+        )
+        return True
+    else:
+        print("⚠️  Still similar results")
+        return False
+
+
+# Final GA run function
+def run_final_ga():
+    """
+    รัน final GA version
+    """
+    print("=== Running Final GA Version ===")
+
+    # ทดสอบก่อนว่า approach ใหม่ทำงานหรือไม่
+    if not test_final_approach():
+        print("❌ Final approach test failed. Stopping.")
+        return None
+
+    print("\n=== Starting Final GA Optimization ===")
+
+    problem = FinalHGAProblem(NUM_BATCHES)
+
+    sampling = PermutationRandomSampling()
+    crossover = OrderCrossover()
+    mutation = InversionMutation()
+
+    algorithm = GA(
+        pop_size=80,
+        sampling=sampling,
+        crossover=crossover,
+        mutation=mutation,
+        eliminate_duplicates=True,
+    )
+
+    termination = get_termination("n_gen", 30)
+
+    print("Starting optimization...")
+    result = minimize(
+        problem,
+        algorithm,
+        termination,
+        seed=42,
+        verbose=True,
+        save_history=True,
+    )
+
+    print("Optimization finished.")
+
+    # Plot convergence
+    if result.history:
+        best_cost_per_gen = [np.min(gen.opt.get("F")) for gen in result.history]
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(
+            np.arange(len(best_cost_per_gen)),
+            best_cost_per_gen,
+            marker="o",
+            linestyle="-",
+        )
+        plt.title("Final GA Cost Convergence")
+        plt.xlabel("Generation")
+        plt.ylabel("Best Cost Found")
+        plt.grid(True)
+        plt.show()
+
+    # แสดงผลลัพธ์
+    print("\nProcessing results...")
+    if result.X is None:
+        print("\nNo solution found.")
+    else:
+        print(f"\nFound Best Solution:")
+        best_permutation = result.X
+        best_cost_value = result.F[0]
+
+        x_vector = final_balanced_greedy_assignment(
+            best_permutation, num_batches=NUM_BATCHES
+        )
+        original_cost, final_makespan, cost_details = scheduling_cost(x_vector)
+
+        print(f"  Best Permutation: {best_permutation}")
+        print(f"  GA Cost (Scaled): {best_cost_value:.2f}")
+        print(f"  Original Cost: {original_cost:.2f}")
+        print(f"  Makespan: {final_makespan:.2f} min")
+
+        if cost_details:
+            print(f"  --------------------------------------------------")
+            print(f"  Cost Component Details:")
+            print(
+                f"    Base IF Energy (kWh)     : {cost_details['base_if_energy_kwh']:.2f}"
+            )
+            print(
+                f"    IF Holding Penalty       : {cost_details['if_holding_penalty']:.2f}"
+            )
+            print(
+                f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f}"
+            )
+            print(
+                f"    MH Penalties (total)     : {cost_details['mh_idle_penalty'] + cost_details['mh_overflow_penalty'] + cost_details['unpoured_batch_penalty']:.2f}"
+            )
+
+        # Plot schedule
+        try:
+            schedule = decode_schedule(x_vector)
+            if schedule:
+                plot_title = (
+                    f"Final GA - Best Schedule\n"
+                    f"GA Cost: {best_cost_value:.0f}, Makespan: {final_makespan:.0f} min"
+                )
+                plot_schedule_and_mh(schedule, title=plot_title)
+        except Exception as e:
+            print(f"  Error plotting schedule: {e}")
+
+    return result
+
+
+# =================== NEW APPROACH: DIRECT SCHEDULING GA ===================
+
+import numpy as np
+from pymoo.core.sampling import Sampling
+from pymoo.core.crossover import Crossover
+from pymoo.core.mutation import Mutation
+from pymoo.core.repair import Repair
+
+
+class DirectSchedulingSampling(Sampling):
+    """
+    Direct scheduling representation: [start_time_1, furnace_1, start_time_2, furnace_2, ...]
+    แทนที่จะใช้ permutation ให้ encode ตรงๆ เป็น schedule
+    """
+
+    def _do(self, problem, n_samples, **kwargs):
+        n_batches = problem.n_var // 2
+        X = np.zeros((n_samples, problem.n_var))
+
+        available_furnaces = []
+        if USE_FURNACE_A:
+            available_furnaces.append(0)
+        if USE_FURNACE_B:
+            available_furnaces.append(1)
+
+        for i in range(n_samples):
+            # สำหรับแต่ละ individual สร้าง schedule โดย MH-aware sampling
+            X[i] = self._create_mh_aware_schedule(n_batches, available_furnaces)
+
+        return X
+
+    def _create_mh_aware_schedule(self, n_batches, available_furnaces):
+        """
+        สร้าง schedule ที่คำนึงถึง M&H capacity
+        """
+        schedule = np.zeros(n_batches * 2)
+
+        # Simulate M&H state
+        mh_levels = MH_INITIAL_LEVEL_KG.copy()
+        mh_downtime = {"A": 0, "B": 0}
+        current_time_minute = 0
+
+        # Track IF usage
+        if_last_finish_time = {"A": 0, "B": 0}
+
+        for batch_idx in range(n_batches):
+            # เลือก furnace
+            if len(available_furnaces) == 1:
+                furnace_idx = available_furnaces[0]
+            else:
+                furnace_idx = np.random.choice(available_furnaces)
+
+            furnace_key = "A" if furnace_idx == 0 else "B"
+
+            # หา earliest start time ที่ IF ว่าง
+            earliest_if_start = if_last_finish_time[furnace_key]
+
+            # หา start time ที่ M&H พอรับน้ำโลหะได้
+            mh_ready_time = self._find_mh_ready_time(
+                earliest_if_start, mh_levels, mh_downtime
+            )
+
+            # เลือก start time (มี randomness เล็กน้อย)
+            base_start_time = max(earliest_if_start, mh_ready_time)
+            random_delay = np.random.randint(0, 30)  # 0-30 นาที delay
+            start_time_minute = base_start_time + random_delay
+
+            # แปลงเป็น slot
+            start_slot = min(start_time_minute // SLOT_DURATION, TOTAL_SLOTS - T_MELT)
+
+            schedule[2 * batch_idx] = start_slot
+            schedule[2 * batch_idx + 1] = furnace_idx
+
+            # Update states
+            finish_time_minute = (start_slot + T_MELT) * SLOT_DURATION
+            if_last_finish_time[furnace_key] = finish_time_minute
+
+            # Simulate pour
+            self._simulate_pour(finish_time_minute, mh_levels, mh_downtime)
+
+        return schedule
+
+    def _find_mh_ready_time(self, earliest_time, mh_levels, mh_downtime):
+        """
+        หาเวลาที่ M&H พร้อมรับน้ำโลหะ
+        """
+        sim_time = earliest_time
+        sim_levels = mh_levels.copy()
+        sim_downtime = mh_downtime.copy()
+
+        while sim_time < 1440:  # ไม่เกิน 1 วัน
+            # Simulate M&H consumption
+            for furnace_id in ["A", "B"]:
+                if sim_downtime[furnace_id] > 0:
+                    sim_downtime[furnace_id] = max(0, sim_downtime[furnace_id] - 1)
+                elif sim_levels[furnace_id] > MH_EMPTY_THRESHOLD_KG:
+                    sim_levels[furnace_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[furnace_id]
+                    sim_levels[furnace_id] = max(sim_levels[furnace_id], 0)
+
+            # ตรวจสอบว่า M&H พอรับน้ำโลหะได้หรือไม่
+            total_available = max(0, MH_MAX_CAPACITY_KG["A"] - sim_levels["A"]) + max(
+                0, MH_MAX_CAPACITY_KG["B"] - sim_levels["B"]
+            )
+
+            if total_available >= IF_BATCH_OUTPUT_KG and all(
+                dt == 0 for dt in sim_downtime.values()
+            ):
+                return sim_time
+
+            sim_time += 1
+
+        return sim_time  # fallback
+
+    def _simulate_pour(self, pour_time_minute, mh_levels, mh_downtime):
+        """
+        จำลองการเท และ update M&H state
+        """
+        # เลือกเตาที่จะเทก่อน (ตาม preference)
+        if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A":
+            furnace_order = ["A", "B"]
+        elif PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B":
+            furnace_order = ["B", "A"]
+        else:
+            furnace_order = ["A", "B"]
+
+        remaining_metal = IF_BATCH_OUTPUT_KG
+
+        for furnace_id in furnace_order:
+            if remaining_metal <= 0:
+                break
+
+            available_space = MH_MAX_CAPACITY_KG[furnace_id] - mh_levels[furnace_id]
+            pour_amount = min(remaining_metal, available_space)
+
+            if pour_amount > 0:
+                mh_levels[furnace_id] += pour_amount
+                remaining_metal -= pour_amount
+
+        # Set downtime
+        mh_downtime["A"] = POST_POUR_DOWNTIME_MIN
+        mh_downtime["B"] = POST_POUR_DOWNTIME_MIN
+
+
+class ScheduleRepair(Repair):
+    """
+    แก้ไข schedule ที่ไม่ valid (เช่น overlap, out of bounds)
+    """
+
+    def _do(self, problem, X, **kwargs):
+        n_batches = problem.n_var // 2
+
+        for i in range(len(X)):
+            X[i] = self._repair_individual(X[i], n_batches)
+
+        return X
+
+    def _repair_individual(self, x, n_batches):
+        """
+        แก้ไข individual ที่มีปัญหา
+        """
+        schedule_data = []
+
+        # แยก data เป็น (start_slot, furnace, batch_id)
+        for batch_idx in range(n_batches):
+            start_slot = int(x[2 * batch_idx])
+            furnace_idx = int(round(x[2 * batch_idx + 1]))
+
+            # Fix bounds
+            start_slot = max(0, min(start_slot, TOTAL_SLOTS - T_MELT))
+            furnace_idx = max(0, min(furnace_idx, 1))
+
+            schedule_data.append([start_slot, furnace_idx, batch_idx])
+
+        # Sort by start time
+        schedule_data.sort(key=lambda item: item[0])
+
+        # Fix overlaps
+        furnace_last_end = {"A": 0, "B": 0}
+
+        for item in schedule_data:
+            start_slot, furnace_idx, batch_idx = item
+            furnace_key = "A" if furnace_idx == 0 else "B"
+
+            # ตรวจสอบ overlap
+            if start_slot < furnace_last_end[furnace_key]:
+                start_slot = furnace_last_end[furnace_key]
+                start_slot = min(start_slot, TOTAL_SLOTS - T_MELT)
+                item[0] = start_slot
+
+            # Update last end time
+            furnace_last_end[furnace_key] = start_slot + T_MELT
+
+        # Rebuild x
+        repaired_x = np.zeros_like(x)
+        for start_slot, furnace_idx, batch_idx in schedule_data:
+            repaired_x[2 * batch_idx] = start_slot
+            repaired_x[2 * batch_idx + 1] = furnace_idx
+
+        return repaired_x
+
+
+class ScheduleCrossover(Crossover):
+    """
+    Custom crossover สำหรับ schedule: แบ่งเป็น time segments แล้วแลกเปลี่ยน
+    """
+
+    def __init__(self):
+        super().__init__(2, 2)  # 2 parents, 2 offspring
+
+    def _do(self, problem, X, **kwargs):
+        # X มาเป็น list แทนที่จะเป็น array ใน pymoo บางเวอร์ชัน
+        if isinstance(X, list):
+            X = np.array(X)
+
+        if len(X.shape) == 1:
+            # Single parent case - duplicate it
+            X = np.array([X, X])
+
+        n_parents, n_var = X.shape
+        n_batches = n_var // 2
+
+        # สร้าง offspring
+        Y = np.zeros((2, n_var))
+
+        parent1, parent2 = X[0], X[1]
+
+        # Time-based crossover
+        crossover_time = np.random.randint(0, TOTAL_SLOTS)
+
+        offspring1, offspring2 = self._time_based_crossover(
+            parent1, parent2, crossover_time, n_batches
+        )
+
+        Y[0] = offspring1
+        Y[1] = offspring2
+
+        return Y
+
+    def _time_based_crossover(self, parent1, parent2, crossover_time, n_batches):
+        """
+        แบ่ง schedule ตาม time แล้วแลกเปลี่ยน
+        """
+        offspring1 = parent1.copy()
+        offspring2 = parent2.copy()
+
+        # แยก batches ตาม time
+        p1_early_batches = []
+        p1_late_batches = []
+        p2_early_batches = []
+        p2_late_batches = []
+
+        for batch_idx in range(n_batches):
+            p1_start = parent1[2 * batch_idx]
+            p2_start = parent2[2 * batch_idx]
+
+            if p1_start < crossover_time:
+                p1_early_batches.append(batch_idx)
+            else:
+                p1_late_batches.append(batch_idx)
+
+            if p2_start < crossover_time:
+                p2_early_batches.append(batch_idx)
+            else:
+                p2_late_batches.append(batch_idx)
+
+        # สร้าง offspring 1: early จาก parent1, late จาก parent2
+        for batch_idx in p2_late_batches:
+            offspring1[2 * batch_idx] = parent2[2 * batch_idx]
+            offspring1[2 * batch_idx + 1] = parent2[2 * batch_idx + 1]
+
+        # สร้าง offspring 2: early จาก parent2, late จาก parent1
+        for batch_idx in p1_late_batches:
+            offspring2[2 * batch_idx] = parent1[2 * batch_idx]
+            offspring2[2 * batch_idx + 1] = parent1[2 * batch_idx + 1]
+
+        return offspring1, offspring2
+
+
+class ScheduleMutation(Mutation):
+    """
+    Custom mutation สำหรับ schedule
+    """
+
+    def __init__(self, prob=0.1):
+        super().__init__()
+        self.prob = prob
+
+    def _do(self, problem, X, **kwargs):
+        n_var = X.shape[1]
+        n_batches = n_var // 2
+
+        for i in range(len(X)):
+            if np.random.random() < self.prob:
+                X[i] = self._mutate_individual(X[i], n_batches)
+
+        return X
+
+    def _mutate_individual(self, x, n_batches):
+        """
+        Mutate individual schedule
+        """
+        mutated_x = x.copy()
+
+        # เลือก mutation type
+        mutation_type = np.random.choice(
+            ["time_shift", "furnace_swap", "batch_reschedule"]
+        )
+
+        if mutation_type == "time_shift":
+            # เลื่อนเวลาของ batch สุ่ม
+            batch_idx = np.random.randint(n_batches)
+            current_start = int(mutated_x[2 * batch_idx])
+
+            # เลื่อน ±10 slots
+            shift = np.random.randint(-10, 11)
+            new_start = max(0, min(current_start + shift, TOTAL_SLOTS - T_MELT))
+            mutated_x[2 * batch_idx] = new_start
+
+        elif mutation_type == "furnace_swap":
+            # เปลี่ยนเตาของ batch สุ่ม
+            available_furnaces = []
+            if USE_FURNACE_A:
+                available_furnaces.append(0)
+            if USE_FURNACE_B:
+                available_furnaces.append(1)
+
+            if len(available_furnaces) > 1:
+                batch_idx = np.random.randint(n_batches)
+                current_furnace = int(mutated_x[2 * batch_idx + 1])
+                new_furnace = np.random.choice(
+                    [f for f in available_furnaces if f != current_furnace]
+                )
+                mutated_x[2 * batch_idx + 1] = new_furnace
+
+        elif mutation_type == "batch_reschedule":
+            # จัดตารางใหม่ทั้งหมดสำหรับ batch สุ่ม
+            batch_idx = np.random.randint(n_batches)
+
+            # หาเวลาใหม่โดยพิจารณา M&H
+            new_start = np.random.randint(0, max(1, TOTAL_SLOTS - T_MELT))
+            new_furnace = np.random.choice(
+                [0, 1] if (USE_FURNACE_A and USE_FURNACE_B) else [0]
+            )
+
+            mutated_x[2 * batch_idx] = new_start
+            mutated_x[2 * batch_idx + 1] = new_furnace
+
+        return mutated_x
+
+
+# สร้าง Direct Scheduling Problem
+class DirectSchedulingProblem(Problem):
+    """
+    Direct scheduling problem ที่ encode เป็น [start_time, furnace] pairs
+    """
+
+    def __init__(self, num_batches=NUM_BATCHES):
+        super().__init__(
+            n_var=num_batches * 2,  # [start_slot, furnace] สำหรับแต่ละ batch
+            n_obj=1,
+            n_constr=0,
+            xl=np.zeros(num_batches * 2),  # Lower bounds
+            xu=np.array(
+                [
+                    TOTAL_SLOTS - T_MELT if i % 2 == 0 else 1
+                    for i in range(num_batches * 2)
+                ]
+            ),  # Upper bounds
+        )
+        self.num_batches = num_batches
+
+    def _evaluate(self, X, out, **kwargs):
+        results_f = []
+
+        for individual in X:
+            # แปลง individual เป็น schedule format
+            schedule_vector = individual.copy()
+
+            # คำนวณ cost
+            cost, makespan, cost_components = scheduling_cost(schedule_vector)
+
+            # ใช้ scaled cost แบบเดียวกับ FinalHGAProblem
+            base_cost = cost_components.get("base_if_energy_kwh", 5000)
+            holding_penalty = cost_components.get("if_holding_penalty", 0)
+            general_penalty = cost_components.get("if_general_penalty", 0)
+            mh_penalties = (
+                cost_components.get("mh_idle_penalty", 0)
+                + cost_components.get("mh_overflow_penalty", 0)
+                + cost_components.get("unpoured_batch_penalty", 0)
+            )
+
+            # Scale penalties
+            scaled_general_penalty = min(general_penalty, base_cost * 0.5)
+            scaled_mh_penalties = min(mh_penalties, base_cost * 0.3)
+
+            final_cost = (
+                base_cost
+                + holding_penalty
+                + scaled_general_penalty
+                + scaled_mh_penalties
+                + (makespan * 0.1)
+            )
+
+            results_f.append([final_cost])
+
+        out["F"] = np.array(results_f)
+
+
+# Test function สำหรับ Direct Scheduling approach
+def test_direct_scheduling():
+    """
+    ทดสอบ Direct Scheduling approach
+    """
+    print("=== Testing Direct Scheduling Approach ===")
+
+    # สร้าง problem
+    problem = DirectSchedulingProblem(NUM_BATCHES)
+
+    # สร้าง sampling
+    sampling = DirectSchedulingSampling()
+
+    # สร้าง test population
+    test_pop = sampling._do(problem, 5)
+
+    print("\nGenerated schedules:")
+    for i, individual in enumerate(test_pop):
+        print(f"Individual {i+1}:")
+        cost, makespan, components = scheduling_cost(individual)
+
+        base_cost = components.get("base_if_energy_kwh", 5000)
+        holding_penalty = components.get("if_holding_penalty", 0)
+        general_penalty = components.get("if_general_penalty", 0)
+        mh_penalties = (
+            components.get("mh_idle_penalty", 0)
+            + components.get("mh_overflow_penalty", 0)
+            + components.get("unpoured_batch_penalty", 0)
+        )
+
+        scaled_general_penalty = min(general_penalty, base_cost * 0.5)
+        scaled_mh_penalties = min(mh_penalties, base_cost * 0.3)
+
+        final_cost = (
+            base_cost
+            + holding_penalty
+            + scaled_general_penalty
+            + scaled_mh_penalties
+            + (makespan * 0.1)
+        )
+
+        print(
+            f"  Original Cost: {cost:.1f}, Scaled Cost: {final_cost:.1f}, Makespan: {makespan}"
+        )
+
+        # แสดง schedule
+        schedule_info = []
+        for batch_idx in range(NUM_BATCHES):
+            start_slot = int(individual[2 * batch_idx])
+            furnace = int(individual[2 * batch_idx + 1])
+            start_time = start_slot * SLOT_DURATION
+            end_time = (start_slot + T_MELT) * SLOT_DURATION
+            schedule_info.append(f"B{batch_idx}:F{furnace}({start_time}-{end_time})")
+
+        print(f"  Schedule: {', '.join(schedule_info[:5])}...")  # แสดงแค่ 5 batch แรก
+
+    # ทดสอบ operators
+    print("\n=== Testing Custom Operators ===")
+
+    # Test crossover
+    crossover = ScheduleCrossover()
+    parents = test_pop[:2]
+    offspring = crossover._do(problem, parents)
+    print(f"Crossover produced {len(offspring)} offspring")
+
+    # Test mutation
+    mutation = ScheduleMutation(prob=1.0)  # 100% mutation สำหรับ test
+    mutated = mutation._do(problem, test_pop[:2])
+    print(f"Mutation processed {len(mutated)} individuals")
+
+    # Test repair
+    repair = ScheduleRepair()
+    repaired = repair._do(problem, test_pop)
+    print(f"Repair processed {len(repaired)} individuals")
+
+    return True
+
+
+# Final Direct Scheduling GA
+def run_direct_scheduling_ga():
+    """
+    รัน Direct Scheduling GA
+    """
+    print("=== Running Direct Scheduling GA ===")
+
+    # ทดสอบก่อน
+    if not test_direct_scheduling():
+        print("❌ Direct scheduling test failed.")
+        return None
+
+    print("\n=== Starting Direct Scheduling GA Optimization ===")
+
+    # สร้าง problem และ operators
+    problem = DirectSchedulingProblem(NUM_BATCHES)
+    sampling = DirectSchedulingSampling()
+    crossover = ScheduleCrossover()
+    mutation = ScheduleMutation(prob=0.2)
+    repair = ScheduleRepair()
+
+    # สร้าง algorithm
+    algorithm = GA(
+        pop_size=60,
+        sampling=sampling,
+        crossover=crossover,
+        mutation=mutation,
+        repair=repair,
+        eliminate_duplicates=True,
+    )
+
+    termination = get_termination("n_gen", 40)
+
+    print("Starting optimization...")
+    result = minimize(
+        problem,
+        algorithm,
+        termination,
+        seed=42,
+        verbose=True,
+        save_history=True,
+    )
+
+    print("Optimization finished.")
+
+    # Plot convergence
+    if result.history:
+        best_cost_per_gen = [np.min(gen.opt.get("F")) for gen in result.history]
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(
+            np.arange(len(best_cost_per_gen)),
+            best_cost_per_gen,
+            marker="o",
+            linestyle="-",
+        )
+        plt.title("Direct Scheduling GA Cost Convergence")
+        plt.xlabel("Generation")
+        plt.ylabel("Best Cost Found")
+        plt.grid(True)
+        plt.show()
+
+    # แสดงผลลัพธ์
+    print("\nProcessing results...")
+    if result.X is None:
+        print("\nNo solution found.")
+    else:
+        print(f"\nFound Best Solution:")
+        best_schedule = result.X
+        best_cost_value = result.F[0]
+
+        original_cost, final_makespan, cost_details = scheduling_cost(best_schedule)
+
+        print(f"  GA Cost (Scaled): {best_cost_value:.2f}")
+        print(f"  Original Cost: {original_cost:.2f}")
+        print(f"  Makespan: {final_makespan:.2f} min")
+
+        if cost_details:
+            print(f"  --------------------------------------------------")
+            print(f"  Cost Component Details:")
+            print(
+                f"    Base IF Energy (kWh)     : {cost_details['base_if_energy_kwh']:.2f}"
+            )
+            print(
+                f"    IF Holding Penalty       : {cost_details['if_holding_penalty']:.2f}"
+            )
+            print(
+                f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f}"
+            )
+            print(
+                f"    MH Penalties (total)     : {cost_details['mh_idle_penalty'] + cost_details['mh_overflow_penalty'] + cost_details['unpoured_batch_penalty']:.2f}"
+            )
+
+        # แสดง best schedule
+        print(f"\n  Best Schedule:")
+        for batch_idx in range(NUM_BATCHES):
+            start_slot = int(best_schedule[2 * batch_idx])
+            furnace = int(best_schedule[2 * batch_idx + 1])
+            start_time = start_slot * SLOT_DURATION
+            end_time = (start_slot + T_MELT) * SLOT_DURATION
+            furnace_name = "A" if furnace == 0 else "B"
+            print(
+                f"    Batch {batch_idx}: Furnace {furnace_name}, Time {start_time}-{end_time} min"
+            )
+
+        # Plot schedule
+        try:
+            schedule = decode_schedule(best_schedule)
+            if schedule:
+                plot_title = (
+                    f"Direct Scheduling GA - Best Schedule\n"
+                    f"Cost: {best_cost_value:.0f}, Makespan: {final_makespan:.0f} min"
+                )
+                plot_schedule_and_mh(schedule, title=plot_title)
+        except Exception as e:
+            print(f"  Error plotting schedule: {e}")
+
+    return result
+
+
+if __name__ == "__main__":
+    # รัน Direct Scheduling GA version
+    run_direct_scheduling_ga()

@@ -1,0 +1,36 @@
+{
+  "param_ranges": {
+    "crossover_rate": [
+      0.6,
+      0.7,
+      0.8,
+      0.9
+    ],
+    "mutation_rate": [
+      0.01,
+      0.05,
+      0.1,
+      0.2
+    ],
+    "population_size": [
+      50,
+      100,
+      200
+    ],
+    "num_generations": [
+      100,
+      200,
+      300
+    ]
+  },
+  "default_params": {
+    "crossover_rate": 0.8,
+    "mutation_rate": 0.1,
+    "population_size": 100,
+    "num_generations": 200,
+    "elite_size": 20,
+    "tournament_size": 5
+  },
+  "analysis_date": "2025-06-22T15:49:11.941050",
+  "output_directory": "results/sensitivity_analysis_ga"
+}
