@@ -32,24 +32,25 @@ class RLSensitivityAnalyzer:
 
         # Define parameter ranges for sensitivity analysis
         self.param_ranges = {
-            "learning_rate": [0.0001, 0.0005, 0.001, 0.005],
-            "gamma": [0.90, 0.95, 0.99, 0.995],
-            "epsilon_decay": [0.995, 0.999, 0.9995, 0.9999],
-            "batch_size": [32, 64, 128, 256],
-            "hidden_size": [64, 128, 256, 512],
-            "target_update_freq": [100, 500, 1000, 2000],
+            "learning_rate": [0.0001, 0.0005, 0.001],
+            "gamma": [0.95, 0.99, 0.995],
+            "epsilon_decay": [0.995, 0.999, 0.9995],
+            "batch_size": [32, 64, 128],
+            "hidden_size": [128, 256, 512],
+            "target_update_freq": [100, 500, 1000],
         }
 
         # Default parameters (baseline)
         self.default_params = {
             "learning_rate": 0.0005,
             "gamma": 0.99,
+            "epsilon": 1.0,
+            "epsilon_min": 0.01,
             "epsilon_decay": 0.999,
             "batch_size": 64,
-            "hidden_size": 128,
-            "target_update_freq": 1000,
-            "episodes": 1000,
-            "max_steps_per_episode": 500,
+            "hidden_size": 256,
+            "target_update_freq": 500,
+            "memory_size": 10000,
         }
 
         self.results = {}
@@ -141,107 +142,154 @@ class RLSensitivityAnalyzer:
 
     def _simulate_training_metrics(self, config):
         """
-        Simulate training metrics based on parameter configuration
-        This would be replaced with actual training in production
+        Run actual training with given configuration and return real metrics
         """
-        # Base performance
-        base_reward = 100.0
-        base_episodes = 500
-        base_stability = 0.1
-        base_accuracy = 0.85
-        base_time = 60.0  # minutes
+        import sys
+        import os
+        import torch
+        import numpy as np
+        from datetime import datetime
 
-        # Parameter effects (simplified modeling)
-        lr_effect = {
-            0.0001: {
-                "reward": -5,
-                "episodes": +100,
-                "stability": -0.02,
-                "accuracy": -0.05,
-                "time": +10,
-            },
-            0.0005: {
-                "reward": 0,
-                "episodes": 0,
-                "stability": 0,
-                "accuracy": 0,
-                "time": 0,
-            },
-            0.001: {
-                "reward": +3,
-                "episodes": -50,
-                "stability": +0.03,
-                "accuracy": +0.02,
-                "time": -5,
-            },
-            0.005: {
-                "reward": -10,
-                "episodes": -100,
-                "stability": +0.08,
-                "accuracy": -0.08,
-                "time": -10,
-            },
-        }
+        # Add project root to path
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
 
-        gamma_effect = {
-            0.90: {
-                "reward": -15,
-                "episodes": +50,
-                "stability": +0.01,
-                "accuracy": -0.08,
-                "time": +5,
-            },
-            0.95: {
-                "reward": -5,
-                "episodes": +20,
-                "stability": 0,
-                "accuracy": -0.03,
-                "time": +2,
-            },
-            0.99: {
-                "reward": 0,
-                "episodes": 0,
-                "stability": 0,
-                "accuracy": 0,
-                "time": 0,
-            },
-            0.995: {
-                "reward": +2,
-                "episodes": +30,
-                "stability": -0.01,
-                "accuracy": +0.01,
-                "time": +3,
-            },
-        }
+        from src.environment.aluminum_melting_env_8 import AluminumMeltingEnvironment
+        from src.agents.agent2 import DQNAgent
 
-        # Add parameter effects
-        effects = {"reward": 0, "episodes": 0, "stability": 0, "accuracy": 0, "time": 0}
+        print(f"Starting actual training with config: {config}")
+        start_time = datetime.now()
 
-        if config["learning_rate"] in lr_effect:
-            for key in effects:
-                effects[key] += lr_effect[config["learning_rate"]][key]
+        # Create environment
+        env = AluminumMeltingEnvironment(initial_weight_kg=350, target_temp_c=900)
 
-        if config["gamma"] in gamma_effect:
-            for key in effects:
-                effects[key] += gamma_effect[config["gamma"]][key]
+        # Create agent with config parameters
+        agent = DQNAgent(
+            state_dim=7,
+            action_dim=5,
+            learning_rate=config["learning_rate"],
+            gamma=config["gamma"],
+            epsilon=config.get("epsilon", 1.0),
+            epsilon_min=config.get("epsilon_min", 0.01),
+            epsilon_decay=config.get("epsilon_decay", 0.995),
+            memory_size=config.get("memory_size", 10000),
+            batch_size=config.get("batch_size", 32),
+            target_update_freq=config.get("target_update_freq", 100),
+            hidden_size=config.get("hidden_size", 512),
+        )
 
-        # Add some randomness
-        np.random.seed(hash(str(config)) % 2**32)
-        noise = np.random.normal(0, 0.1, 5)
+        # Training parameters
+        max_episodes = 300  # Reduced for sensitivity analysis (faster)
+        episode_rewards = []
+        episode_lengths = []
+        convergence_threshold = 0.6  # Reward threshold for convergence
+        convergence_window = 50  # Episodes to check for convergence
+
+        print(f"Training for max {max_episodes} episodes...")
+
+        for episode in range(max_episodes):
+            state = env.reset()
+            total_reward = 0
+            steps = 0
+            done = False
+
+            while not done and steps < 120:  # Max 120 minutes
+                action = agent.select_action(state)
+                next_state, reward, done = env.step(action)
+
+                # Store experience
+                agent.store_experience(state, action, reward, next_state, done)
+
+                # Train agent
+                if len(agent.memory) > agent.batch_size:
+                    agent.replay()
+
+                state = next_state
+                total_reward = reward if done else 0  # Only count final reward
+                steps += 1
+
+            episode_rewards.append(total_reward)
+            episode_lengths.append(steps)
+
+            # Update target network
+            if episode % agent.target_update_freq == 0:
+                agent.update_target_network()
+
+            # Check convergence
+            if episode >= convergence_window:
+                recent_rewards = episode_rewards[-convergence_window:]
+                avg_reward = np.mean(recent_rewards)
+                if avg_reward >= convergence_threshold:
+                    print(
+                        f"Converged at episode {episode + 1} with avg reward {avg_reward:.3f}"
+                    )
+                    break
+
+            # Progress update
+            if (episode + 1) % 50 == 0:
+                avg_reward = (
+                    np.mean(episode_rewards[-50:])
+                    if len(episode_rewards) >= 50
+                    else np.mean(episode_rewards)
+                )
+                print(
+                    f"Episode {episode + 1}: Avg Reward = {avg_reward:.3f}, Epsilon = {agent.epsilon:.3f}"
+                )
+
+        end_time = datetime.now()
+        training_time = (end_time - start_time).total_seconds() / 60.0  # minutes
+
+        # Calculate metrics
+        final_reward = (
+            np.mean(episode_rewards[-20:])
+            if len(episode_rewards) >= 20
+            else np.mean(episode_rewards)
+        )
+        convergence_episodes = len(episode_rewards)
+
+        # Calculate training stability (coefficient of variation of last 50 episodes)
+        if len(episode_rewards) >= 50:
+            last_rewards = episode_rewards[-50:]
+        else:
+            last_rewards = episode_rewards
+
+        training_stability = np.std(last_rewards) / (np.mean(last_rewards) + 1e-8)
+
+        # Test final accuracy (run 10 test episodes)
+        print("Testing final model...")
+        test_rewards = []
+        agent.epsilon = 0.0  # No exploration for testing
+
+        for _ in range(10):
+            state = env.reset()
+            done = False
+            steps = 0
+
+            while not done and steps < 120:
+                action = agent.select_action(state)
+                state, reward, done = env.step(action)
+                steps += 1
+
+            test_rewards.append(reward if done else 0)
+
+        final_accuracy = np.mean(test_rewards)
 
         metrics = {
-            "final_reward": base_reward + effects["reward"] + noise[0] * 5,
-            "convergence_episodes": max(
-                100, base_episodes + effects["episodes"] + noise[1] * 50
-            ),
-            "training_stability": max(
-                0.01, base_stability + effects["stability"] + noise[2] * 0.02
-            ),
-            "final_accuracy": max(
-                0.5, min(1.0, base_accuracy + effects["accuracy"] + noise[3] * 0.05)
-            ),
-            "training_time": max(10, base_time + effects["time"] + noise[4] * 5),
+            "final_reward": float(final_reward),
+            "convergence_episodes": int(convergence_episodes),
+            "training_stability": float(training_stability),
+            "final_accuracy": float(final_accuracy),
+            "training_time": float(training_time),
+            "episode_rewards": episode_rewards,
+            "episode_lengths": episode_lengths,
+            "test_rewards": test_rewards,
         }
+
+        print(f"Training completed in {training_time:.1f} minutes")
+        print(
+            f"Final metrics: Reward={final_reward:.3f}, Accuracy={final_accuracy:.3f}, Stability={training_stability:.3f}"
+        )
 
         return metrics
 
