@@ -1,5 +1,5 @@
-parameter,fitness_sensitivity,convergence_sensitivity,stability_sensitivity,best_value,best_fitness
-crossover_rate,0.0,0.0,,0.6,5425.0
-mutation_rate,0.0,0.0,,0.01,5425.0
-population_size,0.0,0.0,,50.0,5425.0
-num_generations,0.0,0.0,,100.0,5425.0
+parameter,fitness_sensitivity,convergence_sensitivity,time_sensitivity,best_value,best_fitness,best_convergence,avg_diversity
+crossover_rate,0.0014608433171542287,0.20697372678807965,0.07113494740171239,0.7,886336.0,37,0.0375
+mutation_rate,0.0012256756193934914,0.20328580202399663,0.06317969705080512,0.05,886336.0,40,0.0
+population_size,0.0005617642947831092,0.24325212770525997,0.42192702442812396,100.0,888331.0,18,0.0
+num_generations,0.0,0.0,0.4828758357546699,50.0,889330.75,22,0.0

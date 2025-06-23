@@ -1,0 +1,46 @@
+[
+  {
+    "parameter": "num_generations",
+    "value": 50,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 19.674063205718994,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  },
+  {
+    "parameter": "num_generations",
+    "value": 100,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 43.85590410232544,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  },
+  {
+    "parameter": "num_generations",
+    "value": 150,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 68.54948019981384,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  },
+  {
+    "parameter": "num_generations",
+    "value": 200,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 92.13949489593506,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  }
+]

@@ -1,0 +1,46 @@
+[
+  {
+    "parameter": "population_size",
+    "value": 50,
+    "best_fitness": 889328.5,
+    "final_fitness": 889328.5,
+    "convergence_generation": 34,
+    "diversity_maintenance": 0.0,
+    "execution_time": 14.583209991455078,
+    "fitness_improvement": 0.999709207249033,
+    "convergence_rate": 152867912.5325121
+  },
+  {
+    "parameter": "population_size",
+    "value": 100,
+    "best_fitness": 888331.0,
+    "final_fitness": 888331.0,
+    "convergence_generation": 18,
+    "diversity_maintenance": 0.0,
+    "execution_time": 26.26333785057068,
+    "fitness_improvement": 0.9997095334117154,
+    "convergence_rate": 152861439.1629504
+  },
+  {
+    "parameter": "population_size",
+    "value": 150,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 43.63239908218384,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  },
+  {
+    "parameter": "population_size",
+    "value": 200,
+    "best_fitness": 888331.0,
+    "final_fitness": 888331.0,
+    "convergence_generation": 30,
+    "diversity_maintenance": 0.0,
+    "execution_time": 50.92311382293701,
+    "fitness_improvement": 0.9997095334117154,
+    "convergence_rate": 152869472.64098385
+  }
+]

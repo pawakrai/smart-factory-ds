@@ -1,0 +1,46 @@
+[
+  {
+    "parameter": "crossover_rate",
+    "value": 0.6,
+    "best_fitness": 888331.5,
+    "final_fitness": 888331.5,
+    "convergence_generation": 24,
+    "diversity_maintenance": 0.0,
+    "execution_time": 40.29756188392639,
+    "fitness_improvement": 0.9997095332482253,
+    "convergence_rate": 152869922.62848383
+  },
+  {
+    "parameter": "crossover_rate",
+    "value": 0.7,
+    "best_fitness": 886336.0,
+    "final_fitness": 886336.0,
+    "convergence_generation": 37,
+    "diversity_maintenance": 0.075,
+    "execution_time": 39.05863285064697,
+    "fitness_improvement": 0.9997101857370803,
+    "convergence_rate": 152867912.1700121
+  },
+  {
+    "parameter": "crossover_rate",
+    "value": 0.8,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 44.36892819404602,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  },
+  {
+    "parameter": "crossover_rate",
+    "value": 0.9,
+    "best_fitness": 886336.0,
+    "final_fitness": 886336.0,
+    "convergence_generation": 30,
+    "diversity_maintenance": 0.075,
+    "execution_time": 36.47654104232788,
+    "fitness_improvement": 0.9997101857370803,
+    "convergence_rate": 152869972.57848385
+  }
+]

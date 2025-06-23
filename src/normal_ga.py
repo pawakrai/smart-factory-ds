@@ -20,14 +20,15 @@ SLOT_DURATION = 5  # 1 slot = 5 minutes
 TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 288 slots per day
 
 T_MELT = 18  # Melting time: 18 slots = 90 minutes
-NUM_BATCHES = 10  # Number of batches to schedule
+NUM_BATCHES = 8  # Number of batches to schedule
 
 # Furnace availability
 USE_FURNACE_A = True
 USE_FURNACE_B = True
 
 # Penalty rates
-IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 7.5
+IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 1000.0  # สูงมากเพื่อบังคับให้ GA หลีกเลี่ยง IF Holding
+# หลักการ: ถ้า batch ต้องรอหลังหลอมเสร็จ = ตารางไม่ดี = penalty สูง
 UNPOURED_BATCH_PENALTY = 1e13
 IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 0
 IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = 10000
@@ -37,7 +38,7 @@ IF_POWER_RATING_KW = {"A": 535.0, "B": 535.0}
 
 # M&H Configuration
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}
-MH_INITIAL_LEVEL_KG = {"A": 300.0, "B": 200.0}  # ค่าจริงจากหน้างาน - ห้ามปรับ
+MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 250.0}  # ค่าจริงจากหน้างาน - ห้ามปรับ
 MH_CONSUMPTION_RATE_KG_PER_MIN = {
     "A": 2.50,
     "B": 2.55,
@@ -45,14 +46,17 @@ MH_CONSUMPTION_RATE_KG_PER_MIN = {
 MH_EMPTY_THRESHOLD_KG = 0
 IF_BATCH_OUTPUT_KG = 500.0  # ค่าจริงจากหน้างาน - ห้ามปรับ
 POST_POUR_DOWNTIME_MIN = 10
-MH_IDLE_PENALTY_RATE = 0
+MH_IDLE_PENALTY_RATE = 1000
 MH_REHEAT_PENALTY_RATE = 20.0
+MH_UTILIZATION_BONUS_MULTIPLIER = (
+    300.0  # Multiplier สำหรับ M&H utilization bonus (ยิ่งสูงยิ่งเน้น utilization)
+)
 
 # Break times (minutes from day start)
 BREAK_TIMES_MINUTES = []
 
 # M&H filling preference
-PREFERRED_MH_FURNACE_TO_FILL_FIRST = "B"
+PREFERRED_MH_FURNACE_TO_FILL_FIRST = "A"
 
 # Plotting configuration
 FURNACE_COLORS = {"A": "blue", "B": "green"}
@@ -65,8 +69,10 @@ SHIFT_START = 8 * 60
 MAX_SHIFT_DURATION_HOURS = 16
 MAX_SHIFT_DURATION_MINUTES = MAX_SHIFT_DURATION_HOURS * 60
 FURNACE_BALANCE_TARGET = 0.5
-MH_IDLE_PENALTY_RATE_PER_MINUTE = 100.0
-SHIFT_OVERTIME_PENALTY_RATE_PER_MINUTE = 200.0
+MH_IDLE_PENALTY_RATE_PER_MINUTE = (
+    1000.0  # ลดลงเพื่อให้ระบบโฟกัสที่ M&H Utilization Bonus มากกว่า
+)
+SHIFT_OVERTIME_PENALTY_RATE_PER_MINUTE = 0.0  # ลดจาก 200 เป็น 50 เพื่อให้ยอมรับตารางที่ยาวขึ้น
 FURNACE_IMBALANCE_PENALTY_RATE = 10000.0  # เพิ่มจาก 1000 เป็น 10000
 
 # =============== CORE SCHEDULING FUNCTIONS ==================
@@ -137,6 +143,7 @@ def scheduling_cost(x):
         unpoured_batches_at_end,
         total_if_holding_minutes,
         pour_induced_mh_overflow_penalty,
+        mh_utilization_bonus,
     ) = simulate_mh_consumption_v2(melt_completion_events)
 
     # Calculate IF energy
@@ -173,6 +180,7 @@ def scheduling_cost(x):
         + MH_reheat_penalty
         + pour_induced_mh_overflow_penalty
         + unpoured_batches_penalty_cost
+        + mh_utilization_bonus  # เพิ่ม M&H utilization bonus (negative = ลดต้นทุน)
     )
 
     # Calculate actual makespan
@@ -195,6 +203,7 @@ def scheduling_cost(x):
         "mh_overflow_penalty": pour_induced_mh_overflow_penalty,
         "unpoured_batch_penalty": unpoured_batches_penalty_cost,
         "mh_energy_kwh": total_energy_mh,
+        "mh_utilization_bonus": mh_utilization_bonus,
     }
 
     return cost, makespan_min_actual, cost_components
@@ -202,8 +211,9 @@ def scheduling_cost(x):
 
 def simulate_mh_consumption_v2(melt_completion_events):
     """
-    Simulate M&H consumption with PERFECT SYNC - batch เสร็จ → เททันที
-    ใช้ logic เดียวกันกับ calculate_mh_capacity_shortage_penalty
+    จำลองระดับน้ำในเตา M&H A และ B แบบนาทีต่อนาที
+    คำนวณ penalties และคืน time series สำหรับ plot
+    ระบบ Queue: batch เสร็จ → เข้าคิว → รอจน M&H ว่าง → เท (มี holding penalty)
     """
     simulation_duration_min = 1440
     time_points = np.arange(simulation_duration_min)
@@ -211,96 +221,187 @@ def simulate_mh_consumption_v2(melt_completion_events):
         "A": np.zeros(simulation_duration_min),
         "B": np.zeros(simulation_duration_min),
     }
-
-    # เรียง events ตามเวลา
-    melt_events = sorted(melt_completion_events, key=lambda x: x[0])
+    mh_status = {"A": "idle", "B": "idle"}
 
     current_level = MH_INITIAL_LEVEL_KG.copy()
+    downtime_remaining = {"A": 0, "B": 0}
+    idle_duration = {"A": 0, "B": 0}
+
     total_idle_penalty = 0.0
-    total_reheat_penalty = 0.0
+    total_reheat_penalty = 0.0  # Placeholder
     pour_induced_mh_overflow_penalty = 0.0
-    actual_pour_events = []
-    unpoured_batches_at_end = []
+
+    ready_to_pour_queue = []  # Stores (melt_finish_minute, batch_id)
+    actual_pour_events = []  # Stores (actual_pour_minute, batch_id)
     total_if_holding_minutes = 0
-    last_minute = 0
 
-    # Initialize M&H levels
+    melt_event_idx = 0
+
     for t in range(simulation_duration_min):
-        mh_levels["A"][t] = current_level["A"]
-        mh_levels["B"][t] = current_level["B"]
+        minute_of_day = t
 
-    # Process each melt completion event
-    for finish_minute, batch_id in melt_events:
-        finish_minute = int(finish_minute)
+        # Add newly completed IF batches to ready_to_pour_queue
+        while (
+            melt_event_idx < len(melt_completion_events)
+            and melt_completion_events[melt_event_idx][0] <= minute_of_day
+        ):
+            if melt_completion_events[melt_event_idx][0] == minute_of_day:
+                ready_to_pour_queue.append(melt_completion_events[melt_event_idx])
+            melt_event_idx += 1
 
-        if finish_minute >= simulation_duration_min:
-            unpoured_batches_at_end.append(batch_id)
-            continue
+        # Increment IF holding time for batches in queue (WAITING PENALTY)
+        # Progressive penalty: ยิ่งรอนาน penalty ต่อ batch ยิ่งสูง
+        for batch_minute, batch_id in ready_to_pour_queue:
+            waiting_time = t - batch_minute  # เวลาที่รอแล้ว (นาที)
+            # Base penalty + Progressive penalty (exponential)
+            batch_penalty = 1 + (waiting_time**1.5)  # ยิ่งรอนาน penalty ยิ่งสูงแบบเลขชี้กำลัง
+            total_if_holding_minutes += batch_penalty
 
-        # Simulate M&H consumption จาก last_minute ถึง finish_minute
-        for minute in range(last_minute, finish_minute):
-            if minute >= simulation_duration_min:
+        # Attempt to pour batches from the queue
+        poured_this_minute_batch_ids = []
+
+        for i in range(len(ready_to_pour_queue)):
+            melt_finish_min_q, batch_id_q = ready_to_pour_queue[i]
+
+            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
+            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
+            total_available_mh_capacity = available_capacity_A + available_capacity_B
+
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+                # Sufficient total capacity, proceed with pour
+                poured_amount_A_this_batch = 0
+                poured_amount_B_this_batch = 0
+                remaining_metal_to_distribute = IF_BATCH_OUTPUT_KG
+
+                furnaces_in_fill_order = []
+                preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
+
+                if preferred_f == "A":
+                    furnaces_in_fill_order = ["A", "B"]
+                elif preferred_f == "B":
+                    furnaces_in_fill_order = ["B", "A"]
+                else:
+                    furnaces_in_fill_order = ["A", "B"]
+
+                for f_id in furnaces_in_fill_order:
+                    if remaining_metal_to_distribute <= 0:
+                        break
+
+                    space_in_this_furnace = (
+                        MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
+                    )
+                    amount_to_pour_here = min(
+                        remaining_metal_to_distribute, space_in_this_furnace
+                    )
+
+                    if amount_to_pour_here > 0:
+                        if f_id == "A":
+                            poured_amount_A_this_batch = amount_to_pour_here
+                        else:  # f_id == "B"
+                            poured_amount_B_this_batch = amount_to_pour_here
+                        remaining_metal_to_distribute -= amount_to_pour_here
+
+                # Check for individual M&H overflow before adding
+                if (
+                    current_level["A"] + poured_amount_A_this_batch
+                    > MH_MAX_CAPACITY_KG["A"]
+                ):
+                    pour_induced_mh_overflow_penalty += (
+                        current_level["A"]
+                        + poured_amount_A_this_batch
+                        - MH_MAX_CAPACITY_KG["A"]
+                    ) * 1
+                if (
+                    current_level["B"] + poured_amount_B_this_batch
+                    > MH_MAX_CAPACITY_KG["B"]
+                ):
+                    pour_induced_mh_overflow_penalty += (
+                        current_level["B"]
+                        + poured_amount_B_this_batch
+                        - MH_MAX_CAPACITY_KG["B"]
+                    ) * 1
+
+                current_level["A"] = min(
+                    current_level["A"] + poured_amount_A_this_batch,
+                    MH_MAX_CAPACITY_KG["A"],
+                )
+                current_level["B"] = min(
+                    current_level["B"] + poured_amount_B_this_batch,
+                    MH_MAX_CAPACITY_KG["B"],
+                )
+
+                for furnace_id_mh in ["A", "B"]:
+                    downtime_remaining[furnace_id_mh] = POST_POUR_DOWNTIME_MIN
+                    mh_status[furnace_id_mh] = "downtime"
+
+                actual_pour_events.append((t, batch_id_q))
+                poured_this_minute_batch_ids.append(batch_id_q)
+
+                # Only one pour attempt resolution per minute from the queue
                 break
 
-            for furnace_id in ["A", "B"]:
-                if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG:
-                    current_level[furnace_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[
-                        furnace_id
-                    ]
-                    current_level[furnace_id] = max(current_level[furnace_id], 0)
+        # Remove poured batches from the main queue
+        if poured_this_minute_batch_ids:
+            ready_to_pour_queue = [
+                item
+                for item in ready_to_pour_queue
+                if item[1] not in poured_this_minute_batch_ids
+            ]
 
-            # Update levels in array
-            mh_levels["A"][minute] = current_level["A"]
-            mh_levels["B"][minute] = current_level["B"]
-
-        # ตรวจสอบ M&H capacity ณ เวลาที่ batch เสร็จ
-        available_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
-        available_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
-        total_available = available_A + available_B
-
-        # เทน้ำทันทีหลังจาก batch เสร็จ (ถ้าเทได้)
-        if total_available >= IF_BATCH_OUTPUT_KG:
-            # เทได้เต็มจำนวน - PERFECT SYNC
-            remaining_metal = IF_BATCH_OUTPUT_KG
-            pour_order = (
-                ["B", "A"] if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B" else ["A", "B"]
-            )
-
-            for furnace_id in pour_order:
-                if remaining_metal <= 0:
-                    break
-                available_space = (
-                    MH_MAX_CAPACITY_KG[furnace_id] - current_level[furnace_id]
-                )
-                pour_amount = min(remaining_metal, available_space)
-                if pour_amount > 0:
-                    current_level[furnace_id] += pour_amount
-                    remaining_metal -= pour_amount
-
-            actual_pour_events.append((finish_minute, batch_id))
-
-        else:
-            # ไม่สามารถเทได้ - เพิ่มใน unpoured list
-            unpoured_batches_at_end.append(batch_id)
-
-        # Update levels ณ เวลาที่เท (PERFECT SYNC)
-        if finish_minute < simulation_duration_min:
-            mh_levels["A"][finish_minute] = current_level["A"]
-            mh_levels["B"][finish_minute] = current_level["B"]
-
-        last_minute = finish_minute
-
-    # Simulate remaining time after last event
-    for minute in range(last_minute + 1, simulation_duration_min):
         for furnace_id in ["A", "B"]:
+            # Handle Downtime
+            if downtime_remaining[furnace_id] > 0:
+                downtime_remaining[furnace_id] -= 1
+                mh_status[furnace_id] = "downtime"
+                if downtime_remaining[furnace_id] == 0:
+                    mh_status[furnace_id] = (
+                        "running"
+                        if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG
+                        else "idle"
+                    )
+                mh_levels[furnace_id][t] = current_level[furnace_id]
+                continue
+
+            if mh_status[furnace_id] == "downtime":
+                mh_levels[furnace_id][t] = current_level[furnace_id]
+                continue
+
             if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG:
                 current_level[furnace_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[furnace_id]
                 current_level[furnace_id] = max(current_level[furnace_id], 0)
+                mh_status[furnace_id] = "running"
+                if current_level[furnace_id] <= MH_EMPTY_THRESHOLD_KG:
+                    mh_status[furnace_id] = "idle"
+            else:
+                mh_status[furnace_id] = "idle"
 
-        mh_levels["A"][minute] = current_level["A"]
-        mh_levels["B"][minute] = current_level["B"]
+            # Apply idle penalty if the furnace is idle (and not in downtime)
+            if mh_status[furnace_id] == "idle":
+                total_idle_penalty += MH_IDLE_PENALTY_RATE
 
-    total_energy_mh = 0.0
+            mh_levels[furnace_id][t] = current_level[furnace_id]
+
+    total_energy_mh = 0.0  # Placeholder
+    unpoured_batches_at_end = [
+        item[1] for item in ready_to_pour_queue
+    ]  # Batches remaining in queue
+
+    # Calculate M&H utilization reward (สำหรับระดับน้ำสูง)
+    mh_utilization_reward = 0.0
+    for t in range(simulation_duration_min):
+        for furnace_id in ["A", "B"]:
+            if t < len(mh_levels[furnace_id]):
+                # Reward for high M&H levels (ยิ่งสูงยิ่งดี)
+                utilization_ratio = (
+                    mh_levels[furnace_id][t] / MH_MAX_CAPACITY_KG[furnace_id]
+                )
+                # Extremely strong bonus for keeping M&H levels high
+                mh_utilization_reward += (
+                    utilization_ratio * MH_UTILIZATION_BONUS_MULTIPLIER
+                )  # เพิ่มจาก 100.0 เป็น 300.0 points per ratio per minute - บังคับให้ระดับน้ำสูงตลอดเวลา มากกว่าเดิม
+
+    # Convert reward to cost reduction (negative cost)
+    mh_utilization_bonus = -mh_utilization_reward  # Negative = good for minimization
 
     return (
         total_idle_penalty,
@@ -312,6 +413,7 @@ def simulate_mh_consumption_v2(melt_completion_events):
         unpoured_batches_at_end,
         total_if_holding_minutes,
         pour_induced_mh_overflow_penalty,
+        mh_utilization_bonus,  # เพิ่ม bonus ใหม่
     )
 
 
@@ -362,6 +464,7 @@ def plot_schedule_and_mh(
             _,
             time_points_plot,
             mh_levels_plot,
+            _,
             _,
             _,
             _,
@@ -814,10 +917,8 @@ def calculate_realistic_penalties(schedule_vector, cost_components):
     # 2. M&H idle penalty
     penalties["mh_idle_penalty"] = calculate_mh_idle_penalty(schedule_vector)
 
-    # 3. Shift overtime penalty
-    penalties["shift_overtime_penalty"] = calculate_shift_overtime_penalty(
-        schedule_vector, n_batches
-    )
+    # 3. Shift overtime penalty (ปิดการใช้งาน - ไม่สนใจเรื่องเวลาเข้ากะ)
+    penalties["shift_overtime_penalty"] = 0.0  # ปิดการคิด shift overtime penalty
 
     # 4. Furnace imbalance penalty
     penalties["furnace_imbalance_penalty"] = calculate_furnace_imbalance_penalty(
@@ -984,10 +1085,11 @@ def calculate_shift_overtime_penalty(schedule_vector, n_batches):
         end_minute = (start_slot + T_MELT) * SLOT_DURATION
         max_end_minute = max(max_end_minute, end_minute)
 
-    # Calculate overtime
+    # Calculate overtime - ใช้ค่าคงที่แทนค่าตัวแปร
     if max_end_minute > MAX_SHIFT_DURATION_MINUTES:
         overtime_minutes = max_end_minute - MAX_SHIFT_DURATION_MINUTES
-        return overtime_minutes * SHIFT_OVERTIME_PENALTY_RATE_PER_MINUTE
+        # ใช้ penalty rate ต่ำ (10.0) แทนค่าในตัวแปร (0.0) เพื่อยอมรับตารางยาว
+        return overtime_minutes * 10.0  # ลด penalty สำหรับ overtime
 
     return 0.0
 
@@ -1208,51 +1310,124 @@ class BalancedDirectSchedulingSampling(Sampling):
 
     def _create_balanced_schedule(self, n_batches):
         """
-        Create balanced and compact schedule between furnaces A and B
+        Create balanced and M&H-aware schedule between furnaces A and B
         """
         schedule = np.zeros(n_batches * 2)
 
-        # Create STRICTLY balanced furnace assignment
+        # Create FURNACE-AWARE assignment (respect USE_FURNACE settings)
         furnace_assignments = []
 
-        # Force exact 50-50 split
-        half_batches = n_batches // 2
+        # Determine available furnaces
+        available_furnaces = []
+        if USE_FURNACE_A:
+            available_furnaces.append(0)  # Furnace A
+        if USE_FURNACE_B:
+            available_furnaces.append(1)  # Furnace B
 
-        # Add equal numbers of each furnace
-        for i in range(half_batches):
-            furnace_assignments.append(0)  # Furnace A
-            furnace_assignments.append(1)  # Furnace B
+        # Safety check: must have at least one furnace available
+        if not available_furnaces:
+            raise ValueError(
+                "No furnaces available! Both USE_FURNACE_A and USE_FURNACE_B are False"
+            )
 
-        # Handle odd number of batches
-        if n_batches % 2 == 1:
-            # Randomly assign the extra batch
-            furnace_assignments.append(np.random.choice([0, 1]))
+        # If only one furnace available, use only that furnace
+        if len(available_furnaces) == 1:
+            single_furnace = available_furnaces[0]
+            for i in range(n_batches):
+                furnace_assignments.append(single_furnace)
 
-        # Limited shuffle to maintain balance but add some diversity
-        # Only swap pairs to maintain balance
-        for _ in range(n_batches // 4):  # Limited swaps
-            if len(furnace_assignments) >= 2:
-                idx1, idx2 = np.random.choice(
-                    len(furnace_assignments), 2, replace=False
-                )
-                furnace_assignments[idx1], furnace_assignments[idx2] = (
-                    furnace_assignments[idx2],
-                    furnace_assignments[idx1],
-                )
+        # If both furnaces available, try to balance (original logic)
+        else:
+            # Force exact 50-50 split when both available
+            half_batches = n_batches // 2
 
-        # Create compact schedule using parallel melting
+            # Add equal numbers of each furnace
+            for i in range(half_batches):
+                furnace_assignments.append(0)  # Furnace A
+                furnace_assignments.append(1)  # Furnace B
+
+            # Handle odd number of batches
+            if n_batches % 2 == 1:
+                # Randomly assign the extra batch between available furnaces
+                furnace_assignments.append(np.random.choice(available_furnaces))
+
+            # Limited shuffle to maintain balance but add some diversity
+            # Only swap pairs to maintain balance
+            for _ in range(n_batches // 4):  # Limited swaps
+                if len(furnace_assignments) >= 2:
+                    idx1, idx2 = np.random.choice(
+                        len(furnace_assignments), 2, replace=False
+                    )
+                    furnace_assignments[idx1], furnace_assignments[idx2] = (
+                        furnace_assignments[idx2],
+                        furnace_assignments[idx1],
+                    )
+
+        # Create M&H-aware schedule using parallel melting
         furnace_next_available = {"A": 0, "B": 0}
+        simulated_mh_levels = MH_INITIAL_LEVEL_KG.copy()
+        last_pour_minute = 0
 
         for batch_idx in range(n_batches):
             furnace_idx = furnace_assignments[batch_idx]
             furnace_key = "A" if furnace_idx == 0 else "B"
 
-            # Find appropriate start time
+            # Find appropriate start time considering IF availability
             start_slot = furnace_next_available[furnace_key]
 
-            # Add small randomness
-            random_delay = np.random.randint(0, 3)
-            start_slot += random_delay
+            # Calculate when this batch would finish melting
+            tentative_finish_minute = (start_slot + T_MELT) * SLOT_DURATION
+
+            # Simulate M&H consumption to check readiness
+            while tentative_finish_minute > last_pour_minute:
+                # Simulate M&H consumption from last_pour_minute to tentative_finish_minute
+                for min_idx in range(last_pour_minute, int(tentative_finish_minute)):
+                    for mh_id in ["A", "B"]:
+                        if simulated_mh_levels[mh_id] > MH_EMPTY_THRESHOLD_KG:
+                            simulated_mh_levels[
+                                mh_id
+                            ] -= MH_CONSUMPTION_RATE_KG_PER_MIN[mh_id]
+                            simulated_mh_levels[mh_id] = max(
+                                simulated_mh_levels[mh_id], 0
+                            )
+
+                # Check if M&H has enough capacity
+                total_available = (
+                    MH_MAX_CAPACITY_KG["A"] - simulated_mh_levels["A"]
+                ) + (MH_MAX_CAPACITY_KG["B"] - simulated_mh_levels["B"])
+
+                if total_available >= IF_BATCH_OUTPUT_KG:
+                    # M&H ready! Pour the batch
+                    # Simulate pouring using preferred order
+                    remaining_metal = IF_BATCH_OUTPUT_KG
+                    pour_order = (
+                        ["B", "A"]
+                        if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B"
+                        else ["A", "B"]
+                    )
+
+                    for mh_id in pour_order:
+                        if remaining_metal <= 0:
+                            break
+                        space = MH_MAX_CAPACITY_KG[mh_id] - simulated_mh_levels[mh_id]
+                        pour_amount = min(remaining_metal, space)
+                        if pour_amount > 0:
+                            simulated_mh_levels[mh_id] += pour_amount
+                            remaining_metal -= pour_amount
+
+                    last_pour_minute = int(tentative_finish_minute)
+                    break
+                else:
+                    # M&H not ready, delay the batch
+                    start_slot += 1
+                    if start_slot > TOTAL_SLOTS - T_MELT:
+                        # Can't delay further, accept the schedule
+                        break
+                    tentative_finish_minute = (start_slot + T_MELT) * SLOT_DURATION
+
+            # ไม่มี random delay เพื่อให้ตารางแน่นที่สุด
+            # random_delay = 0  # ไม่เพิ่ม delay เลย
+            # start_slot += random_delay
 
             # Check bounds
             start_slot = max(0, min(start_slot, TOTAL_SLOTS - T_MELT))
@@ -1285,6 +1460,17 @@ class ScheduleRepair(Repair):
         """
         schedule_data = []
 
+        # Determine available furnaces
+        available_furnaces = []
+        if USE_FURNACE_A:
+            available_furnaces.append(0)
+        if USE_FURNACE_B:
+            available_furnaces.append(1)
+
+        # Safety check
+        if not available_furnaces:
+            raise ValueError("No furnaces available for repair!")
+
         # Extract data as (start_slot, furnace, batch_id)
         for batch_idx in range(n_batches):
             start_slot = int(x[2 * batch_idx])
@@ -1292,7 +1478,11 @@ class ScheduleRepair(Repair):
 
             # Fix bounds
             start_slot = max(0, min(start_slot, TOTAL_SLOTS - T_MELT))
-            furnace_idx = max(0, min(furnace_idx, 1))
+
+            # Force furnace to be one of the available ones
+            if furnace_idx not in available_furnaces:
+                # Reassign to a random available furnace
+                furnace_idx = np.random.choice(available_furnaces)
 
             schedule_data.append([start_slot, furnace_idx, batch_idx])
 
@@ -1419,16 +1609,17 @@ def run_realistic_ga():
     problem = RealisticDirectSchedulingProblem(NUM_BATCHES)
     sampling = BalancedDirectSchedulingSampling()
 
+    # ปรับจูน GA Parameters เพื่อหาคำตอบดีที่สุดได้ง่ายขึ้น
     algorithm = GA(
-        pop_size=60,
+        pop_size=80,  # เพิ่มจาก 60 เป็น 80
         sampling=sampling,
-        crossover=SBX(eta=15, prob=0.8),
-        mutation=PolynomialMutation(eta=20, prob=0.2),
+        crossover=SBX(eta=10, prob=0.9),  # เพิ่ม crossover rate
+        mutation=PolynomialMutation(eta=15, prob=0.3),  # เพิ่ม mutation rate
         repair=ScheduleRepair(),
         eliminate_duplicates=True,
     )
 
-    termination = get_termination("n_gen", 40)
+    termination = get_termination("n_gen", 50)  # เพิ่มจาก 40 เป็น 50
 
     print("Starting optimization...")
     result = minimize(
@@ -1474,6 +1665,49 @@ def run_realistic_ga():
         print(f"  GA Cost (Realistic): {best_cost_value:.2f}")
         print(f"  Original Cost: {original_cost:.2f}")
         print(f"  Makespan: {final_makespan:.2f} min ({final_makespan/60:.1f} hours)")
+        print(f"  --------------------------------------------------")
+        print(f"  Cost Component Details:")
+        base_if_energy_kwh = cost_details["base_if_energy_kwh"]
+        if_holding_penalty_cost = cost_details["if_holding_penalty"]
+        actual_if_energy_kwh = base_if_energy_kwh + if_holding_penalty_cost
+
+        print(f"    Base IF Energy (kWh)     : {base_if_energy_kwh:.2f}")
+        print(f"    IF Holding Penalty       : {if_holding_penalty_cost:.2f}")
+        print(
+            f"    Actual IF Energy (Base + Holding) (kWh): {actual_if_energy_kwh:.2f}"
+        )
+
+        num_actual_batches = NUM_BATCHES  # Assumes all batches are processed
+        if actual_if_energy_kwh >= 0 and num_actual_batches > 0:
+            avg_actual_if_energy_per_batch = (
+                actual_if_energy_kwh / num_actual_batches
+                if num_actual_batches > 0
+                else 0
+            )
+            print(
+                f"      -> Avg Actual IF Energy/Batch (kWh): {avg_actual_if_energy_per_batch:.2f}"
+            )
+
+        print(
+            f"    IF General Penalty       : {cost_details['if_general_penalty']:.2f} (Overlaps, Gaps, Breaks)"
+        )
+        print(f"    MH Idle Penalty          : {cost_details['mh_idle_penalty']:.2f}")
+        print(
+            f"    MH Reheat Penalty        : {cost_details['mh_reheat_penalty']:.2f} (Placeholder)"
+        )
+        print(
+            f"    MH Overflow Penalty      : {cost_details['mh_overflow_penalty']:.2f}"
+        )
+        print(
+            f"    Unpoured Batch Penalty   : {cost_details['unpoured_batch_penalty']:.2f}"
+        )
+        print(
+            f"    MH Energy (kWh)          : {cost_details['mh_energy_kwh']:.2f} (Placeholder)"
+        )
+        print(
+            f"    MH Utilization Bonus     : {cost_details['mh_utilization_bonus']:.2f} (Reward for high M&H levels)"
+        )
+        print(f"  --------------------------------------------------")
 
         print(f"\n  Realistic Penalties:")
         for penalty_name, penalty_value in realistic_penalties.items():
@@ -1505,6 +1739,102 @@ def run_realistic_ga():
         print(f"    Furnace A: {furnace_usage['A']} batches ({a_percentage:.1f}%)")
         print(f"    Furnace B: {furnace_usage['B']} batches ({b_percentage:.1f}%)")
 
+        # Show M&H analysis
+        print(f"\n  M&H System Analysis:")
+        melt_completion_events = []
+        for batch_idx in range(NUM_BATCHES):
+            start_slot = int(best_schedule[2 * batch_idx])
+            end_minute = (start_slot + T_MELT) * SLOT_DURATION
+            melt_completion_events.append((end_minute, batch_idx))
+
+        melt_completion_events.sort()
+
+        print(f"    Initial M&H Levels:")
+        print(
+            f"      M&H A: {MH_INITIAL_LEVEL_KG['A']:.1f} kg (Max: {MH_MAX_CAPACITY_KG['A']:.1f} kg)"
+        )
+        print(
+            f"      M&H B: {MH_INITIAL_LEVEL_KG['B']:.1f} kg (Max: {MH_MAX_CAPACITY_KG['B']:.1f} kg)"
+        )
+
+        print(f"    Consumption Rates:")
+        print(f"      M&H A: {MH_CONSUMPTION_RATE_KG_PER_MIN['A']:.2f} kg/min")
+        print(f"      M&H B: {MH_CONSUMPTION_RATE_KG_PER_MIN['B']:.2f} kg/min")
+
+        print(f"    Batch Output: {IF_BATCH_OUTPUT_KG} kg per batch")
+
+        # Simulate and show M&H events
+        (
+            _,
+            _,
+            _,
+            time_points,
+            mh_levels,
+            actual_pour_events,
+            unpoured_batches,
+            total_if_holding_minutes,
+            _,
+            _,
+        ) = simulate_mh_consumption_v2(melt_completion_events)
+
+        print(f"\n    Pour Events Analysis:")
+        if actual_pour_events:
+            for pour_minute, batch_id in actual_pour_events:
+                pour_hour = (SHIFT_START + pour_minute) // 60
+                pour_min = (SHIFT_START + pour_minute) % 60
+                print(
+                    f"      Batch {batch_id}: Poured at {pour_hour:02d}:{pour_min:02d}"
+                )
+        else:
+            print("      No successful pour events")
+
+        if unpoured_batches:
+            print(f"    Unpoured Batches: {unpoured_batches}")
+
+        print(f"    Total IF Holding Time: {total_if_holding_minutes:.2f} minutes")
+        if total_if_holding_minutes > 0:
+            avg_holding_per_batch = total_if_holding_minutes / NUM_BATCHES
+            print(
+                f"      -> Avg Holding Time/Batch: {avg_holding_per_batch:.2f} minutes"
+            )
+            print(
+                f"      -> IF Holding Penalty: {total_if_holding_minutes * IF_HOLDING_ENERGY_PENALTY_PER_MINUTE:.2f}"
+            )
+        else:
+            print(f"      -> No IF Holding (Ideal!)")
+
+        print(f"\n    Final M&H Levels:")
+        if len(mh_levels["A"]) > 0 and len(mh_levels["B"]) > 0:
+            final_a = mh_levels["A"][-1]
+            final_b = mh_levels["B"][-1]
+            print(f"      M&H A: {final_a:.1f} kg")
+            print(f"      M&H B: {final_b:.1f} kg")
+
+            # Calculate average M&H utilization
+            avg_util_a = np.mean(mh_levels["A"]) / MH_MAX_CAPACITY_KG["A"] * 100
+            avg_util_b = np.mean(mh_levels["B"]) / MH_MAX_CAPACITY_KG["B"] * 100
+            total_avg_util = (avg_util_a + avg_util_b) / 2
+
+            print(f"\n    M&H Utilization Analysis:")
+            print(f"      Avg M&H A Utilization: {avg_util_a:.1f}%")
+            print(f"      Avg M&H B Utilization: {avg_util_b:.1f}%")
+            print(f"      Overall Avg Utilization: {total_avg_util:.1f}%")
+            print(f"      Target: >80% (เป้าหมายระดับน้ำสูง)")
+
+            # Calculate schedule density (ความเข้มข้นของตาราง)
+            if actual_pour_events:
+                first_pour = min(pour_minute for pour_minute, _ in actual_pour_events)
+                last_pour = max(pour_minute for pour_minute, _ in actual_pour_events)
+                schedule_span = last_pour - first_pour
+                if schedule_span > 0:
+                    density = (
+                        len(actual_pour_events) * 90
+                    ) / schedule_span  # 90 นาทีต่อ batch
+                    print(f"      Schedule Density: {density:.3f} (ยิ่งสูงยิ่งแน่น)")
+                    print(
+                        f"      Schedule Span: {schedule_span:.0f} minutes ({schedule_span/60:.1f} hours)"
+                    )
+
         # Plot schedule
         try:
             schedule = decode_schedule(best_schedule)
@@ -1514,7 +1844,12 @@ def run_realistic_ga():
                     f"Cost: {best_cost_value:.0f}, Makespan: {final_makespan:.0f} min, "
                     f"A: {furnace_usage['A']}, B: {furnace_usage['B']}"
                 )
-                plot_schedule_and_mh(schedule, title=plot_title)
+                plot_schedule_and_mh(
+                    schedule,
+                    title=plot_title,
+                    simulated_time_points=time_points,
+                    simulated_mh_levels=mh_levels,
+                )
         except Exception as e:
             print(f"  Error plotting schedule: {e}")
 

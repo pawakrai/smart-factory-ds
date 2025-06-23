@@ -1,19 +1,18 @@
-#!/usr/bin/env python3
 """
-Parameter Sensitivity Analysis for Genetic Algorithm (GA)
+Parameter Sensitivity Analysis for GA (Genetic Algorithm) Model
 This script analyzes the sensitivity of GA hyperparameters on optimization performance
-Focus: Crossover Rate and Mutation Rate effects on convergence speed and solution quality
+Integrates with normal_ga.py for aluminum melting scheduling optimization
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
 import sys
 import os
 import json
 from datetime import datetime
 import itertools
-from multiprocessing import Pool
+import random
+from copy import deepcopy
 import time
 
 # Add project root to path
@@ -22,11 +21,31 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Import GA components from normal_ga.py
+sys.path.append(os.path.join(project_root, "src"))
+
+from pymoo.core.problem import Problem
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PolynomialMutation
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+from pymoo.algorithms.soo.nonconvex.ga import GA
+
+# Import from normal_ga.py
+from normal_ga import (
+    RealisticDirectSchedulingProblem,
+    BalancedDirectSchedulingSampling,
+    ScheduleRepair,
+    NUM_BATCHES,
+    scheduling_cost,
+    decode_schedule,
+    calculate_realistic_penalties,
+)
+
 
 class GASensitivityAnalyzer:
     """
     Comprehensive sensitivity analysis for GA hyperparameters
-    Focus on Crossover Rate and Mutation Rate
     """
 
     def __init__(self, output_dir="results/sensitivity_analysis_ga"):
@@ -35,20 +54,19 @@ class GASensitivityAnalyzer:
 
         # Define parameter ranges for sensitivity analysis
         self.param_ranges = {
-            "crossover_rate": [0.6, 0.7, 0.8, 0.9],  # อัตราการผสมข้าม
-            "mutation_rate": [0.01, 0.05, 0.1, 0.2],  # อัตราการกลายพันธุ์
-            "population_size": [50, 100, 200],  # ขนาดประชากร
-            "num_generations": [100, 200, 300],  # จำนวนรุ่น
+            "crossover_rate": [0.6, 0.7, 0.8, 0.9],
+            "mutation_rate": [0.01, 0.05, 0.1, 0.2],
+            "population_size": [50, 100, 150, 200],
+            "num_generations": [50, 100, 150, 200],
         }
 
         # Default parameters (baseline)
         self.default_params = {
             "crossover_rate": 0.8,
             "mutation_rate": 0.1,
-            "population_size": 100,
-            "num_generations": 200,
-            "elite_size": 20,
-            "tournament_size": 5,
+            "population_size": 150,
+            "num_generations": 100,
+            "seed": 42,
         }
 
         self.results = {}
@@ -73,29 +91,31 @@ class GASensitivityAnalyzer:
             config[param_name] = param_value
 
             # Run GA optimization with this configuration
-            metrics = self._run_ga_optimization(config)
+            metrics = self._run_ga_with_config(config)
 
             result = {
                 "parameter": param_name,
                 "value": param_value,
                 "best_fitness": metrics["best_fitness"],
+                "final_fitness": metrics["final_fitness"],
                 "convergence_generation": metrics["convergence_generation"],
-                "optimization_stability": metrics["optimization_stability"],
-                "final_solution_quality": metrics["final_solution_quality"],
-                "execution_time": metrics["execution_time"],
                 "diversity_maintenance": metrics["diversity_maintenance"],
+                "execution_time": metrics["execution_time"],
+                "fitness_improvement": metrics["fitness_improvement"],
+                "convergence_rate": metrics["convergence_rate"],
             }
 
             results.append(result)
-            print(f"  Best fitness: {metrics['best_fitness']:.4f}")
+            print(f"  Best fitness: {metrics['best_fitness']:.2f}")
             print(f"  Convergence generation: {metrics['convergence_generation']}")
-            print(f"  Solution quality: {metrics['final_solution_quality']:.4f}")
+            print(f"  Execution time: {metrics['execution_time']:.2f}s")
+            print(f"  Diversity maintenance: {metrics['diversity_maintenance']:.3f}")
 
         # Store results
         self.results[param_name] = results
 
-        # Create visualizations
-        self._plot_parameter_sensitivity(param_name, results)
+        # Save detailed results immediately
+        self._save_parameter_results(param_name, results)
 
         return results
 
@@ -104,6 +124,7 @@ class GASensitivityAnalyzer:
         Run sensitivity analysis for all parameters
         """
         print("Starting Complete Sensitivity Analysis for GA Parameters...")
+        start_time = time.time()
 
         # Analyze each parameter
         for param_name in self.param_ranges.keys():
@@ -112,12 +133,14 @@ class GASensitivityAnalyzer:
         # Generate summary analysis
         self._generate_sensitivity_summary()
 
-        # Save results
+        # Save all results
         self._save_results()
 
-        print(f"\nSensitivity analysis complete! Results saved to {self.output_dir}")
+        total_time = time.time() - start_time
+        print(f"\nComplete sensitivity analysis finished in {total_time:.2f} seconds")
+        print(f"Results saved to {self.output_dir}")
 
-    def _run_ga_optimization(self, config):
+    def _run_ga_with_config(self, config):
         """
         Run GA optimization with specific configuration and return metrics
 
@@ -125,232 +148,218 @@ class GASensitivityAnalyzer:
             config: Dictionary with GA parameters
 
         Returns:
-            Dictionary with optimization metrics
+            Dictionary with GA performance metrics
         """
-        print(f"Starting GA optimization with config: {config}")
-        start_time = datetime.now()
+        start_time = time.time()
 
-        # Import GA adapter for pymoo
-        from ga_sensitivity_adapter_pymoo import GASensitivityAdapterPymoo
+        # Create problem
+        problem = RealisticDirectSchedulingProblem(NUM_BATCHES)
 
-        # Create GA instance with config parameters
-        ga = GASensitivityAdapterPymoo(
-            population_size=config["population_size"],
-            num_generations=config["num_generations"],
-            crossover_rate=config["crossover_rate"],
-            mutation_rate=config["mutation_rate"],
-            elite_size=config.get("elite_size", 20),
-            tournament_size=config.get("tournament_size", 5),
+        # Setup operators
+        sampling = BalancedDirectSchedulingSampling()
+        crossover = SBX(prob=config["crossover_rate"])
+        mutation = PolynomialMutation(prob=config["mutation_rate"])
+        repair = ScheduleRepair()
+
+        # Create algorithm
+        algorithm = GA(
+            pop_size=config["population_size"],
+            sampling=sampling,
+            crossover=crossover,
+            mutation=mutation,
+            repair=repair,
+            eliminate_duplicates=True,
         )
 
+        # Setup termination
+        termination = get_termination("n_gen", config["num_generations"])
+
         # Run optimization
-        print(f"Running GA for {config['num_generations']} generations...")
-
         try:
-            # Run complete optimization
-            results = ga.run_complete_optimization()
+            result = minimize(
+                problem,
+                algorithm,
+                termination,
+                seed=config["seed"],
+                verbose=False,  # Disable verbose output for cleaner analysis
+                save_history=True,
+            )
 
-            fitness_history = results["fitness_history"]
-            diversity_history = results["diversity_history"]
+            execution_time = time.time() - start_time
 
-            # Check for convergence
-            convergence_generation = config[
-                "num_generations"
-            ]  # Default to max if no convergence
-            convergence_threshold = 1000.0  # Cost improvement threshold (adjusted for scheduling cost scale)
-            convergence_window = 20  # Generations to check for convergence
-
-            if len(fitness_history) >= convergence_window:
-                for generation in range(convergence_window, len(fitness_history)):
-                    recent_fitness = fitness_history[
-                        generation - convergence_window : generation
-                    ]
-                    fitness_improvement = max(recent_fitness) - min(recent_fitness)
-                    if fitness_improvement < convergence_threshold:
-                        convergence_generation = generation + 1
-                        print(f"Converged at generation {convergence_generation}")
-                        break
-
-            # Progress update
-            for i in range(0, len(fitness_history), max(1, len(fitness_history) // 5)):
-                print(f"Generation {i+1}: Best Fitness = {fitness_history[i]:.4f}")
+            # Extract metrics
+            metrics = self._extract_metrics_from_result(result)
+            metrics["execution_time"] = execution_time
 
         except Exception as e:
             print(f"Error during GA optimization: {e}")
-            # Return default/failed metrics
-            fitness_history = [float("inf")]
-            diversity_history = [0.0]
-            convergence_generation = config["num_generations"]
-
-        end_time = datetime.now()
-        execution_time = (end_time - start_time).total_seconds()
-
-        # Calculate final metrics
-        if fitness_history:
-            final_best = ga.get_best_individual()
-            best_fitness = final_best["fitness"]
-        else:
-            best_fitness = float("inf")
-
-        # Calculate optimization stability (coefficient of variation of last 20% of generations)
-        stable_period = max(10, len(fitness_history) // 5)
-        if len(fitness_history) >= stable_period:
-            stable_fitness = fitness_history[-stable_period:]
-        else:
-            stable_fitness = fitness_history
-
-        optimization_stability = np.std(stable_fitness) / (
-            np.mean(stable_fitness) + 1e-8
-        )
-
-        # Final solution quality (same as best fitness for GA)
-        final_solution_quality = best_fitness
-
-        # Diversity maintenance (average diversity in last 20% of generations)
-        if len(diversity_history) >= stable_period:
-            diversity_maintenance = np.mean(diversity_history[-stable_period:])
-        else:
-            diversity_maintenance = (
-                np.mean(diversity_history) if diversity_history else 0.0
-            )
-
-        metrics = {
-            "best_fitness": float(best_fitness),
-            "convergence_generation": int(convergence_generation),
-            "optimization_stability": float(optimization_stability),
-            "final_solution_quality": float(final_solution_quality),
-            "execution_time": float(execution_time),
-            "diversity_maintenance": float(diversity_maintenance),
-            "fitness_history": fitness_history,
-            "diversity_history": diversity_history,
-        }
-
-        print(f"GA optimization completed in {execution_time:.1f} seconds")
-        print(
-            f"Final metrics: Fitness={best_fitness:.4f}, Convergence={convergence_generation}, Quality={final_solution_quality:.4f}"
-        )
+            # Return default/failure metrics
+            metrics = {
+                "best_fitness": float("inf"),
+                "final_fitness": float("inf"),
+                "convergence_generation": config["num_generations"],
+                "diversity_maintenance": 0.0,
+                "execution_time": time.time() - start_time,
+                "fitness_improvement": 0.0,
+                "convergence_rate": 0.0,
+            }
 
         return metrics
 
-    def _plot_parameter_sensitivity(self, param_name, results):
+    def _extract_metrics_from_result(self, result):
         """
-        Create sensitivity plots for a specific parameter
+        Extract performance metrics from GA optimization result
         """
-        values = [r["value"] for r in results]
-        best_fitness = [r["best_fitness"] for r in results]
-        convergence_generation = [r["convergence_generation"] for r in results]
-        optimization_stability = [r["optimization_stability"] for r in results]
-        final_solution_quality = [r["final_solution_quality"] for r in results]
-        execution_time = [r["execution_time"] for r in results]
-        diversity_maintenance = [r["diversity_maintenance"] for r in results]
+        metrics = {}
 
-        # Create subplot figure
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-        fig.suptitle(f"GA Parameter Sensitivity Analysis: {param_name}", fontsize=16)
+        # Best fitness found
+        if result.F is not None:
+            metrics["best_fitness"] = float(result.F[0])
+        else:
+            metrics["best_fitness"] = float("inf")
 
-        # Best Fitness
-        axes[0, 0].plot(
-            values, best_fitness, "o-", linewidth=2, markersize=8, color="blue"
-        )
-        axes[0, 0].set_xlabel(param_name)
-        axes[0, 0].set_ylabel("Best Fitness")
-        axes[0, 0].set_title("Best Fitness vs Parameter Value")
-        axes[0, 0].grid(True, alpha=0.3)
+        # Extract convergence information from history
+        if result.history and len(result.history) > 0:
+            # Get fitness values over generations
+            generation_best_fitness = []
+            for gen in result.history:
+                if gen.opt is not None and gen.opt.get("F") is not None:
+                    gen_fitness = np.min(gen.opt.get("F"))
+                    generation_best_fitness.append(gen_fitness)
+                else:
+                    # If no fitness available, use a large value
+                    generation_best_fitness.append(float("inf"))
 
-        # Convergence Generation
-        axes[0, 1].plot(
-            values,
-            convergence_generation,
-            "s-",
-            linewidth=2,
-            markersize=8,
-            color="orange",
-        )
-        axes[0, 1].set_xlabel(param_name)
-        axes[0, 1].set_ylabel("Convergence Generation")
-        axes[0, 1].set_title("Convergence Speed vs Parameter Value")
-        axes[0, 1].grid(True, alpha=0.3)
+            metrics["final_fitness"] = (
+                generation_best_fitness[-1] if generation_best_fitness else float("inf")
+            )
 
-        # Optimization Stability
-        axes[0, 2].plot(
-            values,
-            optimization_stability,
-            "^-",
-            linewidth=2,
-            markersize=8,
-            color="green",
-        )
-        axes[0, 2].set_xlabel(param_name)
-        axes[0, 2].set_ylabel("Optimization Stability")
-        axes[0, 2].set_title("Stability vs Parameter Value")
-        axes[0, 2].grid(True, alpha=0.3)
+            # Calculate convergence generation (when fitness improvement becomes minimal)
+            convergence_generation = self._find_convergence_generation(
+                generation_best_fitness
+            )
+            metrics["convergence_generation"] = convergence_generation
 
-        # Final Solution Quality
-        axes[1, 0].plot(
-            values, final_solution_quality, "d-", linewidth=2, markersize=8, color="red"
-        )
-        axes[1, 0].set_xlabel(param_name)
-        axes[1, 0].set_ylabel("Solution Quality")
-        axes[1, 0].set_title("Solution Quality vs Parameter Value")
-        axes[1, 0].grid(True, alpha=0.3)
+            # Calculate diversity maintenance (approximated by fitness variance in later generations)
+            if len(generation_best_fitness) >= 10:
+                late_gen_fitness = generation_best_fitness[-10:]
+                diversity = (
+                    np.std(late_gen_fitness) if len(late_gen_fitness) > 1 else 0.0
+                )
+                metrics["diversity_maintenance"] = diversity
+            else:
+                metrics["diversity_maintenance"] = 0.0
 
-        # Execution Time
-        axes[1, 1].plot(
-            values, execution_time, "v-", linewidth=2, markersize=8, color="purple"
-        )
-        axes[1, 1].set_xlabel(param_name)
-        axes[1, 1].set_ylabel("Execution Time (seconds)")
-        axes[1, 1].set_title("Execution Time vs Parameter Value")
-        axes[1, 1].grid(True, alpha=0.3)
+            # Calculate fitness improvement rate
+            if len(generation_best_fitness) > 1:
+                initial_fitness = generation_best_fitness[0]
+                final_fitness = generation_best_fitness[-1]
+                if initial_fitness != 0 and not np.isinf(initial_fitness):
+                    fitness_improvement = (
+                        initial_fitness - final_fitness
+                    ) / initial_fitness
+                else:
+                    fitness_improvement = 0.0
+                metrics["fitness_improvement"] = fitness_improvement
+            else:
+                metrics["fitness_improvement"] = 0.0
 
-        # Diversity Maintenance
-        axes[1, 2].plot(
-            values,
-            diversity_maintenance,
-            "h-",
-            linewidth=2,
-            markersize=8,
-            color="brown",
-        )
-        axes[1, 2].set_xlabel(param_name)
-        axes[1, 2].set_ylabel("Diversity Maintenance")
-        axes[1, 2].set_title("Diversity vs Parameter Value")
-        axes[1, 2].grid(True, alpha=0.3)
+            # Calculate convergence rate (improvement per generation in early stages)
+            if len(generation_best_fitness) >= 20:
+                early_improvement = (
+                    generation_best_fitness[0] - generation_best_fitness[19]
+                )
+                convergence_rate = (
+                    early_improvement / 20 if generation_best_fitness[0] != 0 else 0.0
+                )
+                metrics["convergence_rate"] = max(0.0, convergence_rate)
+            else:
+                metrics["convergence_rate"] = 0.0
 
-        plt.tight_layout()
-        plt.savefig(
-            f"{self.output_dir}/sensitivity_{param_name}.png",
-            dpi=300,
-            bbox_inches="tight",
-        )
-        plt.show()
+        else:
+            # No history available
+            metrics["final_fitness"] = metrics["best_fitness"]
+            metrics["convergence_generation"] = 0
+            metrics["diversity_maintenance"] = 0.0
+            metrics["fitness_improvement"] = 0.0
+            metrics["convergence_rate"] = 0.0
+
+        return metrics
+
+    def _find_convergence_generation(
+        self, fitness_history, improvement_threshold=0.001
+    ):
+        """
+        Find the generation where convergence occurs (minimal improvement)
+        """
+        if len(fitness_history) < 10:
+            return len(fitness_history)
+
+        # Look for a window where improvement is minimal
+        window_size = 10
+        for i in range(window_size, len(fitness_history)):
+            window_start_fitness = fitness_history[i - window_size]
+            current_fitness = fitness_history[i]
+
+            if window_start_fitness != 0 and not np.isinf(window_start_fitness):
+                improvement_rate = (
+                    window_start_fitness - current_fitness
+                ) / window_start_fitness
+                if improvement_rate < improvement_threshold:
+                    return i - window_size + 1
+
+        return len(fitness_history)
+
+    def _save_parameter_results(self, param_name, results):
+        """
+        Save results for a specific parameter
+        """
+        # Save as CSV
+        df = pd.DataFrame(results)
+        csv_path = os.path.join(self.output_dir, f"detailed_{param_name}_results.csv")
+        df.to_csv(csv_path, index=False)
+
+        # Save as JSON for more detailed data
+        json_path = os.path.join(self.output_dir, f"detailed_{param_name}_results.json")
+        with open(json_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+        print(f"  Results saved: {csv_path}")
 
     def _generate_sensitivity_summary(self):
         """
         Generate summary analysis across all parameters
         """
-        print("\n=== GA Sensitivity Analysis Summary ===")
+        print("\n=== Sensitivity Analysis Summary ===")
 
         summary_data = []
 
         for param_name, results in self.results.items():
             # Calculate sensitivity metrics
-            best_fitness = [r["best_fitness"] for r in results]
-            convergence_generation = [r["convergence_generation"] for r in results]
-            optimization_stability = [r["optimization_stability"] for r in results]
+            best_fitness_values = [r["best_fitness"] for r in results]
+            convergence_generations = [r["convergence_generation"] for r in results]
+            execution_times = [r["execution_time"] for r in results]
+            diversity_values = [r["diversity_maintenance"] for r in results]
 
-            fitness_sensitivity = (max(best_fitness) - min(best_fitness)) / np.mean(
-                best_fitness
+            # Calculate sensitivity (coefficient of variation)
+            fitness_sensitivity = (
+                np.std(best_fitness_values) / np.mean(best_fitness_values)
+                if np.mean(best_fitness_values) != 0
+                else 0
             )
             convergence_sensitivity = (
-                max(convergence_generation) - min(convergence_generation)
-            ) / np.mean(convergence_generation)
-            stability_sensitivity = (
-                max(optimization_stability) - min(optimization_stability)
-            ) / np.mean(optimization_stability)
+                np.std(convergence_generations) / np.mean(convergence_generations)
+                if np.mean(convergence_generations) != 0
+                else 0
+            )
+            time_sensitivity = (
+                np.std(execution_times) / np.mean(execution_times)
+                if np.mean(execution_times) != 0
+                else 0
+            )
 
             # Find best parameter value
-            best_idx = np.argmax(best_fitness)
+            best_idx = np.argmin(best_fitness_values)
             best_value = results[best_idx]["value"]
 
             summary_data.append(
@@ -358,221 +367,130 @@ class GASensitivityAnalyzer:
                     "parameter": param_name,
                     "fitness_sensitivity": fitness_sensitivity,
                     "convergence_sensitivity": convergence_sensitivity,
-                    "stability_sensitivity": stability_sensitivity,
+                    "time_sensitivity": time_sensitivity,
                     "best_value": best_value,
-                    "best_fitness": best_fitness[best_idx],
+                    "best_fitness": best_fitness_values[best_idx],
+                    "best_convergence": convergence_generations[best_idx],
+                    "avg_diversity": np.mean(diversity_values),
                 }
             )
 
             print(f"{param_name}:")
             print(f"  Fitness Sensitivity: {fitness_sensitivity:.3f}")
             print(f"  Convergence Sensitivity: {convergence_sensitivity:.3f}")
-            print(f"  Stability Sensitivity: {stability_sensitivity:.3f}")
+            print(f"  Time Sensitivity: {time_sensitivity:.3f}")
             print(f"  Best Value: {best_value}")
-            print(f"  Best Fitness: {best_fitness[best_idx]:.4f}")
+            print(f"  Best Fitness: {best_fitness_values[best_idx]:.2f}")
+            print(
+                f"  Best Convergence: {convergence_generations[best_idx]} generations"
+            )
             print()
-
-        # Create summary visualization
-        self._plot_sensitivity_summary(summary_data)
 
         # Save summary
         summary_df = pd.DataFrame(summary_data)
-        summary_df.to_csv(f"{self.output_dir}/sensitivity_summary.csv", index=False)
+        summary_path = os.path.join(self.output_dir, "sensitivity_summary.csv")
+        summary_df.to_csv(summary_path, index=False)
 
+        print(f"Summary saved to: {summary_path}")
         return summary_data
-
-    def _plot_sensitivity_summary(self, summary_data):
-        """
-        Create summary visualization of parameter sensitivities
-        """
-        parameters = [s["parameter"] for s in summary_data]
-        fitness_sensitivities = [s["fitness_sensitivity"] for s in summary_data]
-        convergence_sensitivities = [s["convergence_sensitivity"] for s in summary_data]
-        stability_sensitivities = [s["stability_sensitivity"] for s in summary_data]
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-
-        # Sensitivity comparison
-        x = np.arange(len(parameters))
-        width = 0.25
-
-        ax1.bar(
-            x - width,
-            fitness_sensitivities,
-            width,
-            label="Fitness Sensitivity",
-            alpha=0.8,
-        )
-        ax1.bar(
-            x,
-            convergence_sensitivities,
-            width,
-            label="Convergence Sensitivity",
-            alpha=0.8,
-        )
-        ax1.bar(
-            x + width,
-            stability_sensitivities,
-            width,
-            label="Stability Sensitivity",
-            alpha=0.8,
-        )
-
-        ax1.set_xlabel("Parameters")
-        ax1.set_ylabel("Sensitivity Score")
-        ax1.set_title("GA Parameter Sensitivity Comparison")
-        ax1.set_xticks(x)
-        ax1.set_xticklabels(parameters, rotation=45)
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-
-        # Best values
-        best_values = [s["best_value"] for s in summary_data]
-        best_fitness = [s["best_fitness"] for s in summary_data]
-
-        ax2.bar(parameters, best_fitness, alpha=0.7, color="skyblue")
-        ax2.set_xlabel("Parameters")
-        ax2.set_ylabel("Best Fitness")
-        ax2.set_title("Best Fitness by Optimal Parameter Values")
-        ax2.tick_params(axis="x", rotation=45)
-        ax2.grid(True, alpha=0.3)
-
-        # Add value labels on bars
-        for i, (param, value, fitness) in enumerate(
-            zip(parameters, best_values, best_fitness)
-        ):
-            ax2.text(i, fitness + 0.01, f"{value}", ha="center", va="bottom")
-
-        plt.tight_layout()
-        plt.savefig(
-            f"{self.output_dir}/sensitivity_summary.png", dpi=300, bbox_inches="tight"
-        )
-        plt.show()
 
     def _save_results(self):
         """
-        Save detailed results to JSON files
+        Save all results to files
         """
-        # Save detailed results
-        detailed_results = {}
-        for param_name, results in self.results.items():
-            detailed_results[param_name] = results
-
-        with open(f"{self.output_dir}/detailed_results.json", "w") as f:
-            json.dump(detailed_results, f, indent=2, default=str)
-
-        # Save analysis configuration
-        config = {
-            "param_ranges": self.param_ranges,
+        # Save configuration
+        config_data = {
+            "analysis_timestamp": datetime.now().isoformat(),
+            "parameter_ranges": self.param_ranges,
             "default_params": self.default_params,
-            "analysis_date": datetime.now().isoformat(),
-            "output_directory": self.output_dir,
+            "num_batches": NUM_BATCHES,
         }
 
-        with open(f"{self.output_dir}/analysis_config.json", "w") as f:
-            json.dump(config, f, indent=2)
+        config_path = os.path.join(self.output_dir, "analysis_config.json")
+        with open(config_path, "w") as f:
+            json.dump(config_data, f, indent=2)
 
-        print(f"Results saved to {self.output_dir}/")
+        # Save detailed results
+        detailed_path = os.path.join(self.output_dir, "detailed_results.json")
+        with open(detailed_path, "w") as f:
+            json.dump(self.results, f, indent=2)
+
+        print(f"Configuration saved to: {config_path}")
+        print(f"Detailed results saved to: {detailed_path}")
 
     def generate_report(self):
         """
-        Generate comprehensive analysis report
+        Generate a comprehensive markdown report
         """
-        report_path = f"{self.output_dir}/sensitivity_analysis_report.md"
+        report_path = os.path.join(self.output_dir, "sensitivity_analysis_report.md")
 
         with open(report_path, "w") as f:
-            f.write("# GA Parameter Sensitivity Analysis Report\n\n")
+            f.write("# GA Sensitivity Analysis Report\n\n")
             f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
-            f.write("## Analysis Overview\n")
-            f.write(
-                "This report analyzes the sensitivity of Genetic Algorithm hyperparameters "
-            )
-            f.write("on optimization performance, focusing on:\n")
-            f.write(
-                "- **Crossover Rate**: Effect on solution exploration and exploitation\n"
-            )
-            f.write(
-                "- **Mutation Rate**: Effect on diversity maintenance and convergence\n"
-            )
-            f.write("- **Population Size**: Effect on search space coverage\n")
-            f.write("- **Number of Generations**: Effect on convergence time\n\n")
+            f.write("## Analysis Configuration\n\n")
+            f.write(f"- Number of batches: {NUM_BATCHES}\n")
+            f.write(f"- Default parameters: {self.default_params}\n\n")
 
-            f.write("## Key Findings\n")
-            for param_name, results in self.results.items():
-                best_fitness = [r["best_fitness"] for r in results]
-                best_idx = np.argmax(best_fitness)
-                best_result = results[best_idx]
+            f.write("## Parameter Ranges Analyzed\n\n")
+            for param, values in self.param_ranges.items():
+                f.write(f"- **{param}**: {values}\n")
+            f.write("\n")
 
-                f.write(f"### {param_name}\n")
-                f.write(f"- **Optimal Value**: {best_result['value']}\n")
-                f.write(f"- **Best Fitness**: {best_result['best_fitness']:.4f}\n")
+            if self.results:
+                f.write("## Results Summary\n\n")
                 f.write(
-                    f"- **Convergence Generation**: {best_result['convergence_generation']}\n"
+                    "| Parameter | Best Value | Best Fitness | Convergence Gen | Sensitivity |\n"
                 )
                 f.write(
-                    f"- **Solution Quality**: {best_result['final_solution_quality']:.4f}\n\n"
+                    "|-----------|------------|--------------|-----------------|-------------|\n"
                 )
 
-            f.write("## Recommendations\n")
-            f.write("Based on the sensitivity analysis results:\n")
-            f.write(
-                "1. Focus tuning efforts on parameters with highest sensitivity scores\n"
-            )
-            f.write("2. Use optimal values identified for each parameter\n")
-            f.write("3. Consider parameter interactions for fine-tuning\n")
-            f.write("4. Monitor convergence behavior during optimization\n\n")
+                for param_name, results in self.results.items():
+                    best_fitness_values = [r["best_fitness"] for r in results]
+                    convergence_generations = [
+                        r["convergence_generation"] for r in results
+                    ]
 
-        print(f"Report generated: {report_path}")
+                    best_idx = np.argmin(best_fitness_values)
+                    best_value = results[best_idx]["value"]
+                    best_fitness = best_fitness_values[best_idx]
+                    best_convergence = convergence_generations[best_idx]
 
+                    # Calculate sensitivity
+                    fitness_sensitivity = (
+                        np.std(best_fitness_values) / np.mean(best_fitness_values)
+                        if np.mean(best_fitness_values) != 0
+                        else 0
+                    )
 
-def main():
-    """
-    Main function to run GA sensitivity analysis
-    """
-    print("=== GA Parameter Sensitivity Analysis ===")
-    print(f"Started at: {datetime.now()}")
+                    f.write(
+                        f"| {param_name} | {best_value} | {best_fitness:.2f} | {best_convergence} | {fitness_sensitivity:.3f} |\n"
+                    )
 
-    # Create analyzer
-    analyzer = GASensitivityAnalyzer()
+                f.write("\n## Detailed Analysis\n\n")
+                for param_name, results in self.results.items():
+                    f.write(f"### {param_name}\n\n")
+                    f.write(
+                        "| Value | Best Fitness | Convergence Gen | Exec Time (s) | Diversity |\n"
+                    )
+                    f.write(
+                        "|-------|--------------|-----------------|---------------|----------|\n"
+                    )
 
-    # Choose analysis mode
-    print("\nChoose analysis mode:")
-    print("1. Crossover Rate analysis")
-    print("2. Mutation Rate analysis")
-    print("3. Complete analysis (all parameters)")
-    print("4. Quick test (crossover_rate only)")
+                    for result in results:
+                        f.write(
+                            f"| {result['value']} | {result['best_fitness']:.2f} | {result['convergence_generation']} | {result['execution_time']:.2f} | {result['diversity_maintenance']:.3f} |\n"
+                        )
+                    f.write("\n")
 
-    choice = input("Enter choice (1-4): ").strip()
+            f.write("## Recommendations\n\n")
+            if self.results:
+                f.write("Based on the sensitivity analysis:\n\n")
+                for param_name, results in self.results.items():
+                    best_fitness_values = [r["best_fitness"] for r in results]
+                    best_idx = np.argmin(best_fitness_values)
+                    best_value = results[best_idx]["value"]
+                    f.write(f"- **{param_name}**: Optimal value is {best_value}\n")
 
-    if choice == "1":
-        print("\nAnalyzing Crossover Rate sensitivity...")
-        analyzer.run_single_parameter_analysis("crossover_rate")
-    elif choice == "2":
-        print("\nAnalyzing Mutation Rate sensitivity...")
-        analyzer.run_single_parameter_analysis("mutation_rate")
-    elif choice == "3":
-        print("\nRunning complete sensitivity analysis...")
-        print("This will take some time!")
-        confirm = input("Continue? (y/n): ").strip().lower()
-        if confirm == "y":
-            analyzer.run_complete_sensitivity_analysis()
-        else:
-            print("Cancelled.")
-            return
-    elif choice == "4":
-        print("\nRunning quick test with crossover_rate...")
-        analyzer.run_single_parameter_analysis("crossover_rate")
-    else:
-        print("Invalid choice!")
-        return
-
-    # Generate report
-    analyzer.generate_report()
-
-    print(f"\nCompleted at: {datetime.now()}")
-    print(f"Results saved to: {analyzer.output_dir}")
-
-
-if __name__ == "__main__":
-    main()
+        print(f"Comprehensive report saved to: {report_path}")

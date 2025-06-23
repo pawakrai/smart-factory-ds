@@ -1,0 +1,46 @@
+[
+  {
+    "parameter": "mutation_rate",
+    "value": 0.01,
+    "best_fitness": 887333.75,
+    "final_fitness": 887333.75,
+    "convergence_generation": 35,
+    "diversity_maintenance": 0.0,
+    "execution_time": 37.63646173477173,
+    "fitness_improvement": 0.9997098594926528,
+    "convergence_rate": 152869972.54098386
+  },
+  {
+    "parameter": "mutation_rate",
+    "value": 0.05,
+    "best_fitness": 886336.0,
+    "final_fitness": 886336.0,
+    "convergence_generation": 40,
+    "diversity_maintenance": 0.0,
+    "execution_time": 38.18296790122986,
+    "fitness_improvement": 0.9997101857370803,
+    "convergence_rate": 152869722.50348383
+  },
+  {
+    "parameter": "mutation_rate",
+    "value": 0.1,
+    "best_fitness": 889330.75,
+    "final_fitness": 889330.75,
+    "convergence_generation": 22,
+    "diversity_maintenance": 0.0,
+    "execution_time": 43.73736619949341,
+    "fitness_improvement": 0.9997092065133277,
+    "convergence_rate": 152869972.71598384
+  },
+  {
+    "parameter": "mutation_rate",
+    "value": 0.2,
+    "best_fitness": 887333.5,
+    "final_fitness": 887333.5,
+    "convergence_generation": 36,
+    "diversity_maintenance": 0.0,
+    "execution_time": 38.20086979866028,
+    "fitness_improvement": 0.9997098595743978,
+    "convergence_rate": 152867612.0950121
+  }
+]
