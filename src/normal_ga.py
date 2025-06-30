@@ -1637,17 +1637,71 @@ def run_realistic_ga():
     if result.history:
         best_cost_per_gen = [np.min(gen.opt.get("F")) for gen in result.history]
 
-        plt.figure(figsize=(12, 6))
-        plt.plot(
+        # Create convergence plots with both linear and log scale
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 6))
+
+        # Linear scale plot
+        ax1.plot(
             np.arange(len(best_cost_per_gen)),
             best_cost_per_gen,
             marker="o",
             linestyle="-",
+            color="blue",
+            markersize=4,
         )
-        plt.title("Realistic GA Cost Convergence")
-        plt.xlabel("Generation")
-        plt.ylabel("Best Cost Found")
-        plt.grid(True)
+        ax1.set_title("Realistic GA Cost Convergence (Linear Scale)")
+        ax1.set_xlabel("Generation")
+        ax1.set_ylabel("Best Cost Found")
+        ax1.grid(True, alpha=0.3)
+
+        # Log scale plot - เป็นการแสดงที่ดีกว่า
+        ax2.semilogy(
+            np.arange(len(best_cost_per_gen)),
+            best_cost_per_gen,
+            marker="o",
+            linestyle="-",
+            color="red",
+            markersize=4,
+        )
+        ax2.set_title("Realistic GA Cost Convergence (Log Scale)")
+        ax2.set_xlabel("Generation")
+        ax2.set_ylabel("Best Cost Found (Log Scale)")
+        ax2.grid(True, alpha=0.3, which="both")
+
+        # Add improvement rate calculation
+        if len(best_cost_per_gen) > 1:
+            improvement_rates = []
+            for i in range(1, len(best_cost_per_gen)):
+                if best_cost_per_gen[i - 1] > 0:
+                    rate = (
+                        (best_cost_per_gen[i - 1] - best_cost_per_gen[i])
+                        / best_cost_per_gen[i - 1]
+                        * 100
+                    )
+                    improvement_rates.append(rate)
+                else:
+                    improvement_rates.append(0)
+
+            # Add text with convergence info
+            final_cost = best_cost_per_gen[-1]
+            total_improvement = (
+                ((best_cost_per_gen[0] - final_cost) / best_cost_per_gen[0] * 100)
+                if best_cost_per_gen[0] > 0
+                else 0
+            )
+
+            ax2.text(
+                0.02,
+                0.98,
+                f"Initial Cost: {best_cost_per_gen[0]:.2e}\n"
+                f"Final Cost: {final_cost:.2e}\n"
+                f"Total Improvement: {total_improvement:.1f}%",
+                transform=ax2.transAxes,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
+            )
+
+        plt.tight_layout()
         plt.show()
 
     # Show results

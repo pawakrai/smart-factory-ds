@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import timedelta
 
-df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20241028_111546.xlsx", header=4)
+df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_May1-15.xlsx", header=4)
 
 df_cleaned = df.drop(index=[0, 1])
 df_cleaned.head()
@@ -36,10 +36,10 @@ fig.update_layout(
 fig.show()
 
 df_day = df_cleaned[
-    df_cleaned["Date Time"].dt.date == pd.to_datetime("2024-10-25").date()
+    df_cleaned["Date Time"].dt.date == pd.to_datetime("2025-05-07").date()
 ]
 
-fig = px.line(df_day, x="Date Time", y="kW", title="kW Usage on 2024-10-25")
+fig = px.line(df_day, x="Date Time", y="kW", title="kW Usage on 2025-05-07")
 fig.update_xaxes(rangeslider_visible=True)
 fig.update_layout(
     xaxis_title="Date Time",
@@ -62,8 +62,8 @@ fig.update_layout(
 fig.show()
 
 # Calculate kWh/ton
-batch_1_start = "2024-10-20 01:00:00"
-batch_1_end = "2024-10-20 03:00:00"
+batch_1_start = "2025-05-07 01:00:00"
+batch_1_end = "2025-05-07 03:00:00"
 
 df_batch_1 = df_cleaned[
     (df_cleaned["Date Time"] >= batch_1_start)
@@ -165,8 +165,8 @@ plt.show()
 
 # # fix start time batch 95 to '2024-10-25 16:10:00'
 # batches[94][0] = batches[94][0] - timedelta(minutes=30)
-batches[94] = (batches[94][0] - timedelta(minutes=30), batches[94][1])
-batches[94]
+# batches[94] = (batches[94][0] - timedelta(minutes=30), batches[94][1])
+# batches[94]
 
 
 import pandas as pd

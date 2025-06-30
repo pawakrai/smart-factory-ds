@@ -19,7 +19,7 @@ def test_improved_environment():
     print("=== Testing Improved Aluminum Melting Environment ===")
 
     # สร้างสภาพแวดล้อม
-    env = AluminumMeltingEnvironment(initial_weight_kg=350, target_temp_c=900)
+    env = AluminumMeltingEnvironment(initial_weight_kg=350, target_temp_c=850)
 
     # เริ่มต้นสภาพแวดล้อม
     state = env.reset()
