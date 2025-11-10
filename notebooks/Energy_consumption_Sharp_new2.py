@@ -3,9 +3,10 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import plotly.express as px
 import plotly.graph_objects as go
+import numpy as np
 from datetime import timedelta
 
-df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_May1-15.xlsx", header=4)
+df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20251007_123642.xlsx", header=4)  # new
 
 df_cleaned = df.drop(index=[0, 1])
 df_cleaned.head()
@@ -36,10 +37,10 @@ fig.update_layout(
 fig.show()
 
 df_day = df_cleaned[
-    df_cleaned["Date Time"].dt.date == pd.to_datetime("2025-05-07").date()
+    df_cleaned["Date Time"].dt.date == pd.to_datetime("2025-10-06").date()
 ]
 
-fig = px.line(df_day, x="Date Time", y="kW", title="kW Usage on 2025-05-07")
+fig = px.line(df_day, x="Date Time", y="kW", title="kW Usage on 2025-10-06")
 fig.update_xaxes(rangeslider_visible=True)
 fig.update_layout(
     xaxis_title="Date Time",
@@ -62,8 +63,8 @@ fig.update_layout(
 fig.show()
 
 # Calculate kWh/ton
-batch_1_start = "2025-05-07 01:00:00"
-batch_1_end = "2025-05-07 03:00:00"
+batch_1_start = "2025-10-06 13:30:00"
+batch_1_end = "2025-10-06 15:00:00"
 
 df_batch_1 = df_cleaned[
     (df_cleaned["Date Time"] >= batch_1_start)
@@ -260,3 +261,144 @@ for i, (start_time, end_time) in enumerate(extended_batches):
 
     # Step 6: Show the plot for this batch
     fig.show()
+
+
+# Step 7: Filter out B21 and B94 from analysis
+print(f"\nOriginal number of batches: {len(df_melt_profile)}")
+df_melt_profile_filtered = df_melt_profile[
+    ~df_melt_profile["batch"].isin([2, 3, 75, 76, 77, 78, 85, 86, 89])
+].copy()
+print(
+    f"Number of batches after filtering (excluding small batch): {len(df_melt_profile_filtered)}"
+)
+print(f"Excluded batches: small batch\n")
+
+# Step 8: Create scatter plot showing relationship between time duration and energy consumption for filtered batches
+plt.figure(figsize=(12, 8))
+plt.scatter(
+    df_melt_profile_filtered["time_duration"],
+    df_melt_profile_filtered["kWh_usage"],
+    c=range(len(df_melt_profile_filtered)),
+    cmap="viridis",
+    s=100,
+    alpha=0.7,
+)
+
+# Add batch numbers as labels on each point
+for i, (duration, energy, batch_num) in enumerate(
+    zip(
+        df_melt_profile_filtered["time_duration"],
+        df_melt_profile_filtered["kWh_usage"],
+        df_melt_profile_filtered["batch"],
+    )
+):
+    plt.annotate(
+        f"B{int(batch_num)}",
+        (duration, energy),
+        xytext=(5, 5),
+        textcoords="offset points",
+        fontsize=8,
+        alpha=0.8,
+    )
+
+plt.xlabel("Time Duration (minutes)")
+plt.ylabel("Energy Consumption (kWh)")
+plt.title("Energy Consumption vs Time Duration")
+plt.grid(True, alpha=0.3)
+plt.colorbar(label="Batch Sequence")
+
+# Add trend line
+z = np.polyfit(
+    df_melt_profile_filtered["time_duration"], df_melt_profile_filtered["kWh_usage"], 1
+)
+p = np.poly1d(z)
+plt.plot(
+    df_melt_profile_filtered["time_duration"],
+    p(df_melt_profile_filtered["time_duration"]),
+    "r--",
+    alpha=0.8,
+    label=f'Trend Line (R² = {np.corrcoef(df_melt_profile_filtered["time_duration"], df_melt_profile_filtered["kWh_usage"])[0,1]**2:.3f})',
+)
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# Alternative interactive scatter plot using Plotly (filtered data)
+fig_scatter = go.Figure()
+
+fig_scatter.add_trace(
+    go.Scatter(
+        x=df_melt_profile_filtered["time_duration"],
+        y=df_melt_profile_filtered["kWh_usage"],
+        mode="markers+text",
+        text=[f"B {int(batch)}" for batch in df_melt_profile_filtered["batch"]],
+        textposition="top center",
+        marker=dict(
+            size=10,
+            color=df_melt_profile_filtered["batch"],
+            colorscale="viridis",
+            showscale=True,
+            colorbar=dict(title="Batch Number"),
+        ),
+        name="Batches",
+        hovertemplate="<b>Batch %{text}</b><br>"
+        + "Time Duration: %{x:.1f} minutes<br>"
+        + "Energy Consumption: %{y:.2f} kWh<br>"
+        + "<extra></extra>",
+    )
+)
+
+# Add trend line
+from scipy import stats
+
+slope, intercept, r_value, p_value, std_err = stats.linregress(
+    df_melt_profile_filtered["time_duration"], df_melt_profile_filtered["kWh_usage"]
+)
+line_x = [
+    df_melt_profile_filtered["time_duration"].min(),
+    df_melt_profile_filtered["time_duration"].max(),
+]
+line_y = [slope * x + intercept for x in line_x]
+
+fig_scatter.add_trace(
+    go.Scatter(
+        x=line_x,
+        y=line_y,
+        mode="lines",
+        name=f"Trend Line (R² = {r_value**2:.3f})",
+        line=dict(color="red", dash="dash"),
+    )
+)
+
+fig_scatter.update_layout(
+    title="Energy Consumption vs Time Duration (Interactive, Excluding small batch)",
+    xaxis_title="Time Duration (minutes)",
+    yaxis_title="Energy Consumption (kWh)",
+    hovermode="closest",
+    showlegend=True,
+)
+
+fig_scatter.show()
+
+# Print summary statistics (filtered data)
+print("\n" + "=" * 60)
+print("BATCH ANALYSIS SUMMARY (Excluding small batch)")
+print("=" * 60)
+print(f"Total number of batches (filtered): {len(df_melt_profile_filtered)}")
+print(
+    f"Average time duration: {df_melt_profile_filtered['time_duration'].mean():.1f} minutes"
+)
+print(
+    f"Average energy consumption: {df_melt_profile_filtered['kWh_usage'].mean():.2f} kWh"
+)
+print(
+    f"Energy efficiency range: {df_melt_profile_filtered['kWh_usage'].min():.2f} - {df_melt_profile_filtered['kWh_usage'].max():.2f} kWh"
+)
+print(
+    f"Time duration range: {df_melt_profile_filtered['time_duration'].min():.1f} - {df_melt_profile_filtered['time_duration'].max():.1f} minutes"
+)
+print(
+    f"Correlation coefficient (time vs energy): {np.corrcoef(df_melt_profile_filtered['time_duration'], df_melt_profile_filtered['kWh_usage'])[0,1]:.3f}"
+)
+print("=" * 60)
