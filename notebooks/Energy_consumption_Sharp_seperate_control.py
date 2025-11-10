@@ -41,11 +41,22 @@ USE_MANUAL_IF_AVAILABLE = (
 )
 EXTEND_MANUAL_WINDOWS = False  # if True, also extend manual windows by EXTEND_* minutes
 MANUAL_BATCHES: Dict[str, Dict[str, List[Tuple[str, str]]]] = {
-    # "Control A, Furnace A": {
-    #     "MDB6 (INDUCTION)_20250625.xlsx": [
-    #         ("2025-06-25 21:20:00", "2025-06-25 22:05:00"),  # example: only last batch of the day
-    #     ],
-    # },
+    "Control A, Furnace A": {
+        "MDB6 (INDUCTION)_20250625.xlsx": [
+            (
+                "2025-06-25 22:15:00",
+                "2025-06-25 23:59:00",
+            ),
+        ],
+    },
+    "Control B, Furnace B": {
+        "MDB6 (INDUCTION)_20250702.xlsx": [
+            (
+                "2025-07-02 08:57:00",
+                "2025-07-02 11:07:00",
+            ),
+        ],
+    },
 }
 # How to apply manual ranges when provided: "replace" (manual only) or "merge" (manual + auto, remove overlaps)
 MANUAL_MODE = "merge"
