@@ -14,6 +14,7 @@ from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 from pymoo.algorithms.moo.nsga2 import NSGA2
 import random
+from typing import Dict, Tuple
 
 
 # =============== CONFIG ==================
@@ -34,14 +35,46 @@ USE_FURNACE_B = True
 IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 7.5  # Example value, adjust as needed
 # Very high penalty for any batch that cannot be poured by the end of simulation
 UNPOURED_BATCH_PENALTY = 1e13  # Increased penalty
-# Penalty for idle time between consecutive batches on the same IF furnace
-IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 0  # Example: 0.5 cost unit per minute of gap
+# Penalty for idle time between consecutive batches on the same IF furnace.
+# ค่าตรงนี้แทน \"โอกาสที่สูญเสีย\" เมื่อเตาหลอมถูกปล่อยว่าง ทั้งในแง่พลังงานสูญเปล่า
+# (ต้องอุ่นใหม่ / cold start) และกำลังการผลิตที่ไม่ถูกใช้
+IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 1.0  # cost unit per minute of gap
 # Penalty for IF working during designated break times
 IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
     10000  # Example: 100 cost unit per minute of work in break
 )
 # Average Power Rating for each IF in kW
 IF_POWER_RATING_KW = {"A": 535.0, "B": 535.0}  # เตา A = 550 kW, เตา B = 600 kW
+
+# === New: Per-batch power options & empirical profiles (from plant data) ===
+# Options of maximum power that can be used per melting batch (kW)
+IF_POWER_OPTIONS = [450.0, 475.0, 500.0]
+
+# Empirical profiles for a "hot" furnace (no significant cooldown between batches).
+# Values are approximate means derived from recent plant data in
+# `data/สรุปการหลอมทุก Batch new.xlsx`.
+# Each entry maps power -> (expected_duration_min_hot, expected_energy_kwh_hot)
+POWER_PROFILE: Dict[float, Dict[str, float]] = {
+    # 3 samples, Energy ≈ [593, 614, 576], Duration ≈ [94, 92, 88]
+    450.0: {"duration_min_hot": 91.3, "energy_kwh_hot": 594.3},
+    # 2 samples, Energy ≈ [613, 579], Duration ≈ [94, 90]
+    475.0: {"duration_min_hot": 92.0, "energy_kwh_hot": 596.0},
+    # 4 samples, Energy ≈ [585, 585, 576, 576], Duration ≈ [84, 84, 84, 86]
+    500.0: {"duration_min_hot": 84.5, "energy_kwh_hot": 580.5},
+}
+
+# Default power levels that the heuristic will use for each batch type.
+# These can be adjusted easily when experimenting with different policies.
+IF_POWER_FOR_HOT_BATCH_KW = 475.0
+IF_POWER_FOR_COLD_START_BATCH_KW = 475.0
+
+# Cool / Cold start modelling (gap-based)
+# If the idle gap since the previous batch on the same furnace exceeds this threshold,
+# the next batch is treated as a "cold start".
+COLD_START_GAP_THRESHOLD_MIN = 60.0  # minutes
+# Additional time & energy associated with a cold start, relative to the hot profile.
+COLD_START_EXTRA_DURATION_MIN = 5.0
+COLD_START_EXTRA_ENERGY_KWH = 25.0
 
 # เตา M&H (โค้ดเดิมไว้ plot)
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
@@ -50,8 +83,27 @@ MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 3.50, "B": 2.50}  # อัตรากา
 MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
-MH_IDLE_PENALTY_RATE = 0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ต่ำกว่า threshold)
+MH_IDLE_PENALTY_RATE = 1.0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ไม่มีโลหะให้ใช้งาน)
 MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
+
+# ระดับน้ำโลหะที่ถือว่า \"ปลอดภัย\" สำหรับการทำงานของหัวพ่นไฟ (Operational level)
+# หากต่ำกว่านี้จะถือว่าเตาทำงานไม่มีประสิทธิภาพ (ต้องใช้พลังงานมากขึ้น / อุ่นได้ช้าลง)
+MH_MIN_OPERATIONAL_LEVEL_KG = {
+    "A": 0.5 * MH_MAX_CAPACITY_KG["A"],  # 50% ของความจุสูงสุด
+    "B": 0.5 * MH_MAX_CAPACITY_KG["B"],
+}
+# Penalty ต่อนาทีเมื่อระดับน้ำอยู่ในช่วง (0, MH_MIN_OPERATIONAL_LEVEL_KG)
+# แทนต้นทุนโอกาสจากกำลังการผลิตที่ลดลงและประสิทธิภาพการถ่ายเทความร้อนที่แย่ลง
+MH_LOW_LEVEL_PENALTY_RATE = 200.0
+
+# ช่วงเวลาที่ต้องการให้เตา IF ทำงานเพื่อใช้ไฟฟ้าต้นทุนต่ำ (เช่น จาก Solar)
+# ระบุเป็นนาทีตั้งแต่เริ่มวัน เช่น 12:00-13:00 => (12*60, 13*60)
+SOLAR_PREFERRED_WINDOWS_MIN = [
+    (12 * 60, 13 * 60),  # ช่วงเที่ยง – บ่ายหนึ่ง
+]
+# ตัวคูณส่วนลดต้นทุนพลังงานเมื่ออยู่ในช่วง Solar เต็ม ๆ
+# 0.0 = ไม่มีส่วนลด, 1.0 = พลังงานในช่วงนี้ไม่คิด cost เลย
+SOLAR_ENERGY_DISCOUNT_FACTOR = 0.5
 
 # กำหนดช่วงเวลาพัก (นาทีตั้งแต่เริ่มวัน 0 - 1440)
 # ตัวอย่าง: 9:00-9:15 และ 12:00-13:00
@@ -190,14 +242,121 @@ def scheduling_cost(x):
     makespan_min = makespan_slot * SLOT_DURATION
 
     # ----------------------------
+    # 2.7) Determine per-batch power, effective duration and IF energy
+    # ----------------------------
+    # Heuristic: choose power based on whether the batch is a cold start or hot start.
+    # Cold start is detected from the idle gap on each furnace.
+    def _choose_if_power_kw(is_cold_start: bool) -> float:
+        """
+        Simple deterministic policy for selecting IF power per batch.
+
+        Currently:
+        - Cold-start batch  -> IF_POWER_FOR_COLD_START_BATCH_KW
+        - Hot (normal) batch -> IF_POWER_FOR_HOT_BATCH_KW
+
+        Both defaults are 500 kW but can be reconfigured to 450 or 475
+        when exploring alternative operating policies.
+        """
+        return (
+            IF_POWER_FOR_COLD_START_BATCH_KW
+            if is_cold_start
+            else IF_POWER_FOR_HOT_BATCH_KW
+        )
+
+    # Maps for later use (e.g. when building melt_completion_events)
+    batch_power_kw: Dict[int, float] = {}
+    batch_effective_duration_min: Dict[int, float] = {}
+
+    base_total_energy_if_kwh = 0.0  # พลังงานรวมจริงของ IF (kWh) ไม่คิดราคา
+    priced_total_energy_if_cost = 0.0  # ต้นทุนพลังงานของ IF หลังคิดส่วนลด Solar
+    num_cold_start_events = 0
+
+    schedule_by_furnace_energy: Dict[int, list] = {0: [], 1: []}
+    for s, e, f, b_id in schedule:
+        schedule_by_furnace_energy[f].append((s, e, f, b_id))
+
+    def _fraction_overlap_with_windows(
+        start_minute: float,
+        duration_min: float,
+        windows: list[tuple[int, int]],
+    ) -> float:
+        """
+        คำนวณสัดส่วนเวลาของ batch ที่ทับกับช่วงเวลาที่ระบุใน windows.
+        """
+        if duration_min <= 0 or not windows:
+            return 0.0
+        end_minute = start_minute + duration_min
+        total_overlap = 0.0
+        for w_start, w_end in windows:
+            overlap_start = max(start_minute, w_start)
+            overlap_end = min(end_minute, w_end)
+            if overlap_end > overlap_start:
+                total_overlap += overlap_end - overlap_start
+        return total_overlap / duration_min
+
+    for f_idx in [0, 1]:
+        furnace_schedule = sorted(
+            schedule_by_furnace_energy[f_idx], key=lambda item: item[0]
+        )
+        last_batch_end_minute: float | None = None
+
+        for s, e, f, b_id in furnace_schedule:
+            start_minute = s * SLOT_DURATION
+
+            if last_batch_end_minute is None:
+                # Treat the first batch on each furnace as a cold start
+                is_cold_start = True
+                gap_minutes = None
+            else:
+                gap_minutes = start_minute - last_batch_end_minute
+                is_cold_start = (
+                    gap_minutes is not None
+                    and gap_minutes >= COLD_START_GAP_THRESHOLD_MIN
+                )
+
+            power_kw = _choose_if_power_kw(is_cold_start)
+            profile = POWER_PROFILE.get(power_kw, next(iter(POWER_PROFILE.values())))
+            duration_min_hot = profile["duration_min_hot"]
+            energy_kwh_hot = profile["energy_kwh_hot"]
+
+            effective_duration_min = duration_min_hot
+            effective_energy_kwh = energy_kwh_hot
+
+            if is_cold_start:
+                effective_duration_min += COLD_START_EXTRA_DURATION_MIN
+                effective_energy_kwh += COLD_START_EXTRA_ENERGY_KWH
+                num_cold_start_events += 1
+
+            # เก็บข้อมูลต่อ batch
+            batch_power_kw[b_id] = power_kw
+            batch_effective_duration_min[b_id] = effective_duration_min
+            base_total_energy_if_kwh += effective_energy_kwh
+
+            # คิดต้นทุนพลังงานโดยให้ช่วง Solar มีส่วนลด
+            solar_frac = _fraction_overlap_with_windows(
+                start_minute, effective_duration_min, SOLAR_PREFERRED_WINDOWS_MIN
+            )
+            energy_cost_kwh = effective_energy_kwh * (
+                1.0 - SOLAR_ENERGY_DISCOUNT_FACTOR * solar_frac
+            )
+            priced_total_energy_if_cost += energy_cost_kwh
+
+            last_batch_end_minute = start_minute + effective_duration_min
+
+    # ----------------------------
     # 3) สร้าง water_events สำหรับ M&H
     # สมมติ 1 batch = 500 kg => มีน้ำหลอม 500 kg ทันทีที่ batch_i finish
     # (ถ้าคุณมี partial batch capacity จริง ๆ ก็ปรับ logic)
     # water_events will now store (melt_finish_minute, batch_id)
+    # ใช้ effective duration ต่อ batch จากโปรไฟล์กำลังไฟและ cold start
     # ----------------------------
     melt_completion_events = []  # list of (melt_finish_minute, batch_id)
     for s, e, f, b_id in schedule:
-        finish_minute = e * SLOT_DURATION
+        start_minute = s * SLOT_DURATION
+        effective_duration_min = batch_effective_duration_min.get(
+            b_id, T_MELT * SLOT_DURATION
+        )
+        finish_minute = start_minute + effective_duration_min
         melt_completion_events.append((finish_minute, b_id))
 
     melt_completion_events.sort(key=lambda w: w[0])  # เรียงตามเวลา
@@ -216,6 +375,7 @@ def scheduling_cost(x):
         unpoured_batches_at_end,  # New output
         total_if_holding_minutes,  # New output
         pour_induced_mh_overflow_penalty,  # New output
+        MH_low_level_penalty,  # New output
     ) = simulate_mh_consumption_v2(
         melt_completion_events
     )  # Pass melt_completion_events
@@ -226,69 +386,6 @@ def scheduling_cost(x):
     # ----------------------------
     # 5) รวม cost
     # ----------------------------
-    # --- NEW IF ENERGY CALCULATION (in kWh) ---
-    base_total_energy_if_kwh = 0.0
-    # Map furnace index (0, 1) to furnace ID ("A", "B") - assuming 0 is A, 1 is B
-    # This mapping should be consistent with how USE_FURNACE_A/B is handled or defined
-    if_furnace_id_map = {}
-    if USE_FURNACE_A:
-        if_furnace_id_map[0] = "A"
-    if USE_FURNACE_B:
-        if (
-            len(if_furnace_id_map) == 1 and 0 not in if_furnace_id_map
-        ):  # e.g. only B is used, assign 0 to B
-            if_furnace_id_map[0] = "B"  # This case for B only and f=0
-        elif 1 not in if_furnace_id_map and USE_FURNACE_B:  # e.g. A and B used, B is 1
-            if_furnace_id_map[1] = "B"
-        elif (
-            0 not in if_furnace_id_map and USE_FURNACE_A
-        ):  # e.g. A and B used, A is 0 (already handled)
-            pass  # Already handled if USE_FURNACE_A is true, 0 is A
-        elif len(if_furnace_id_map) == 0:  # Neither A or B is used.
-            pass  # Should not happen if schedule has items
-        # If only one furnace is active, its index in schedule (0) will map to its ID ("A" or "B")
-        # If both are active, 0 maps to "A", 1 maps to "B" (needs careful check if USE_FURNACE_A/B allows gaps)
-
-    # Fallback for furnace mapping if only one furnace is used, assume it's index 0
-    # This logic needs to be robust if furnace indices in `schedule` are not always 0 or 1 or if only one is used.
-    # For simplicity, let's assume if only one furnace type is active, its ID is used for index 0.
-    # And if both are active, 0 is A, 1 is B.
-
-    # Simplified mapping based on active furnaces
-    # This mapping is crucial. Let's refine it.
-    # if_map_for_power = {0: "A", 1: "B"} # Default if both used
-    # if USE_FURNACE_A and not USE_FURNACE_B:
-    #     if_map_for_power = {0: "A"}
-    # elif not USE_FURNACE_A and USE_FURNACE_B:
-    #     if_map_for_power = {0: "B"}
-    # elif not USE_FURNACE_A and not USE_FURNACE_B:
-    #     if_map_for_power = {}
-
-    for s, e, f, b_id in schedule:
-        furnace_idx_in_schedule = f  # f is the furnace index (0 or 1) from schedule
-        furnace_id_for_power = None
-
-        if USE_FURNACE_A and USE_FURNACE_B:
-            furnace_id_for_power = "A" if furnace_idx_in_schedule == 0 else "B"
-        elif USE_FURNACE_A:  # Only Furnace A is active
-            furnace_id_for_power = (
-                "A"  # All scheduled batches must be on furnace A (index 0)
-            )
-        elif USE_FURNACE_B:  # Only Furnace B is active
-            furnace_id_for_power = (
-                "B"  # All scheduled batches must be on furnace B (index 0)
-            )
-
-        if furnace_id_for_power and furnace_id_for_power in IF_POWER_RATING_KW:
-            power_rating_kw = IF_POWER_RATING_KW[furnace_id_for_power]
-            # melting_duration_hours = (T_MELT * SLOT_DURATION) / 60.0
-            # energy_for_batch_kwh = power_rating_kw * melting_duration_hours
-            energy_for_batch_kwh = power_rating_kw
-            base_total_energy_if_kwh += energy_for_batch_kwh
-        # else:
-        # This case should ideally not happen if schedule is valid and furnaces are defined
-        # print(f"Warning: Could not map furnace index {furnace_idx_in_schedule} to power rating for batch {b_id}")
-
     # Add IF holding energy penalty
     # IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is currently 50.
     # If this is meant to be an actual energy cost, it needs to be kW * (minutes/60)
@@ -307,9 +404,9 @@ def scheduling_cost(x):
     )
 
     # final cost (Objective 1: Energy/Cost)
-    # The 'cost' objective now primarily reflects energy in kWh plus other penalties
+    # The 'cost' objective nowสะท้อน \"ต้นทุนพลังงาน\" หลังคิดส่วนลด Solar + penalty อื่น ๆ
     cost = 0.0
-    cost += base_total_energy_if_kwh  # Base IF melting energy in kWh
+    cost += priced_total_energy_if_cost  # IF energy cost after Solar discount
     cost += if_holding_penalty_cost  # This is still a penalty value, not kWh unless redefined
     cost += total_energy_mh  # พลังงาน M&H (ยังเป็น placeholder)
     cost += (
@@ -317,6 +414,7 @@ def scheduling_cost(x):
     )
     cost += MH_idle_penalty  # Penalty จาก M&H idle
     cost += MH_reheat_penalty  # Penalty M&H reheat (ยังเป็น placeholder)
+    cost += MH_low_level_penalty  # Penalty M&H ทำงานที่ระดับน้ำต่ำ
     cost += pour_induced_mh_overflow_penalty  # Penalty M&H overflow จากการเทจริง
     cost += unpoured_batches_penalty_cost  # Penalty สำหรับ batch ที่ไม่ได้เท
 
@@ -339,14 +437,18 @@ def scheduling_cost(x):
     cost_components = {
         "total_cost": cost,
         "makespan_minutes": makespan_min_actual,
+        # พลังงานจริงของ IF (kWh) และต้นทุนหลังคิด Solar ส่วนลด
         "base_if_energy_kwh": base_total_energy_if_kwh,
+        "priced_if_energy_cost_kwh": priced_total_energy_if_cost,
         "if_holding_penalty": if_holding_penalty_cost,
         "if_general_penalty": penalty_if,  # Contains overlap, gap, break penalties
         "mh_idle_penalty": MH_idle_penalty,
         "mh_reheat_penalty": MH_reheat_penalty,  # Placeholder
         "mh_overflow_penalty": pour_induced_mh_overflow_penalty,
+        "mh_low_level_penalty": MH_low_level_penalty,
         "unpoured_batch_penalty": unpoured_batches_penalty_cost,
         "mh_energy_kwh": total_energy_mh,  # Placeholder
+        "num_cold_start_events": num_cold_start_events,
     }
 
     return cost, makespan_min_actual, cost_components
@@ -372,6 +474,7 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
 
     total_idle_penalty = 0.0
     total_reheat_penalty = 0.0  # Placeholder
+    total_low_level_penalty = 0.0  # Penalty for operating with low metal level
     pour_induced_mh_overflow_penalty = 0.0  # New
 
     ready_to_pour_queue = []  # Stores (melt_finish_minute, batch_id)
@@ -409,9 +512,12 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
             available_capacity_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
             total_available_mh_capacity = available_capacity_A + available_capacity_B
 
-            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+            # เดิม: ต้องมี capacity >= IF_BATCH_OUTPUT_KG ถึงจะเทได้
+            # ส่งผลให้ M&H ถูกปล่อยให้ระดับต่ำมากก่อนค่อยเท (pattern เป็นฟันเลื่อยจาก max -> 0)
+            # ปรับใหม่: ถ้ามี capacity > 0 ก็อนุญาตให้เท โดยยอมให้เกิด overflow แล้วคิดโทษผ่าน
+            # pour_induced_mh_overflow_penalty แทน เพื่อเปิดโอกาสให้ GA รักษาระดับน้ำให้สูงขึ้น
+            if total_available_mh_capacity > 0:
                 # print(f"Minute {t}: Attempting to pour Batch {batch_id_q}. Total M&H available: {total_available_mh_capacity:.1f} kg.") # Debug
-                # Sufficient total capacity, proceed with pour
 
                 # --- NEW PRIORITIZED POURING LOGIC ---
                 poured_amount_A_this_batch = 0
@@ -540,9 +646,17 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
                 # if mh_status was already "idle", increment idle_duration
                 # idle_duration[furnace_id] += 1
 
-            # Apply idle penalty if the furnace is idle (and not in downtime or break)
+            # Apply idle penalty if the furnace is idle (ไม่มีโลหะให้ใช้)
             if mh_status[furnace_id] == "idle":
                 total_idle_penalty += MH_IDLE_PENALTY_RATE
+
+            # Apply low-level penalty whenระดับน้ำอยู่ต่ำกว่า operational level แต่ยังไม่ว่าง
+            current_level_now = current_level[furnace_id]
+            if (
+                current_level_now > MH_EMPTY_THRESHOLD_KG
+                and current_level_now < MH_MIN_OPERATIONAL_LEVEL_KG[furnace_id]
+            ):
+                total_low_level_penalty += MH_LOW_LEVEL_PENALTY_RATE
 
             mh_levels[furnace_id][t] = current_level[furnace_id]
 
@@ -561,6 +675,7 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
         unpoured_batches_at_end,
         total_if_holding_minutes,
         pour_induced_mh_overflow_penalty,
+        total_low_level_penalty,
     )
 
 
@@ -622,6 +737,7 @@ def plot_schedule_and_mh(
             _,
             _,
             _,  # Other outputs not needed for basic plot
+            _,  # low level penalty (not needed for plotting)
         ) = simulate_mh_consumption_v2(melt_completion_events_plot)
         time_points_shifted = time_points_plot + SHIFT_START
         mh_levels_to_plot = mh_levels_plot
@@ -800,9 +916,10 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
     และพยายามจัดตาราง IF ให้สอดคล้องกับความพร้อมของ M&H (M&H-aware).
     NEW: Introduces randomness in choosing among viable M&H-aware slots.
     """
-    MAX_VIABLE_SLOTS_TO_CONSIDER = (
-        5  # Max number of early viable slots to consider for random choice
-    )
+    # Max number of viable IF start slots to consider for random choice.
+    # เพิ่มให้มากขึ้นเพื่อให้ GA สามารถ “ยอมดีเลย์” batch ได้ และสร้างความแตกต่างของ
+    # makespan/energy ระหว่าง solutions แทนที่จะยัดทุก batch ให้เร็วที่สุดเสมอ
+    MAX_VIABLE_SLOTS_TO_CONSIDER = 0
 
     x_schedule_vector = np.full(
         num_batches * 2, -1, dtype=int
@@ -1175,11 +1292,17 @@ def main():
             base_if_energy_kwh = cost_details["base_if_energy_kwh"]
             if_holding_penalty_cost = cost_details["if_holding_penalty"]
             actual_if_energy_kwh = base_if_energy_kwh + if_holding_penalty_cost
+            priced_if_energy_cost_kwh = cost_details.get(
+                "priced_if_energy_cost_kwh", actual_if_energy_kwh
+            )
 
             print(f"    Base IF Energy (kWh)     : {base_if_energy_kwh:.2f}")
             print(f"    IF Holding Penalty       : {if_holding_penalty_cost:.2f}")
             print(
                 f"    Actual IF Energy (Base + Holding) (kWh): {actual_if_energy_kwh:.2f}"
+            )
+            print(
+                f"    IF Energy Cost after Solar Discount (kWh-equivalent): {priced_if_energy_cost_kwh:.2f}"
             )
 
             num_actual_batches = NUM_BATCHES  # Assumes all batches are processed
@@ -1214,6 +1337,9 @@ def main():
                 f"    MH Reheat Penalty        : {cost_details['mh_reheat_penalty']:.2f} (Placeholder)"
             )
             print(
+                f"    MH Low-Level Penalty     : {cost_details['mh_low_level_penalty']:.2f}"
+            )
+            print(
                 f"    MH Overflow Penalty      : {cost_details['mh_overflow_penalty']:.2f}"
             )
             print(
@@ -1221,6 +1347,9 @@ def main():
             )
             print(
                 f"    MH Energy (kWh)          : {cost_details['mh_energy_kwh']:.2f} (Placeholder)"
+            )
+            print(
+                f"    Cold Start Events        : {cost_details['num_cold_start_events']}"
             )
             print(f"  --------------------------------------------------")
         else:

@@ -6,7 +6,8 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import timedelta
 
-df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20251007_123642.xlsx", header=4)  # new
+df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20251110.xlsx", header=4)  # new
+# df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20251111.xlsx", header=4)  # new
 
 df_cleaned = df.drop(index=[0, 1])
 df_cleaned.head()
@@ -37,10 +38,10 @@ fig.update_layout(
 fig.show()
 
 df_day = df_cleaned[
-    df_cleaned["Date Time"].dt.date == pd.to_datetime("2025-10-06").date()
+    df_cleaned["Date Time"].dt.date == pd.to_datetime("2025-11-10").date()
 ]
 
-fig = px.line(df_day, x="Date Time", y="kW", title="kW Usage on 2025-10-06")
+fig = px.line(df_day, x="Date Time", y="kW", title="kW Usage on 2025-11-10")
 fig.update_xaxes(rangeslider_visible=True)
 fig.update_layout(
     xaxis_title="Date Time",
@@ -63,8 +64,8 @@ fig.update_layout(
 fig.show()
 
 # Calculate kWh/ton
-batch_1_start = "2025-10-06 13:30:00"
-batch_1_end = "2025-10-06 15:00:00"
+batch_1_start = "2025-11-10 12:27:00"
+batch_1_end = "2025-11-10 13:57:00"
 
 df_batch_1 = df_cleaned[
     (df_cleaned["Date Time"] >= batch_1_start)

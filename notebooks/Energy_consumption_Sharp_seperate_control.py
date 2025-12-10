@@ -415,6 +415,11 @@ def build_group_metrics(group_name: str, file_list: List[str]) -> pd.DataFrame:
 
         metrics["group"] = group_name
         metrics["file"] = file_name
+        parts = [s.strip() for s in group_name.split(",")]
+        control_name = next((p for p in parts if p.lower().startswith("control")), None)
+        furnace_name = next((p for p in parts if p.lower().startswith("furnace")), None)
+        metrics["control"] = control_name if control_name else "Unknown Control"
+        metrics["furnace"] = furnace_name if furnace_name else "Unknown Furnace"
         metrics["batch_label"] = (
             metrics["file"] + " | B" + metrics["batch_in_file"].astype(str)
         )
@@ -492,3 +497,103 @@ if __name__ == "__main__":
         )
         fig_all.update_layout(legend=dict(title="Group"))
         fig_all.show()
+
+        # Additional combined plot: color by Control (A=Blue, B=Red), symbol by Furnace (A=Triangle, B=Circle)
+        fig_all_fc = px.scatter(
+            combined,
+            x="duration_min",
+            y="energy_kwh",
+            color="control",
+            symbol="furnace",
+            category_orders={
+                "control": ["Control A", "Control B"],
+                "furnace": ["Furnace A", "Furnace B"],
+            },
+            color_discrete_map={
+                "Control A": "blue",
+                "Control B": "red",
+            },
+            symbol_sequence=["triangle-up", "circle"],
+            hover_name="batch_label",
+            labels={
+                "duration_min": "Time Duration (minutes)",
+                "energy_kwh": "Energy Consumption (kWh)",
+            },
+            template="plotly_white",
+            title="Energy vs Melt Duration — All Groups",
+        )
+        fig_all_fc.update_layout(
+            legend=dict(title="Legend (Color: Control, Shape: Furnace)")
+        )
+        fig_all_fc.update_traces(
+            marker=dict(size=8, line=dict(width=0.5, color="black"))
+        )
+
+        # Mean points by Furnace (shape-based)
+        mean_by_furnace = (
+            combined.groupby("furnace")[["duration_min", "energy_kwh"]]
+            .mean()
+            .reset_index()
+        )
+        for _, row in mean_by_furnace.iterrows():
+            furnace_name = row["furnace"]
+            symbol_map = {"Furnace A": "triangle-up", "Furnace B": "circle"}
+            furnace_symbol = symbol_map.get(furnace_name, "circle")
+            fig_all_fc.add_trace(
+                go.Scatter(
+                    x=[row["duration_min"]],
+                    y=[row["energy_kwh"]],
+                    mode="markers",
+                    name=f"Mean {furnace_name}",
+                    marker=dict(
+                        symbol=furnace_symbol,
+                        size=16,
+                        color="black",
+                        line=dict(width=2, color="white"),
+                    ),
+                    hovertemplate=(
+                        f"Mean {furnace_name}<br>"
+                        + "Time Duration=%{x:.1f} min"
+                        + "<br>Energy=%{y:.2f} kWh<extra></extra>"
+                    ),
+                )
+            )
+
+        # Mean points by Control (color-based)
+        mean_by_control = (
+            combined.groupby("control")[["duration_min", "energy_kwh"]]
+            .mean()
+            .reset_index()
+        )
+        for _, row in mean_by_control.iterrows():
+            control_name = row["control"]
+            color_map = {"Control A": "blue", "Control B": "red"}
+            control_color = color_map.get(control_name, "gray")
+            fig_all_fc.add_trace(
+                go.Scatter(
+                    x=[row["duration_min"]],
+                    y=[row["energy_kwh"]],
+                    mode="markers",
+                    name=f"Mean {control_name}",
+                    marker=dict(
+                        symbol="diamond",
+                        size=12,
+                        color=control_color,
+                        line=dict(width=2, color="black"),
+                    ),
+                    hovertemplate=(
+                        f"Mean {control_name}<br>"
+                        + "Time Duration=%{x:.1f} min"
+                        + "<br>Energy=%{y:.2f} kWh<extra></extra>"
+                    ),
+                )
+            )
+
+        fig_all_fc.show()
+
+        if SAVE_FIGS:
+            out_path_fc = os.path.join(
+                FIGS_DIR, "scatter_energy_vs_duration_furnace_color_control_symbol.html"
+            )
+            fig_all_fc.write_html(out_path_fc)
+            print(f"Saved figure to: {out_path_fc}")
