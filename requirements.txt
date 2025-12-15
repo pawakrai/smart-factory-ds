@@ -18,3 +18,7 @@ six==1.17.0
 sympy==1.13.3
 torch>=2.0.0
 typing_extensions==4.12.2
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pymoo==0.6.1.1
