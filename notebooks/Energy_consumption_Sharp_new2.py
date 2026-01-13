@@ -63,25 +63,25 @@ fig.update_layout(
 
 fig.show()
 
-# Calculate kWh/ton
-batch_1_start = "2025-11-10 12:27:00"
-batch_1_end = "2025-11-10 13:57:00"
+# # Calculate kWh/ton
+# batch_1_start = "2025-11-10 12:27:00"
+# batch_1_end = "2025-11-10 13:57:00"
 
-df_batch_1 = df_cleaned[
-    (df_cleaned["Date Time"] >= batch_1_start)
-    & (df_cleaned["Date Time"] <= batch_1_end)
-]
+# df_batch_1 = df_cleaned[
+#     (df_cleaned["Date Time"] >= batch_1_start)
+#     & (df_cleaned["Date Time"] <= batch_1_end)
+# ]
 
-# Calculate energy consumption for each batch by subtracting initial kWh from final kWh
-energy_batch_1 = df_batch_1["kWh"].iloc[-1] - df_batch_1["kWh"].iloc[0]
+# # Calculate energy consumption for each batch by subtracting initial kWh from final kWh
+# energy_batch_1 = df_batch_1["kWh"].iloc[-1] - df_batch_1["kWh"].iloc[0]
 
-print(f"Energy consumption for Batch 1: {energy_batch_1} kWh")
+# print(f"Energy consumption for Batch 1: {energy_batch_1} kWh")
 
-# Calculate energy consumtion per ton
+# # Calculate energy consumtion per ton
 
-ton_per_batch = 0.5  # 500 kg per batch
+# ton_per_batch = 0.5  # 500 kg per batch
 
-print(f"Energy consumption per batch: {energy_batch_1/ton_per_batch} kWh/ton")
+# print(f"Energy consumption per batch: {energy_batch_1/ton_per_batch} kWh/ton")
 
 
 # Step 1: Function to identify batches with time threshold
@@ -180,7 +180,7 @@ import plotly.graph_objects as go
 
 # Step 1: Extend each batch by 5 minutes before and 2 minutes after
 extended_batches = [
-    (start - timedelta(minutes=5), end + timedelta(minutes=2)) for start, end in batches
+    (start - timedelta(minutes=2), end + timedelta(minutes=2)) for start, end in batches
 ]
 
 # Step 2: Create an empty DataFrame to store the melt profile for each batch
@@ -266,9 +266,7 @@ for i, (start_time, end_time) in enumerate(extended_batches):
 
 # Step 7: Filter out B21 and B94 from analysis
 print(f"\nOriginal number of batches: {len(df_melt_profile)}")
-df_melt_profile_filtered = df_melt_profile[
-    ~df_melt_profile["batch"].isin([2, 3, 75, 76, 77, 78, 85, 86, 89])
-].copy()
+df_melt_profile_filtered = df_melt_profile[~df_melt_profile["batch"].isin([1])].copy()
 print(
     f"Number of batches after filtering (excluding small batch): {len(df_melt_profile_filtered)}"
 )
