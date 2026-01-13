@@ -89,3 +89,9 @@ target/
 
 .venv/
 checkpoints*/
+
+# Node
+node_modules/
+
+# Raw Excel data
+data/raw/**/*.xls*
