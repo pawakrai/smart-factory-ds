@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from src.environment.aluminum_melting_env_7 import (
+from src.environment.aluminum_melting_env_8 import (
     AluminumMeltingEnvironment,
 )  # Import environment
 

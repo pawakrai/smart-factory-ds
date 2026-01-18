@@ -9,7 +9,7 @@ Demonstrates realistic aluminum melting process with:
 
 import numpy as np
 import matplotlib.pyplot as plt
-from environment.aluminum_melting_env_8 import AluminumMeltingEnvironment
+from src.environment.aluminum_melting_env_9 import AluminumMeltingEnvironment
 
 
 def test_improved_environment():
@@ -17,9 +17,16 @@ def test_improved_environment():
     ทดสอบสภาพแวดล้อมการหลอมอลูมิเนียมที่ปรับปรุงแล้ว
     """
     print("=== Testing Improved Aluminum Melting Environment ===")
+    target_temp_c = 950
 
     # สร้างสภาพแวดล้อม
-    env = AluminumMeltingEnvironment(initial_weight_kg=350, target_temp_c=850)
+    env = AluminumMeltingEnvironment(
+        initial_weight_kg=350,
+        target_temp_c=target_temp_c,
+        scrap_addition_start=64 * 60,
+        scrap_addition_end=74 * 60,
+        start_mode="hot",
+    )
 
     # เริ่มต้นสภาพแวดล้อม
     state = env.reset()
@@ -48,13 +55,13 @@ def test_improved_environment():
             action = 1  # increase_power_mild
         elif current_minute < 30:
             action = 0  # increase_power_strong
-        elif current_minute < 32:
+        elif current_minute < 31:
             action = 4  # decrease_power_strong (เพื่อเติม dose)
         elif current_minute < 60:
             action = 0  # increase_power_strong
         else:
             # maintain หรือปรับตามอุณหภูมิ
-            if state[0] < 850:  # temperature
+            if state[0] < target_temp_c:  # temperature
                 action = 1  # increase_power_mild
             else:
                 action = 2  # maintain
@@ -132,8 +139,17 @@ def create_simulation_plots(
     # Temperature vs Time
     axes[0, 0].plot(time_history, temp_history, "r-", linewidth=2, label="Simulated")
     # เพิ่มข้อมูลจริงจากตาราง (ตัวอย่าง)
-    real_times = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
-    real_temps = [676, 698, 735, 759, 784, 809, 820, 845, 863, 888, 910]
+    # real_times = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
+    # real_temps = [676, 698, 735, 759, 784, 809, 820, 845, 863, 888, 910]
+
+    # # cold start
+    # real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92]
+    # real_temps = [621, 630, 654, 693, 717, 744, 771, 806, 844, 894, 928, 950]
+
+    # hot start
+    real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88]
+    real_temps = [745, 771, 793, 818, 851, 886, 919, 930, 941, 950]
+
     axes[0, 0].plot(
         real_times, real_temps, "bo-", linewidth=2, label="Real Data", alpha=0.7
     )
