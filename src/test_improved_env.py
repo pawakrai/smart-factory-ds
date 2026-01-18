@@ -9,7 +9,7 @@ Demonstrates realistic aluminum melting process with:
 
 import numpy as np
 import matplotlib.pyplot as plt
-from src.environment.aluminum_melting_env_9 import AluminumMeltingEnvironment
+from src.environment.aluminum_melting_env_10 import AluminumMeltingEnvironment
 
 
 def test_improved_environment():
@@ -25,7 +25,7 @@ def test_improved_environment():
         target_temp_c=target_temp_c,
         scrap_addition_start=64 * 60,
         scrap_addition_end=74 * 60,
-        start_mode="hot",
+        start_mode="cold",
     )
 
     # เริ่มต้นสภาพแวดล้อม
@@ -142,13 +142,13 @@ def create_simulation_plots(
     # real_times = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
     # real_temps = [676, 698, 735, 759, 784, 809, 820, 845, 863, 888, 910]
 
-    # # cold start
-    # real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92]
-    # real_temps = [621, 630, 654, 693, 717, 744, 771, 806, 844, 894, 928, 950]
+    # cold start
+    real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92]
+    real_temps = [621, 630, 654, 693, 717, 744, 771, 806, 844, 894, 928, 950]
 
-    # hot start
-    real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88]
-    real_temps = [745, 771, 793, 818, 851, 886, 919, 930, 941, 950]
+    # # hot start
+    # real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88]
+    # real_temps = [745, 771, 793, 818, 851, 886, 919, 930, 941, 950]
 
     axes[0, 0].plot(
         real_times, real_temps, "bo-", linewidth=2, label="Real Data", alpha=0.7
