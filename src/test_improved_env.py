@@ -159,6 +159,34 @@ def create_simulation_plots(
     axes[0, 0].grid(True, alpha=0.3)
     axes[0, 0].legend()
 
+    # --- Error metrics (Abs Error, RMSE) ---
+    sim_temp_by_time = {
+        int(t): float(temp) for t, temp in zip(time_history, temp_history)
+    }
+    sim_at_real = []
+    abs_errors = []
+    for t_real, temp_real in zip(real_times, real_temps):
+        t_key = int(round(t_real))
+        temp_sim = sim_temp_by_time.get(t_key, None)
+        if temp_sim is None:
+            # fallback to nearest available time
+            nearest_t = min(sim_temp_by_time.keys(), key=lambda t: abs(t - t_key))
+            temp_sim = sim_temp_by_time[nearest_t]
+        sim_at_real.append(temp_sim)
+        abs_errors.append(abs(temp_sim - temp_real))
+
+    rmse = float(
+        np.sqrt(np.mean([(s - r) ** 2 for s, r in zip(sim_at_real, real_temps)]))
+    )
+
+    print("\n=== Cold Start Error Metrics ===")
+    print("Time(min) | Real(°C) | Sim(°C) | Abs Error(°C)")
+    for t_real, temp_real, temp_sim, err in zip(
+        real_times, real_temps, sim_at_real, abs_errors
+    ):
+        print(f"{t_real:>8} | {temp_real:>8.1f} | {temp_sim:>7.1f} | {err:>12.1f}")
+    print(f"RMSE: {rmse:.2f} °C")
+
     # Power vs Time
     axes[0, 1].plot(time_history, power_history, "b-", linewidth=2)
     axes[0, 1].set_xlabel("Time (minutes)")

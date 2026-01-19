@@ -3,20 +3,25 @@ import numpy as np
 
 class AluminumMeltingEnvironment:
     """
-    Improved thermal simulation with a 2-node model:
-      - Metal/bath temperature (T_m)
-      - Furnace wall/lining temperature (T_w)
+    2-node thermal model (Metal Tm + Wall Tw) with better cold/hot behavior.
 
-    Key fix for HOT start:
-      - Explicit wall-to-metal heat transfer term Q_wm = k_wm*(T_w - T_m)
-      - Separate wall losses to ambient (avoid double counting losses from metal)
-      - Wall thermal capacitance C_w provides realistic thermal inertia / residual heat
+    Key changes (to fix HOT start being too fast):
+    1) Prevent "power double counting":
+        - eff_to_metal / eff_to_wall are treated as SPLIT WEIGHTS (not efficiencies),
+          then normalized so total power split <= 100%.
+        - overall_efficiency controls how much electrical power becomes useful heat.
+    2) Hot-start tuned dynamics:
+        - k_wall_metal is reduced for hot start (and made state-dependent so it doesn't
+          transfer unrealistically large heat when Tw>>Tm).
+        - early hot-start coupling can be further reduced in first minutes.
+        - metal losses are slightly higher in hot start (radiation grows fast in reality).
+    3) Optional time-dependent effective metal-coupling / power split for hot start:
+        - early period may have lower coupling (ramp/hold / non-ideal induction coupling).
+    4) Optional: reduce wall residual heat estimate (Tw0) with faster decay / smaller delta.
 
-    Notes:
-      - This class focuses on temperature/energy dynamics for validation & RL.
-      - For "fit to real data", strongly recommend using:
-            use_fixed_scrap_schedule=True
-        and feeding a fixed power profile (see optional power_profile in step()).
+    NOTE:
+      - For data-fitting, use_fixed_scrap_schedule=True and a fixed power_profile_kw.
+      - For RL, omit power_profile_kw and use actions.
     """
 
     def __init__(
@@ -32,52 +37,65 @@ class AluminumMeltingEnvironment:
         seed=None,
         use_fixed_scrap_schedule=False,
         fixed_scrap_schedule=None,  # list of (time_sec, weight_kg)
-        # ---- thermal parameters (tunable) ----
-        # electrical power split
-        eff_to_metal=0.90,  # fraction of electrical power to metal (induction coupling)
-        eff_to_wall=0.45,  # fraction of electrical power to wall/lining
-        # wall-metal coupling and inertia
-        k_wall_metal=1800.0,  # W/K
-        wall_heat_capacity_J_per_K=2.5e6,  # J/K (effective)
-        # wall heat loss params
+        # ---------- power handling ----------
+        overall_efficiency=0.93,  # fraction of electrical power that becomes useful heat (0..1)
+        eff_to_metal=0.90,  # SPLIT WEIGHT to metal (will be normalized)
+        eff_to_wall=0.05,  # SPLIT WEIGHT to wall  (will be normalized)
+        # ---------- wall-metal coupling ----------
+        k_wall_metal=1300.0,  # W/K base coupling (cold). hot override below
+        k_dT_alpha=0.0015,  # state-dependent reduction: k_eff = k / (1 + alpha*|Tw-Tm|)
+        hot_k_wall_metal=1700.0,  # W/K base coupling in hot start (main hot-start fix)
+        hot_k_early_factor=0.80,  # additional factor for first hot minutes (e.g., 0-10 min)
+        hot_early_minutes=10,  # minutes
+        wall_heat_capacity_J_per_K=2.5e6,  # J/K effective wall inertia
+        # ---------- wall losses ----------
         wall_area_m2=3.5,
         wall_h_W_m2K=18.0,
         wall_emissivity=0.55,
-        # metal loss params (keep small if wall loss is modeled)
+        # ---------- metal losses (keep modest to avoid double counting) ----------
         metal_area_m2=1.0,
-        metal_h_W_m2K=5.0,
-        metal_emissivity=0.10,
-        # latent heat handling (simple band)
+        metal_h_W_m2K=3.5,
+        metal_emissivity=0.06,  # cold default
+        hot_metal_emissivity=0.18,  # slightly higher in hot start (helps slow hot curve)
+        # ---------- latent heat handling ----------
         melting_point_c=660.0,
         latent_band_c=50.0,
-        latent_scale=0.25,  # scale dT in latent band
+        latent_scale=0.35,
         post_melt_scale=0.80,
-        # scrap cooling strength
+        # ---------- scrap effects ----------
         scrap_temp_drop_scale=0.50,
         scrap_recent_scale=0.80,
         scrap_recent_window_min=5,
-        # simulation timing
+        k_reduce_when_recent_scrap=0.75,  # reduce wall-metal coupling briefly after scrap
+        # ---------- start condition heuristic ----------
+        hot_wall_delta_c=200.0,  # how much above ambient wall could be at idle=0
+        hot_wall_tau_min=60.0,  # faster cooling than 120 min (reduces residual heat)
+        hot_metal_fraction_of_wall=0.70,  # metal initial temp relative to wall in hot start
+        # ---------- simulation timing ----------
         dt_sec=60,
         max_time_min=120,
         max_capacity_kg=500,
         ambient_temp_c=25,
         max_temp_c=1000,
     ):
-        # RNG
         self.rng = np.random.default_rng(seed)
 
-        # Physical constants
-        self.specific_heat = 900.0  # J/kg·K (effective constant cp for simplicity)
+        # constants / settings
+        self.sigma = 5.67e-8
+        self.specific_heat = 900.0
+
         self.ambient_temp = float(ambient_temp_c)
         self.max_temp = float(max_temp_c)
         self.target_temp = float(target_temp_c)
 
-        # Mass / capacity
         self.initial_mass = float(initial_weight_kg)
         self.current_mass = float(initial_weight_kg)
         self.max_capacity = float(max_capacity_kg)
 
-        # Scrap addition params
+        self.dt = int(dt_sec)
+        self.max_time = int(max_time_min * 60)
+
+        # scrap config
         self.scrap_addition_start = float(scrap_addition_start)
         self.scrap_addition_end = float(scrap_addition_end)
         self.use_fixed_scrap_schedule = bool(use_fixed_scrap_schedule)
@@ -88,60 +106,72 @@ class AluminumMeltingEnvironment:
         self.scrap_recent_scale = float(scrap_recent_scale)
         self.scrap_recent_window_sec = int(scrap_recent_window_min * 60)
 
-        # Start condition
-        self.start_mode = start_mode
+        # start mode
+        self.start_mode = str(start_mode).lower()
         self.idle_time_min = float(idle_time_min)
 
-        # Estimate wall temperature at t=0 if not provided
-        if wall_temp_c is not None:
-            self.wall_temp_c0 = float(wall_temp_c)
-        else:
-            if start_mode == "cold":
-                self.wall_temp_c0 = self.ambient_temp
-            else:
-                # heuristic: wall cools exponentially with idle time
-                decay = np.exp(-self.idle_time_min / 120.0)
-                # 250C above ambient at idle=0; adjust if needed
-                self.wall_temp_c0 = self.ambient_temp + 250.0 * decay
+        # power handling
+        self.overall_eff = float(np.clip(overall_efficiency, 0.05, 0.98))
 
-        # Estimate initial metal temperature at t=0 if not provided
-        if initial_metal_temp_c is not None:
-            self.metal_temp_c0 = float(initial_metal_temp_c)
-        else:
-            if start_mode == "cold":
-                self.metal_temp_c0 = self.ambient_temp
-            else:
-                # heuristic: metal starts warmer than ambient in hot start
-                # but not as hot as wall; tune factor if needed
-                self.metal_temp_c0 = max(self.ambient_temp, self.wall_temp_c0 * 0.60)
+        # treat eff_to_metal/eff_to_wall as weights and normalize
+        w_m = max(0.0, float(eff_to_metal))
+        w_w = max(0.0, float(eff_to_wall))
+        w_sum = max(w_m + w_w, 1e-9)
+        self.split_metal = w_m / w_sum
+        self.split_wall = w_w / w_sum
 
-        # Thermal parameters
-        self.eff_to_metal = float(np.clip(eff_to_metal, 0.05, 0.95))
-        self.eff_to_wall = float(np.clip(eff_to_wall, 0.00, 0.60))
-        self.k_wall_metal = float(k_wall_metal)
+        # coupling params
+        self.k_wall_metal_cold = float(k_wall_metal)
+        self.k_wall_metal_hot = float(hot_k_wall_metal)
+        self.k_dT_alpha = float(k_dT_alpha)
+        self.hot_k_early_factor = float(hot_k_early_factor)
+        self.hot_early_minutes = int(hot_early_minutes)
+        self.k_reduce_when_recent_scrap = float(k_reduce_when_recent_scrap)
+
         self.C_wall = float(wall_heat_capacity_J_per_K)
 
+        # losses
         self.wall_area = float(wall_area_m2)
         self.wall_h = float(wall_h_W_m2K)
         self.wall_eps = float(wall_emissivity)
 
         self.metal_area = float(metal_area_m2)
         self.metal_h = float(metal_h_W_m2K)
-        self.metal_eps = float(metal_emissivity)
+        self.metal_eps_cold = float(metal_emissivity)
+        self.metal_eps_hot = float(hot_metal_emissivity)
 
-        self.sigma = 5.67e-8
-
-        # Latent handling
+        # latent
         self.melting_point = float(melting_point_c)
         self.latent_band = float(latent_band_c)
         self.latent_scale = float(latent_scale)
         self.post_melt_scale = float(post_melt_scale)
 
-        # Time settings
-        self.dt = int(dt_sec)
-        self.max_time = int(max_time_min * 60)
+        # start heuristics
+        if wall_temp_c is not None:
+            self.wall_temp_c0 = float(wall_temp_c)
+        else:
+            if self.start_mode == "cold":
+                self.wall_temp_c0 = self.ambient_temp
+            else:
+                # faster decay + smaller delta -> less aggressive hot boost
+                decay = np.exp(-self.idle_time_min / max(hot_wall_tau_min, 1e-6))
+                self.wall_temp_c0 = self.ambient_temp + float(hot_wall_delta_c) * decay
 
-        # Action space (for RL usage)
+        if initial_metal_temp_c is not None:
+            self.metal_temp_c0 = float(initial_metal_temp_c)
+        else:
+            if self.start_mode == "cold":
+                self.metal_temp_c0 = self.ambient_temp
+            else:
+                # metal starts warmer than ambient, but not too high
+                self.metal_temp_c0 = max(
+                    self.ambient_temp,
+                    self.ambient_temp
+                    + (self.wall_temp_c0 - self.ambient_temp)
+                    * float(hot_metal_fraction_of_wall),
+                )
+
+        # RL action space
         self.action_space = {
             0: "increase_power_strong",
             1: "increase_power_mild",
@@ -150,10 +180,10 @@ class AluminumMeltingEnvironment:
             4: "decrease_power_strong",
         }
 
-        # State
+        # state
         self.state = {
-            "temperature": float(self.metal_temp_c0),  # metal temperature
-            "furnace_wall_temp": float(self.wall_temp_c0),  # wall temperature
+            "temperature": float(self.metal_temp_c0),
+            "furnace_wall_temp": float(self.wall_temp_c0),
             "weight": float(self.current_mass),
             "time": 0.0,
             "power": 0.0,  # kW
@@ -163,7 +193,6 @@ class AluminumMeltingEnvironment:
             "last_scrap_time": 0.0,
         }
 
-        # Internal temp update from energy balance for wall
         self._dT_wall = 0.0
 
     def reset(self):
@@ -198,29 +227,25 @@ class AluminumMeltingEnvironment:
         )
 
     # ----------------------------
-    # Scrap handling
+    # Scrap
     # ----------------------------
     def add_scrap(self):
-        """Add scrap between scrap_addition_start and scrap_addition_end."""
         current_time = float(self.state["time"])
 
-        # Deterministic schedule (recommended for validation)
         if self.use_fixed_scrap_schedule:
             for t_sec, w_kg in self.fixed_scrap_schedule:
                 already = any(
-                    abs(s["time"] - t_sec) < 1e-6 for s in self.scrap_additions
+                    abs(s["time"] - float(t_sec)) < 1e-6 for s in self.scrap_additions
                 )
-                if (not already) and abs(current_time - t_sec) <= self.dt / 2:
+                if (not already) and abs(current_time - float(t_sec)) <= self.dt / 2:
                     return self._apply_scrap(float(w_kg), float(t_sec))
             return False
 
-        # Random schedule (for RL training variety)
         if (
             self.scrap_addition_start <= current_time <= self.scrap_addition_end
             and len(self.scrap_additions) < 3
         ):
             time_since_last = current_time - float(self.state["last_scrap_time"])
-
             if len(self.scrap_additions) == 0 or time_since_last >= 5 * 60:
                 if len(self.scrap_additions) == 0:
                     scrap_weight = float(self.rng.uniform(40, 70))
@@ -229,7 +254,6 @@ class AluminumMeltingEnvironment:
                 else:
                     remaining = self.max_capacity - self.current_mass
                     scrap_weight = float(min(remaining, self.rng.uniform(40, 70)))
-
                 return self._apply_scrap(scrap_weight, current_time)
 
         return False
@@ -240,15 +264,13 @@ class AluminumMeltingEnvironment:
 
         self.current_mass += scrap_weight
         self.total_scrap_added += scrap_weight
-
         self.scrap_additions.append({"time": scrap_time, "weight": scrap_weight})
 
         self.state["scrap_added"] = float(self.total_scrap_added)
         self.state["last_scrap_time"] = float(scrap_time)
         self.state["weight"] = float(self.current_mass)
 
-        # Mix/cooling effect (simple)
-        # bigger drop when metal is much hotter than ambient; scaled by scrap fraction
+        # simple mixing/cooling
         Tm = float(self.state["temperature"])
         temp_drop = (
             (scrap_weight / self.current_mass)
@@ -256,66 +278,110 @@ class AluminumMeltingEnvironment:
             * self.scrap_temp_drop_scale
         )
         self.state["temperature"] = float(max(self.ambient_temp, Tm - temp_drop))
-
         return True
 
     # ----------------------------
-    # Thermal model (2-node)
+    # Loss models
     # ----------------------------
     def _wall_losses(self, Tw: float):
         Ta = self.ambient_temp
         Aw = self.wall_area
         hw = self.wall_h
         eps = self.wall_eps
-        sigma = self.sigma
 
         TwK = Tw + 273.15
         TaK = Ta + 273.15
-        Q_conv = hw * Aw * (Tw - Ta)
-        Q_rad = eps * sigma * Aw * (TwK**4 - TaK**4)
+        Q_conv = hw * Aw * max(0.0, (Tw - Ta))
+        Q_rad = eps * self.sigma * Aw * max(0.0, (TwK**4 - TaK**4))
         return Q_conv + Q_rad  # W
 
     def _metal_losses(self, Tm: float):
-        # Keep small to avoid double counting; still allows some effect if needed.
         Ta = self.ambient_temp
         Am = self.metal_area
         hm = self.metal_h
-        eps = self.metal_eps
-        sigma = self.sigma
+
+        eps = self.metal_eps_hot if self.start_mode == "hot" else self.metal_eps_cold
 
         TmK = Tm + 273.15
         TaK = Ta + 273.15
-        Q_conv = hm * Am * (Tm - Ta)
-        Q_rad = eps * sigma * Am * (TmK**4 - TaK**4)
+        Q_conv = hm * Am * max(0.0, (Tm - Ta))
+        Q_rad = eps * self.sigma * Am * max(0.0, (TmK**4 - TaK**4))
         return Q_conv + Q_rad  # W
 
+    # ----------------------------
+    # Coupling: k_wall_metal effective
+    # ----------------------------
+    def _k_wall_metal_eff(self, Tw: float, Tm: float, t_min: float):
+        # base by mode
+        k0 = (
+            self.k_wall_metal_hot
+            if self.start_mode == "hot"
+            else self.k_wall_metal_cold
+        )
+
+        # early hot-start reduction (helps prevent unrealistically fast rise)
+        if self.start_mode == "hot" and t_min < self.hot_early_minutes:
+            k0 *= self.hot_k_early_factor
+
+        # state-dependent reduction when |Tw-Tm| is large
+        dT = abs(Tw - Tm)
+        k_eff = k0 / (1.0 + self.k_dT_alpha * dT)
+
+        # if just added scrap, coupling effectively worse for a short period
+        if self.scrap_additions:
+            recent = [
+                s
+                for s in self.scrap_additions
+                if float(self.state["time"]) - s["time"] < self.scrap_recent_window_sec
+            ]
+            if recent:
+                k_eff *= self.k_reduce_when_recent_scrap
+
+        return float(max(0.0, k_eff))
+
+    # ----------------------------
+    # Thermal update
+    # ----------------------------
     def calculate_temperature_change(self):
         dt = float(self.dt)
         Tm = float(self.state["temperature"])
         Tw = float(self.state["furnace_wall_temp"])
-        Ta = self.ambient_temp
+        t_min = float(self.state["time"]) / 60.0
 
-        P_watt = float(self.state["power"]) * 1000.0  # W
+        P_watt = float(self.state["power"]) * 1000.0
 
-        # (1) Power split
-        Q_to_m = P_watt * self.eff_to_metal
-        Q_to_w = P_watt * self.eff_to_wall
+        # (1) total usable heat from electrical power
+        Q_total = P_watt * self.overall_eff
 
-        # (2) Wall-metal coupling (core hot-start mechanism)
-        Q_wm = self.k_wall_metal * (Tw - Tm)  # W (+ adds to metal when wall hotter)
+        # (2) split to metal/wall (normalized weights)
+        # Optional: in hot start early minutes, metal split can be reduced slightly
+        split_m = self.split_metal
+        split_w = self.split_wall
 
-        # (3) Losses
+        if self.start_mode == "hot" and t_min < self.hot_early_minutes:
+            # reduce metal split a bit early; keep sum=1
+            split_m = max(0.0, split_m - 0.08)
+            split_w = 1.0 - split_m
+
+        Q_to_m = Q_total * split_m
+        Q_to_w = Q_total * split_w
+
+        # (3) coupling wall <-> metal
+        k_eff = self._k_wall_metal_eff(Tw, Tm, t_min)
+        Q_wm = k_eff * (Tw - Tm)  # + means wall heats metal
+
+        # (4) losses
         Q_loss_w = self._wall_losses(Tw)
         Q_loss_m = self._metal_losses(Tm)
 
-        # (4) Metal energy balance
+        # (5) metal balance
         m = float(self.current_mass)
         cp = float(self.specific_heat)
 
         net_m = Q_to_m + Q_wm - Q_loss_m
         dT_m = (net_m * dt) / (m * cp)
 
-        # latent band scaling
+        # latent handling
         if (Tm > self.melting_point - self.latent_band) and (
             Tm < self.melting_point + self.latent_band
         ):
@@ -323,7 +389,7 @@ class AluminumMeltingEnvironment:
         elif Tm >= self.melting_point + self.latent_band:
             dT_m *= self.post_melt_scale
 
-        # recent scrap slows heating for a short time window
+        # recent scrap slows heating for a short window
         if self.scrap_additions:
             recent = [
                 s
@@ -333,7 +399,7 @@ class AluminumMeltingEnvironment:
             if recent:
                 dT_m *= self.scrap_recent_scale
 
-        # (5) Wall energy balance
+        # (6) wall balance
         net_w = Q_to_w - Q_wm - Q_loss_w
         dT_w = (net_w * dt) / self.C_wall
         self._dT_wall = float(dT_w)
@@ -344,24 +410,17 @@ class AluminumMeltingEnvironment:
     # Step
     # ----------------------------
     def step(self, action, power_profile_kw=None):
-        """
-        If power_profile_kw is provided:
-            - power is overridden by power_profile_kw(time_minute)->kW
-            - action is ignored (useful for validation against real data)
-        """
-        # Add scrap if scheduled
+        # scrap
         _ = self.add_scrap()
 
-        # Power update
+        # power update
         if self.state["status"] != 1:
             self.state["power"] = 0.0
         else:
             if power_profile_kw is not None:
-                # fixed power profile for validation
                 t_min = float(self.state["time"]) / 60.0
                 self.state["power"] = float(power_profile_kw(t_min))
             else:
-                # RL action-based power changes
                 action_type = self.action_space.get(action, "maintain")
                 if action_type == "increase_power_strong":
                     self.state["power"] = min(500.0, float(self.state["power"]) + 100.0)
@@ -374,9 +433,7 @@ class AluminumMeltingEnvironment:
                 elif action_type == "decrease_power_strong":
                     self.state["power"] = max(0.0, float(self.state["power"]) - 100.0)
 
-        # Optional: keep your phase constraints here if needed.
-        # IMPORTANT: for validation, ensure constraints match real operation.
-        # Example (same as your old logic):
+        # phase constraints (keep consistent with your plant logic)
         current_minute = float(self.state["time"]) / 60.0
         if 0 <= current_minute < 5:
             max_power = 50
@@ -395,7 +452,7 @@ class AluminumMeltingEnvironment:
 
         self.state["power"] = float(np.clip(self.state["power"], 0.0, float(max_power)))
 
-        # Update temperatures
+        # update temperatures
         if self.state["status"] == 1:
             dT_m = self.calculate_temperature_change()
             self.state["temperature"] = float(
@@ -403,23 +460,22 @@ class AluminumMeltingEnvironment:
                     self.state["temperature"] + dT_m, self.ambient_temp, self.max_temp
                 )
             )
-            # wall update from energy balance
             self.state["furnace_wall_temp"] = float(
                 max(self.ambient_temp, self.state["furnace_wall_temp"] + self._dT_wall)
             )
 
-        # Time update
+        # time update
         self.state["time"] = float(self.state["time"]) + float(self.dt)
 
-        # Energy consumption (kWh)
+        # energy consumption
         self.state["energy_consumption"] += float(
             (self.state["power"] * self.dt) / 3600.0
         )
 
-        # Weight update
+        # weight update
         self.state["weight"] = float(self.current_mass)
 
-        # Done conditions
+        # done
         done = False
         if (
             self.state["time"] >= self.max_time
@@ -448,10 +504,9 @@ class AluminumMeltingEnvironment:
         return state_array, reward, done
 
     # ----------------------------
-    # Reward (kept similar)
+    # Reward
     # ----------------------------
     def calculate_reward(self):
-        # Temperature component
         if self.state["temperature"] >= self.target_temp:
             temp_component = 1.0
         else:
@@ -460,18 +515,16 @@ class AluminumMeltingEnvironment:
                 / (self.target_temp - self.ambient_temp + 1e-9)
             )
 
-        # Energy efficiency component
         if self.state["energy_consumption"] > 1e-6:
             efficiency = self.state["weight"] / self.state["energy_consumption"]
         else:
             efficiency = 0.0
+
         optimal_efficiency = 1.8
         norm_eff = min(efficiency / optimal_efficiency, 1.0)
 
-        # Weights
         w_temp = 0.70
         w_energy = 0.30
-
         return float(w_temp * temp_component + w_energy * norm_eff)
 
     def get_scrap_info(self):
