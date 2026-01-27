@@ -38,15 +38,29 @@ class AluminumMeltingEnvironment:
         use_fixed_scrap_schedule=False,
         fixed_scrap_schedule=None,  # list of (time_sec, weight_kg)
         # ---------- power handling ----------
-        overall_efficiency=0.93,  # fraction of electrical power that becomes useful heat (0..1)
-        eff_to_metal=0.90,  # SPLIT WEIGHT to metal (will be normalized)
-        eff_to_wall=0.05,  # SPLIT WEIGHT to wall  (will be normalized)
+        overall_efficiency=0.9326,  # fraction of electrical power that becomes useful heat (0..1)
+        eff_to_metal=0.8726,  # SPLIT WEIGHT to metal (will be normalized)
+        eff_to_wall=0.0269,  # SPLIT WEIGHT to wall  (will be normalized)
+        use_time_efficiency=True,
+        time_efficiency_schedule=[
+            (0, 0.80),
+            (30, 0.80),  # จบช่วงแรก
+            (30, 0.90),  # เริ่มช่วงใหม่แบบ step
+            (40, 0.90),
+            (40, 0.95),
+            (60, 0.95),
+            (60, 0.50),
+            (70, 0.50),
+            (70, 0.98),
+            # (70, 0.98),
+            (90, 0.98),  # ต่อไปยาวๆ
+        ],
         # ---------- wall-metal coupling ----------
-        k_wall_metal=1300.0,  # W/K base coupling (cold). hot override below
-        k_dT_alpha=0.0015,  # state-dependent reduction: k_eff = k / (1 + alpha*|Tw-Tm|)
-        hot_k_wall_metal=1700.0,  # W/K base coupling in hot start (main hot-start fix)
+        k_wall_metal=800,  # W/K base coupling (cold). hot override below
+        k_dT_alpha=0.0003,  # state-dependent reduction: k_eff = k / (1 + alpha*|Tw-Tm|)
+        hot_k_wall_metal=1100.0,  # W/K base coupling in hot start (main hot-start fix)
         hot_k_early_factor=0.80,  # additional factor for first hot minutes (e.g., 0-10 min)
-        hot_early_minutes=10,  # minutes
+        hot_early_minutes=100,  # minutes
         wall_heat_capacity_J_per_K=2.5e6,  # J/K effective wall inertia
         # ---------- wall losses ----------
         wall_area_m2=3.5,
@@ -54,14 +68,14 @@ class AluminumMeltingEnvironment:
         wall_emissivity=0.55,
         # ---------- metal losses (keep modest to avoid double counting) ----------
         metal_area_m2=1.0,
-        metal_h_W_m2K=3.5,
-        metal_emissivity=0.06,  # cold default
+        metal_h_W_m2K=2.79,
+        metal_emissivity=0.005,  # cold default
         hot_metal_emissivity=0.18,  # slightly higher in hot start (helps slow hot curve)
         # ---------- latent heat handling ----------
         melting_point_c=660.0,
         latent_band_c=50.0,
-        latent_scale=0.35,
-        post_melt_scale=0.80,
+        latent_scale=0.324,
+        post_melt_scale=0.803,
         # ---------- scrap effects ----------
         scrap_temp_drop_scale=0.50,
         scrap_recent_scale=0.80,
@@ -77,6 +91,13 @@ class AluminumMeltingEnvironment:
         max_capacity_kg=500,
         ambient_temp_c=25,
         max_temp_c=1000,
+        # ---------- energy metering ----------
+        energy_consumption_scale=1.068,  # scale factor for electrical kWh meter
+        auxiliary_power_kw=0.0,  # constant auxiliary load (e.g., fans, pumps)
+        # ---------- high-power efficiency drop ----------
+        high_power_eff_start_kw=450.0,  # start reducing thermal efficiency above this
+        high_power_eff_end_kw=500.0,  # efficiency reaches min at this power
+        high_power_eff_min=0.95,  # minimum multiplier for thermal efficiency
     ):
         self.rng = np.random.default_rng(seed)
 
@@ -112,6 +133,10 @@ class AluminumMeltingEnvironment:
 
         # power handling
         self.overall_eff = float(np.clip(overall_efficiency, 0.05, 0.98))
+        self.use_time_efficiency = bool(use_time_efficiency)
+        self.time_efficiency_schedule = (
+            list(time_efficiency_schedule) if time_efficiency_schedule else []
+        )
 
         # treat eff_to_metal/eff_to_wall as weights and normalize
         w_m = max(0.0, float(eff_to_metal))
@@ -194,6 +219,17 @@ class AluminumMeltingEnvironment:
         }
 
         self._dT_wall = 0.0
+
+        # energy metering
+        self.energy_consumption_scale = float(max(0.0, energy_consumption_scale))
+        self.auxiliary_power_kw = float(max(0.0, auxiliary_power_kw))
+
+        # high-power efficiency drop
+        self.high_power_eff_start_kw = float(max(0.0, high_power_eff_start_kw))
+        self.high_power_eff_end_kw = float(
+            max(self.high_power_eff_start_kw, high_power_eff_end_kw)
+        )
+        self.high_power_eff_min = float(np.clip(high_power_eff_min, 0.3, 1.0))
 
     def reset(self):
         self.current_mass = float(self.initial_mass)
@@ -351,7 +387,9 @@ class AluminumMeltingEnvironment:
         P_watt = float(self.state["power"]) * 1000.0
 
         # (1) total usable heat from electrical power
-        Q_total = P_watt * self.overall_eff
+        eff_total = self._get_overall_efficiency(t_min)
+        eff_total *= self._power_efficiency_factor(self.state["power"])
+        Q_total = P_watt * eff_total
 
         # (2) split to metal/wall (normalized weights)
         # Optional: in hot start early minutes, metal split can be reduced slightly
@@ -405,6 +443,44 @@ class AluminumMeltingEnvironment:
         self._dT_wall = float(dT_w)
 
         return float(dT_m)
+
+    # ----------------------------
+    # Efficiency (optional schedule)
+    # ----------------------------
+    def _get_overall_efficiency(self, t_min: float):
+        """Return effective efficiency, optionally from a time schedule."""
+        if not self.use_time_efficiency or not self.time_efficiency_schedule:
+            return float(self.overall_eff)
+
+        schedule = sorted(self.time_efficiency_schedule, key=lambda x: x[0])
+        if t_min <= schedule[0][0]:
+            return float(np.clip(schedule[0][1], 0.05, 0.98))
+        if t_min >= schedule[-1][0]:
+            return float(np.clip(schedule[-1][1], 0.05, 0.98))
+
+        for (t0, e0), (t1, e1) in zip(schedule[:-1], schedule[1:]):
+            if t0 <= t_min <= t1:
+                if t1 == t0:
+                    eff = e1
+                else:
+                    alpha = (t_min - t0) / (t1 - t0)
+                    eff = e0 + alpha * (e1 - e0)
+                return float(np.clip(eff, 0.05, 0.98))
+
+        return float(self.overall_eff)
+
+    def _power_efficiency_factor(self, power_kw: float):
+        """Extra efficiency drop at high electrical power."""
+        if power_kw <= self.high_power_eff_start_kw:
+            return 1.0
+        if self.high_power_eff_end_kw <= self.high_power_eff_start_kw:
+            return float(self.high_power_eff_min)
+
+        alpha = (power_kw - self.high_power_eff_start_kw) / (
+            self.high_power_eff_end_kw - self.high_power_eff_start_kw
+        )
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        return float(1.0 + alpha * (self.high_power_eff_min - 1.0))
 
     # ----------------------------
     # Step
@@ -468,8 +544,9 @@ class AluminumMeltingEnvironment:
         self.state["time"] = float(self.state["time"]) + float(self.dt)
 
         # energy consumption
-        self.state["energy_consumption"] += float(
-            (self.state["power"] * self.dt) / 3600.0
+        metered_power_kw = float(self.state["power"]) + self.auxiliary_power_kw
+        self.state["energy_consumption"] += (
+            float((metered_power_kw * self.dt) / 3600.0) * self.energy_consumption_scale
         )
 
         # weight update

@@ -25,7 +25,8 @@ def test_improved_environment():
         target_temp_c=target_temp_c,
         scrap_addition_start=64 * 60,
         scrap_addition_end=74 * 60,
-        start_mode="cold",
+        # start_mode="cold",
+        start_mode="hot",
     )
 
     # เริ่มต้นสภาพแวดล้อม
@@ -142,13 +143,32 @@ def create_simulation_plots(
     # real_times = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90]
     # real_temps = [676, 698, 735, 759, 784, 809, 820, 845, 863, 888, 910]
 
-    # cold start
-    real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92]
-    real_temps = [621, 630, 654, 693, 717, 744, 771, 806, 844, 894, 928, 950]
+    # # cold start version original
+    # real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96]
+    # real_temps = [621, 630, 654, 693, 717, 744, 771, 806, 844, 894, 928, 950, 950, 950]
 
-    # # hot start
-    # real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88]
-    # real_temps = [745, 771, 793, 818, 851, 886, 919, 930, 941, 950]
+    # # cold start
+    # real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96]
+    # real_temps = [
+    #     649,
+    #     668,
+    #     685,
+    #     714,
+    #     737,
+    #     757,
+    #     786,
+    #     802,
+    #     823,
+    #     853,
+    #     881,
+    #     907,
+    #     932,
+    #     956,
+    # ]
+
+    # hot start
+    real_times = [70, 72, 74, 76, 78, 80, 82, 84, 86, 88]
+    real_temps = [730, 773, 793, 820, 851, 875, 909, 919, 940, 952]
 
     axes[0, 0].plot(
         real_times, real_temps, "bo-", linewidth=2, label="Real Data", alpha=0.7
