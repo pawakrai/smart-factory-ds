@@ -65,21 +65,21 @@ POWER_PROFILE: Dict[float, Dict[str, float]] = {
 
 # Default power levels that the heuristic will use for each batch type.
 # These can be adjusted easily when experimenting with different policies.
-IF_POWER_FOR_HOT_BATCH_KW = 475.0
+IF_POWER_FOR_HOT_BATCH_KW = 575.0
 IF_POWER_FOR_COLD_START_BATCH_KW = 475.0
 
 # Cool / Cold start modelling (gap-based)
 # If the idle gap since the previous batch on the same furnace exceeds this threshold,
 # the next batch is treated as a "cold start".
-COLD_START_GAP_THRESHOLD_MIN = 60.0  # minutes
+COLD_START_GAP_THRESHOLD_MIN = 30.0  # minutes
 # Additional time & energy associated with a cold start, relative to the hot profile.
 COLD_START_EXTRA_DURATION_MIN = 5.0
-COLD_START_EXTRA_ENERGY_KWH = 25.0
+COLD_START_EXTRA_ENERGY_KWH = 0.0
 
 # เตา M&H (โค้ดเดิมไว้ plot)
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
-MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 200.0}  # ระดับเริ่มต้น (kg)
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
+MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}  # ระดับเริ่มต้น (kg)
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.30, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
 MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
@@ -344,41 +344,38 @@ def scheduling_cost(x):
             last_batch_end_minute = start_minute + effective_duration_min
 
     # ----------------------------
-    # 3) สร้าง water_events สำหรับ M&H
-    # สมมติ 1 batch = 500 kg => มีน้ำหลอม 500 kg ทันทีที่ batch_i finish
-    # (ถ้าคุณมี partial batch capacity จริง ๆ ก็ปรับ logic)
-    # water_events will now store (melt_finish_minute, batch_id)
-    # ใช้ effective duration ต่อ batch จากโปรไฟล์กำลังไฟและ cold start
+    # 3) Apply reheat-aware timeline (batch continues at max power until pour)
     # ----------------------------
-    melt_completion_events = []  # list of (melt_finish_minute, batch_id)
-    for s, e, f, b_id in schedule:
-        start_minute = s * SLOT_DURATION
-        effective_duration_min = batch_effective_duration_min.get(
-            b_id, T_MELT * SLOT_DURATION
-        )
-        finish_minute = start_minute + effective_duration_min
-        melt_completion_events.append((finish_minute, b_id))
-
-    melt_completion_events.sort(key=lambda w: w[0])  # เรียงตามเวลา
-
-    # ----------------------------
-    # 4) เรียก mini-simulation M&H V2 (Modified)
-    # ----------------------------
-    # ใช้ makespan_min เพื่อกำหนดช่วงเวลาที่ต้องพิจารณา แต่ simulation อาจรันนานกว่านั้น
+    reheat_result = _apply_reheat_and_shift_schedule(
+        schedule, batch_effective_duration_min
+    )
+    batch_timing = reheat_result["batch_timing"]
     (
         MH_idle_penalty,
         MH_reheat_penalty,  # Still placeholder
         total_energy_mh,  # Still placeholder
         time_points,
         mh_levels,
-        actual_pour_events,  # New output
-        unpoured_batches_at_end,  # New output
-        total_if_holding_minutes,  # New output
-        pour_induced_mh_overflow_penalty,  # New output
-        MH_low_level_penalty,  # New output
-    ) = simulate_mh_consumption_v2(
-        melt_completion_events
-    )  # Pass melt_completion_events
+        actual_pour_events,
+        unpoured_batches_at_end,
+        total_if_holding_minutes,
+        pour_induced_mh_overflow_penalty,
+        MH_low_level_penalty,
+        batch_pour_times,
+    ) = reheat_result["sim_outputs"]
+
+    # Reheat energy (kWh) at max IF power
+    reheat_energy_kwh = 0.0
+    for s, e, f, b_id in schedule:
+        timing = batch_timing.get(b_id)
+        if not timing:
+            continue
+        reheat_minutes = max(0.0, timing["pour_min"] - timing["melt_finish_min"])
+        furnace_key = "A" if f == 0 else "B"
+        reheat_energy_kwh += reheat_minutes * IF_POWER_RATING_KW[furnace_key] / 60.0
+
+    base_total_energy_if_kwh += reheat_energy_kwh
+    priced_total_energy_if_cost += reheat_energy_kwh
 
     # --- ลบการตรวจสอบ M&H Overflow Penalty แบบเดิมออก ---
     # penalty_mh_overflow = 0.0 (This is now handled by pour_induced_mh_overflow_penalty from sim)
@@ -449,9 +446,74 @@ def scheduling_cost(x):
         "unpoured_batch_penalty": unpoured_batches_penalty_cost,
         "mh_energy_kwh": total_energy_mh,  # Placeholder
         "num_cold_start_events": num_cold_start_events,
+        "reheat_energy_kwh": reheat_energy_kwh,
+        "batch_timing": batch_timing,
     }
 
     return cost, makespan_min_actual, cost_components
+
+
+def _apply_reheat_and_shift_schedule(
+    schedule, batch_effective_duration_min, max_iterations: int = 6
+):
+    """
+    Shift IF timeline so each batch continues reheating at max power until poured.
+    Returns per-batch timing and the final M&H simulation outputs.
+    """
+    if not schedule:
+        sim_outputs = simulate_mh_consumption_v2([])
+        return {"batch_timing": {}, "sim_outputs": sim_outputs}
+
+    planned = sorted(schedule, key=lambda item: item[0])
+    planned_start_min = {b_id: s * SLOT_DURATION for s, e, f, b_id in planned}
+    actual_start_min = dict(planned_start_min)
+    sim_outputs = None
+
+    for _ in range(max_iterations):
+        melt_events = []
+        for s, e, f, b_id in planned:
+            start_min = actual_start_min[b_id]
+            duration = batch_effective_duration_min.get(b_id, T_MELT * SLOT_DURATION)
+            melt_finish = start_min + duration
+            melt_events.append((melt_finish, b_id))
+
+        melt_events.sort(key=lambda w: w[0])
+        sim_outputs = simulate_mh_consumption_v2(melt_events)
+        batch_pour_times = sim_outputs[-1]
+
+        new_actual_start_min = {}
+        prev_end = None
+        for s, e, f, b_id in planned:
+            planned_start = planned_start_min[b_id]
+            start_min = (
+                planned_start if prev_end is None else max(planned_start, prev_end)
+            )
+            new_actual_start_min[b_id] = start_min
+
+            duration = batch_effective_duration_min.get(b_id, T_MELT * SLOT_DURATION)
+            melt_finish = start_min + duration
+            pour_min = batch_pour_times.get(b_id, melt_finish)
+            prev_end = max(prev_end if prev_end is not None else 0.0, pour_min)
+
+        if new_actual_start_min == actual_start_min:
+            break
+        actual_start_min = new_actual_start_min
+
+    batch_timing = {}
+    batch_pour_times = sim_outputs[-1] if sim_outputs else {}
+    for s, e, f, b_id in planned:
+        start_min = actual_start_min[b_id]
+        duration = batch_effective_duration_min.get(b_id, T_MELT * SLOT_DURATION)
+        melt_finish = start_min + duration
+        pour_min = batch_pour_times.get(b_id, melt_finish)
+        batch_timing[b_id] = {
+            "start_min": start_min,
+            "melt_finish_min": melt_finish,
+            "pour_min": pour_min,
+            "furnace": f,
+        }
+
+    return {"batch_timing": batch_timing, "sim_outputs": sim_outputs}
 
 
 def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
@@ -479,6 +541,7 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
 
     ready_to_pour_queue = []  # Stores (melt_finish_minute, batch_id)
     actual_pour_events = []  # Stores (actual_pour_minute, batch_id)
+    batch_pour_times = {}  # batch_id -> actual pour minute
     total_if_holding_minutes = 0
 
     melt_event_idx = 0
@@ -516,7 +579,7 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
             # ส่งผลให้ M&H ถูกปล่อยให้ระดับต่ำมากก่อนค่อยเท (pattern เป็นฟันเลื่อยจาก max -> 0)
             # ปรับใหม่: ถ้ามี capacity > 0 ก็อนุญาตให้เท โดยยอมให้เกิด overflow แล้วคิดโทษผ่าน
             # pour_induced_mh_overflow_penalty แทน เพื่อเปิดโอกาสให้ GA รักษาระดับน้ำให้สูงขึ้น
-            if total_available_mh_capacity > 0:
+            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
                 # print(f"Minute {t}: Attempting to pour Batch {batch_id_q}. Total M&H available: {total_available_mh_capacity:.1f} kg.") # Debug
 
                 # --- NEW PRIORITIZED POURING LOGIC ---
@@ -593,6 +656,7 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
                     mh_status[furnace_id_mh] = "downtime"
 
                 actual_pour_events.append((t, batch_id_q))
+                batch_pour_times[batch_id_q] = t
                 poured_this_minute_batch_ids.append(batch_id_q)
                 # print(f"Minute {t}: Batch {batch_id_q} poured successfully. M&H A: {current_level['A']:.1f}, B: {current_level['B']:.1f}") # Debug
 
@@ -664,6 +728,9 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
     unpoured_batches_at_end = [
         item[1] for item in ready_to_pour_queue
     ]  # Batches remaining in queue
+    for batch_id in unpoured_batches_at_end:
+        # If never poured, treat as reheating until end of simulation window
+        batch_pour_times.setdefault(batch_id, simulation_duration_min)
 
     return (
         total_idle_penalty,
@@ -676,6 +743,7 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
         total_if_holding_minutes,
         pour_induced_mh_overflow_penalty,
         total_low_level_penalty,
+        batch_pour_times,
     )
 
 
@@ -698,6 +766,7 @@ def plot_schedule_and_mh(
     title="Melting Schedule & M&H",
     simulated_time_points=None,
     simulated_mh_levels=None,
+    batch_timing=None,
 ):
     """
     พล็อต Gantt chart ของ IF และ กราฟระดับน้ำใน M&H A, B
@@ -722,9 +791,13 @@ def plot_schedule_and_mh(
         # # makespan_min = makespan_slot * SLOT_DURATION # Not directly used by v2 sim for duration
 
         melt_completion_events_plot = []
-        for s, e, f, b_id in schedule:
-            finish_minute = e * SLOT_DURATION
-            melt_completion_events_plot.append((finish_minute, b_id))
+        if batch_timing:
+            for b_id, timing in batch_timing.items():
+                melt_completion_events_plot.append((timing["melt_finish_min"], b_id))
+        else:
+            for s, e, f, b_id in schedule:
+                finish_minute = e * SLOT_DURATION
+                melt_completion_events_plot.append((finish_minute, b_id))
         melt_completion_events_plot.sort(key=lambda w: w[0])
 
         (
@@ -738,6 +811,7 @@ def plot_schedule_and_mh(
             _,
             _,  # Other outputs not needed for basic plot
             _,  # low level penalty (not needed for plotting)
+            _,  # batch_pour_times (not needed for plotting)
         ) = simulate_mh_consumption_v2(melt_completion_events_plot)
         time_points_shifted = time_points_plot + SHIFT_START
         mh_levels_to_plot = mh_levels_plot
@@ -757,14 +831,36 @@ def plot_schedule_and_mh(
         ):  # Using global furnace_y here, ensure it's what's intended
             print(f"Warning: Invalid IF index '{f}' for batch {b_id}. Skipping plot.")
             continue
-        melt_start_t = SHIFT_START + start * SLOT_DURATION
-        melt_dur = (end - start) * SLOT_DURATION
-        ax1.broken_barh(
-            [(melt_start_t, melt_dur)],
-            (furnace_y[f], height),  # Using global furnace_y and height
-            facecolors=FURNACE_COLORS.get(f, "gray"),  # ใช้สีจาก config
-            edgecolor="black",
-        )
+        if batch_timing and b_id in batch_timing:
+            timing = batch_timing[b_id]
+            melt_start_t = SHIFT_START + timing["start_min"]
+            melt_finish_t = SHIFT_START + timing["melt_finish_min"]
+            pour_t = SHIFT_START + timing["pour_min"]
+            melt_dur = max(0.0, melt_finish_t - melt_start_t)
+            reheat_dur = max(0.0, pour_t - melt_finish_t)
+
+            ax1.broken_barh(
+                [(melt_start_t, melt_dur)],
+                (furnace_y[f], height),
+                facecolors="gray",
+                edgecolor="black",
+            )
+            if reheat_dur > 0:
+                ax1.broken_barh(
+                    [(melt_finish_t, reheat_dur)],
+                    (furnace_y[f], height),
+                    facecolors="red",
+                    edgecolor="black",
+                )
+        else:
+            melt_start_t = SHIFT_START + start * SLOT_DURATION
+            melt_dur = (end - start) * SLOT_DURATION
+            ax1.broken_barh(
+                [(melt_start_t, melt_dur)],
+                (furnace_y[f], height),  # Using global furnace_y and height
+                facecolors=FURNACE_COLORS.get(f, "gray"),  # ใช้สีจาก config
+                edgecolor="black",
+            )
         ax1.text(
             melt_start_t + melt_dur / 2,
             furnace_y[f] + height / 2,  # Using global furnace_y and height
@@ -1375,6 +1471,7 @@ def main():
                         title=plot_title,
                         simulated_time_points=None,  # Trigger re-simulation in plot function for M&H
                         simulated_mh_levels=None,  # Trigger re-simulation in plot function for M&H
+                        batch_timing=cost_details.get("batch_timing"),
                     )
                 else:
                     print(

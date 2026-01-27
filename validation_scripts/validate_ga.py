@@ -180,6 +180,7 @@ def test_mh_simulation_scenario_1():
         holding_minutes,
         overflow_penalty,
         low_level_penalty,
+        batch_pour_times,
     ) = simulate_mh_consumption_v2(melt_events)
 
     print(f"Melt Events: {melt_events}")
@@ -330,6 +331,7 @@ if __name__ == "__main__":
             _,
             _,
             _,
+            _,
         ) = simulate_mh_consumption_v2(melt_events_baseline)
 
         print(f"Baseline - Actual Pour Events: {actual_pours_base}")
@@ -340,6 +342,7 @@ if __name__ == "__main__":
             title=f"Baseline Schedule (Energy: {baseline_cost_components['total_cost']:.0f}, Makespan: {baseline_makespan:.0f})",
             simulated_time_points=sim_time_points_base,
             simulated_mh_levels=sim_mh_levels_base,
+            batch_timing=baseline_cost_components.get("batch_timing"),
         )
         print("Displayed baseline schedule plot.")
     else:
@@ -369,7 +372,7 @@ if __name__ == "__main__":
             components_mha_plot,  # Get cost for title
         ) = scheduling_cost(mha_x_plot)
 
-        (_, _, _, sim_time_points_mha, sim_mh_levels_mha, _, _, _, _, _) = (
+        (_, _, _, sim_time_points_mha, sim_mh_levels_mha, _, _, _, _, _, _) = (
             simulate_mh_consumption_v2(melt_events_mha_plot)
         )
 
@@ -378,6 +381,7 @@ if __name__ == "__main__":
             title=f"M&H-Aware Greedy (Test) (Energy: {components_mha_plot['total_cost']:.0f}, Makespan: {makespan_mha_plot:.0f})",
             simulated_time_points=sim_time_points_mha,
             simulated_mh_levels=sim_mh_levels_mha,
+            batch_timing=components_mha_plot.get("batch_timing"),
         )
         print("Displayed M&H-aware greedy (test) schedule plot.")
     else:
