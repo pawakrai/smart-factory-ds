@@ -79,7 +79,7 @@ COLD_START_EXTRA_ENERGY_KWH = 25.0
 # เตา M&H (โค้ดเดิมไว้ plot)
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
 MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 200.0}  # ระดับเริ่มต้น (kg)
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 3.50, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
 MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
 IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)

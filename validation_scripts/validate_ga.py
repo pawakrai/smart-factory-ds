@@ -179,6 +179,7 @@ def test_mh_simulation_scenario_1():
         unpoured_batches,
         holding_minutes,
         overflow_penalty,
+        low_level_penalty,
     ) = simulate_mh_consumption_v2(melt_events)
 
     print(f"Melt Events: {melt_events}")
@@ -187,6 +188,7 @@ def test_mh_simulation_scenario_1():
     print(f"Unpoured Batches at End: {unpoured_batches}")
     print(f"M&H Idle Penalty: {idle_penalty}")
     print(f"M&H Overflow Penalty: {overflow_penalty}")
+    print(f"M&H Low Level Penalty: {low_level_penalty}")
 
     # Basic assertions (can be more detailed)
     if (
@@ -327,6 +329,7 @@ if __name__ == "__main__":
             unpoured_base,
             _,
             _,
+            _,
         ) = simulate_mh_consumption_v2(melt_events_baseline)
 
         print(f"Baseline - Actual Pour Events: {actual_pours_base}")
@@ -366,7 +369,7 @@ if __name__ == "__main__":
             components_mha_plot,  # Get cost for title
         ) = scheduling_cost(mha_x_plot)
 
-        (_, _, _, sim_time_points_mha, sim_mh_levels_mha, _, _, _, _) = (
+        (_, _, _, sim_time_points_mha, sim_mh_levels_mha, _, _, _, _, _) = (
             simulate_mh_consumption_v2(melt_events_mha_plot)
         )
 
