@@ -13,7 +13,6 @@ from pymoo.operators.crossover.sbx import SBX
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 from pymoo.algorithms.moo.nsga2 import NSGA2
-import random
 from typing import Dict, Tuple
 
 
@@ -85,6 +84,8 @@ IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่�
 POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
 MH_IDLE_PENALTY_RATE = 1.0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ไม่มีโลหะให้ใช้งาน)
 MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
+OVERFLOW_PENALTY_PER_KG = 50.0
+DEBUG = False
 
 # ระดับน้ำโลหะที่ถือว่า \"ปลอดภัย\" สำหรับการทำงานของหัวพ่นไฟ (Operational level)
 # หากต่ำกว่านี้จะถือว่าเตาทำงานไม่มีประสิทธิภาพ (ต้องใช้พลังงานมากขึ้น / อุ่นได้ช้าลง)
@@ -578,11 +579,9 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
             available_capacity_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
             total_available_mh_capacity = available_capacity_A + available_capacity_B
 
-            # เดิม: ต้องมี capacity >= IF_BATCH_OUTPUT_KG ถึงจะเทได้
-            # ส่งผลให้ M&H ถูกปล่อยให้ระดับต่ำมากก่อนค่อยเท (pattern เป็นฟันเลื่อยจาก max -> 0)
-            # ปรับใหม่: ถ้ามี capacity > 0 ก็อนุญาตให้เท โดยยอมให้เกิด overflow แล้วคิดโทษผ่าน
-            # pour_induced_mh_overflow_penalty แทน เพื่อเปิดโอกาสให้ GA รักษาระดับน้ำให้สูงขึ้น
-            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
+            # อนุญาตให้พยายามเทได้ถ้ามี capacity มากกว่า 0
+            # ส่วนที่เหลือจากการเทจะถูกนับเป็น overflow และลงโทษ
+            if total_available_mh_capacity > 0:
                 # print(f"Minute {t}: Attempting to pour Batch {batch_id_q}. Total M&H available: {total_available_mh_capacity:.1f} kg.") # Debug
 
                 # --- NEW PRIORITIZED POURING LOGIC ---
@@ -622,27 +621,10 @@ def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
                             poured_amount_B_this_batch = amount_to_pour_here
                         remaining_metal_to_distribute -= amount_to_pour_here
 
-                # Check for individual M&H overflow before adding
-                if (
-                    current_level["A"] + poured_amount_A_this_batch
-                    > MH_MAX_CAPACITY_KG["A"]
-                ):
-                    pour_induced_mh_overflow_penalty += (
-                        current_level["A"]
-                        + poured_amount_A_this_batch
-                        - MH_MAX_CAPACITY_KG["A"]
-                    ) * 1  # Penalty per kg overflow
-                    # print(f"Minute {t}: Batch {batch_id_q} pour caused overflow in M&H A.") # Debug
-                if (
-                    current_level["B"] + poured_amount_B_this_batch
-                    > MH_MAX_CAPACITY_KG["B"]
-                ):
-                    pour_induced_mh_overflow_penalty += (
-                        current_level["B"]
-                        + poured_amount_B_this_batch
-                        - MH_MAX_CAPACITY_KG["B"]
-                    ) * 1
-                    # print(f"Minute {t}: Batch {batch_id_q} pour caused overflow in M&H B.") # Debug
+                overflow_kg = max(0.0, remaining_metal_to_distribute)
+                pour_induced_mh_overflow_penalty += (
+                    overflow_kg * OVERFLOW_PENALTY_PER_KG
+                )
 
                 current_level["A"] = min(
                     current_level["A"] + poured_amount_A_this_batch,
@@ -993,45 +975,92 @@ def format_schedule_breakdown(cost_components: dict) -> str:
     return "\n".join(lines)
 
 
-# +++ NEW HELPER FUNCTION for greedy_assignment +++
-def _greedy_simulate_mh_state_to_minute(
-    target_minute,
-    current_levels_kg,  # dict: {"A": level, "B": level}
-    downtime_remaining_min,  # dict: {"A": minutes, "B": minutes}
-    last_simulated_minute,
+def _greedy_fast_forward_mh_state(
+    target_minute: int,
+    current_levels_kg: dict,  # {"A": level, "B": level}
+    downtime_remaining_min: dict,  # {"A": dt, "B": dt}
+    last_simulated_minute: int,
 ):
     """
-    Simulates M&H consumption and status from last_simulated_minute up to (but not including) target_minute.
-    Returns the predicted M&H levels and downtime state at the BEGINNING of target_minute.
-    This is a simplified forward simulation for greedy's lookahead.
-    It does NOT handle new pours, only consumption, downtime ticks, and breaks.
+    O(1) forward for greedy lookahead (no pours in between).
+    Returns state at the BEGINNING of target_minute.
     """
-    new_levels_kg = current_levels_kg.copy()
-    new_downtime_remaining_min = downtime_remaining_min.copy()
+    dt = max(0, target_minute - last_simulated_minute - 1)
+    if dt == 0:
+        return current_levels_kg.copy(), downtime_remaining_min.copy()
 
-    # Simulate minute by minute from (last_simulated_minute + 1) up to target_minute -1
-    # The state at the *beginning* of target_minute is what we want.
-    for t_sim in range(last_simulated_minute + 1, target_minute):
-        minute_of_day_sim = t_sim
+    new_levels = current_levels_kg.copy()
+    new_down = downtime_remaining_min.copy()
 
-        for furnace_id_mh in ["A", "B"]:
-            if new_downtime_remaining_min[furnace_id_mh] > 0:
-                new_downtime_remaining_min[furnace_id_mh] -= 1
-                # Status becomes "running" or "idle" when downtime hits 0, handled by consumption logic below
+    for f in ["A", "B"]:
+        d0 = new_down[f]
+        blocked = min(dt, d0)
+        run_minutes = dt - blocked
 
-            if new_downtime_remaining_min[furnace_id_mh] > 0:
-                # No consumption during break or active downtime
-                continue
+        new_down[f] = max(0, d0 - dt)
 
-            # If not in break and not in downtime, consume
-            if new_levels_kg[furnace_id_mh] > MH_EMPTY_THRESHOLD_KG:
-                new_levels_kg[furnace_id_mh] -= MH_CONSUMPTION_RATE_KG_PER_MIN[
-                    furnace_id_mh
-                ]
-                new_levels_kg[furnace_id_mh] = max(new_levels_kg[furnace_id_mh], 0)
-            # Idle penalty logic is not needed for this feasibility check, only levels and downtime.
+        if run_minutes > 0:
+            new_levels[f] = max(
+                0.0,
+                new_levels[f] - run_minutes * MH_CONSUMPTION_RATE_KG_PER_MIN[f],
+            )
 
-    return new_levels_kg, new_downtime_remaining_min
+    return new_levels, new_down
+
+
+def _score_candidate_slot(
+    start_slot: int,
+    melt_finish_minute: int,
+    mh_levels_before_pour: dict,
+    total_available_mh_capacity: float,
+    last_if_end_slot_for_furnace: int | None,
+) -> tuple[float, float, float, float]:
+    """
+    Deterministic slot scoring for greedy decoder.
+    Designed to reduce noisy fitness and avoid unstable random choices.
+    """
+    if last_if_end_slot_for_furnace is None:
+        predicted_if_gap_minutes = 0.0
+    else:
+        predicted_if_gap_minutes = max(
+            0, (start_slot - last_if_end_slot_for_furnace) * SLOT_DURATION
+        )
+
+    low_level_risk = 0.0
+    for f_id in ["A", "B"]:
+        low_level_risk += max(
+            0.0, MH_MIN_OPERATIONAL_LEVEL_KG[f_id] - mh_levels_before_pour[f_id]
+        )
+
+    shortfall_kg = max(0.0, IF_BATCH_OUTPUT_KG - total_available_mh_capacity)
+
+    w_makespan = 1.0
+    w_low = 30.0
+    w_gap = 10.0
+    w_shortfall = 3000.0
+    score = (
+        w_makespan * melt_finish_minute
+        + w_low * low_level_risk
+        + w_gap * predicted_if_gap_minutes
+        + w_shortfall * shortfall_kg
+    )
+    return score, shortfall_kg, predicted_if_gap_minutes, low_level_risk
+
+
+def _validate_no_global_if_overlap(x_schedule_vector, num_batches: int) -> bool:
+    usage = np.zeros(TOTAL_SLOTS, dtype=int)
+    for i in range(num_batches):
+        start = int(x_schedule_vector[2 * i])
+        if start < 0:
+            continue
+        end = start + T_MELT
+        if start < 0 or end > TOTAL_SLOTS:
+            return False
+        for t_slot in range(start, end):
+            if usage[t_slot] > 0:
+                return False
+            usage[t_slot] = 1
+    return True
 
 
 # --- ฟังก์ชัน Greedy Assignment (Level 2) ---
@@ -1040,17 +1069,16 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
     กำหนด start_slot และ furnace สำหรับลำดับ batch ที่กำหนด
     โดยห้ามมี batch ใดๆ ทำงานซ้อนทับกันเลย (Global Constraint for IFs)
     และพยายามจัดตาราง IF ให้สอดคล้องกับความพร้อมของ M&H (M&H-aware).
-    NEW: Introduces randomness in choosing among viable M&H-aware slots.
+    Deterministic decoder:
+    - no random choice (stable fitness for same permutation)
+    - uses slot scoring
+    - fallback avoids clamp-induced overlap explosion
     """
-    # Max number of viable IF start slots to consider for random choice.
-    # เพิ่มให้มากขึ้นเพื่อให้ GA สามารถ “ยอมดีเลย์” batch ได้ และสร้างความแตกต่างของ
-    # makespan/energy ระหว่าง solutions แทนที่จะยัดทุก batch ให้เร็วที่สุดเสมอ
-    MAX_VIABLE_SLOTS_TO_CONSIDER = 30
-
     x_schedule_vector = np.full(
         num_batches * 2, -1, dtype=int
     )  # Initialize with -1 (unscheduled)
     global_if_used_slots = np.zeros(TOTAL_SLOTS, dtype=int)
+    decoder_feasible = True
 
     available_if_furnaces_for_assignment = []
     if USE_FURNACE_A:
@@ -1060,7 +1088,7 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
 
     if not available_if_furnaces_for_assignment:
         print("Error in greedy_assignment: No available IF furnaces!")
-        return x_schedule_vector.astype(float)
+        return x_schedule_vector.astype(float), False
 
     # Internal M&H state for greedy's simulation
     internal_mh_levels_kg = MH_INITIAL_LEVEL_KG.copy()
@@ -1068,10 +1096,9 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
     internal_last_mh_sim_minute = -1  # Simulates from minute 0 onwards
 
     if_furnace_assignment_counter = 0
-
-    MAX_SEARCH_MINUTES = (
-        1440 + T_MELT * SLOT_DURATION
-    )  # Search a bit beyond one day if needed
+    last_if_end_slot_by_furnace = {0: None, 1: None}
+    candidate_scan_kernel = np.ones(T_MELT, dtype=int)
+    max_candidate_starts_to_scan = 60
 
     for (
         batch_idx_in_order
@@ -1090,9 +1117,7 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             continue
 
         found_slot_for_batch = False
-        viable_slots_data = (
-            []
-        )  # Stores (potential_if_start_slot, mh_levels_before_pour, mh_downtime_before_pour, potential_if_melt_finish_minute)
+        viable_slots_data = []
 
         # Start searching for an IF start slot from the end of the last IF operation,
         # or from 0 if this is the first batch.
@@ -1106,23 +1131,19 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
         # The greedy assignment will no longer try to avoid IF operations during breaks;
         # this will be handled by a penalty in scheduling_cost.
 
-        min_possible_if_start_minute_overall = internal_last_mh_sim_minute + 1
+        free_run = (
+            np.convolve(global_if_used_slots, candidate_scan_kernel, mode="valid") == 0
+        )
+        candidate_starts = np.flatnonzero(free_run)
 
-        for potential_if_start_slot in range(TOTAL_SLOTS - T_MELT + 1):
-            # Constraint 1: Global IF slot availability
-            is_if_globally_free = True
-            for t_if_check_slot in range(
-                potential_if_start_slot, potential_if_start_slot + T_MELT
-            ):
-                if (
-                    t_if_check_slot >= TOTAL_SLOTS
-                    or global_if_used_slots[t_if_check_slot] == 1
-                ):
-                    is_if_globally_free = False
-                    break
+        used_slots = np.where(global_if_used_slots == 1)[0]
+        min_start_slot = int(used_slots.max() + 1) if used_slots.size else 0
+        min_start_slot = max(0, min_start_slot - T_MELT)
 
-            if not is_if_globally_free:
-                continue  # Try next potential_if_start_slot
+        candidate_starts = candidate_starts[candidate_starts >= min_start_slot]
+        candidate_starts = candidate_starts[:max_candidate_starts_to_scan]
+
+        for potential_if_start_slot in candidate_starts:
 
             # # NEW Constraint: Check if IF operation falls into any break time
             # if_op_start_minute = potential_if_start_slot * SLOT_DURATION
@@ -1152,7 +1173,7 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             # Constraint 2: M&H readiness at potential_if_melt_finish_minute
             # Simulate M&H state up to the point just before this potential pour
             mh_levels_before_pour, mh_downtime_before_pour = (
-                _greedy_simulate_mh_state_to_minute(
+                _greedy_fast_forward_mh_state(
                     potential_if_melt_finish_minute,
                     internal_mh_levels_kg,
                     internal_mh_downtime_remaining_min,
@@ -1166,34 +1187,53 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             # The IF working during break penalty is now the main deterrent for IF activity during breaks.
 
             # Check if M&H furnaces are in post-pour downtime from a *previous* pour
-            # The _greedy_simulate_mh_state_to_minute updates downtimes, so mh_downtime_before_pour reflects this.
+            # The fast-forward helper updates downtime state deterministically.
 
             available_capacity_A = MH_MAX_CAPACITY_KG["A"] - mh_levels_before_pour["A"]
             available_capacity_B = MH_MAX_CAPACITY_KG["B"] - mh_levels_before_pour["B"]
             total_available_mh_capacity = available_capacity_A + available_capacity_B
 
-            if total_available_mh_capacity >= IF_BATCH_OUTPUT_KG:
-                # This slot is viable for IF and M&H! Store it.
-                viable_slots_data.append(
-                    (
-                        potential_if_start_slot,
-                        mh_levels_before_pour.copy(),
-                        mh_downtime_before_pour.copy(),
-                        potential_if_melt_finish_minute,
-                    )
-                )
-                if len(viable_slots_data) >= MAX_VIABLE_SLOTS_TO_CONSIDER:
-                    break  # Found enough viable slots, move to selection
+            score, shortfall_kg, _, _ = _score_candidate_slot(
+                potential_if_start_slot,
+                potential_if_melt_finish_minute,
+                mh_levels_before_pour,
+                total_available_mh_capacity,
+                last_if_end_slot_by_furnace[chosen_if_furnace_idx],
+            )
+            candidate = {
+                "start_slot": potential_if_start_slot,
+                "mh_levels_before_pour": mh_levels_before_pour.copy(),
+                "mh_downtime_before_pour": mh_downtime_before_pour.copy(),
+                "melt_finish_minute": potential_if_melt_finish_minute,
+                "score": score,
+                "shortfall_kg": shortfall_kg,
+            }
+
+            # Align with simulator: candidate is viable if there is any free MH capacity.
+            if total_available_mh_capacity > 0:
+                viable_slots_data.append(candidate)
+
+        selected_candidate = None
+        if viable_slots_data:
+            # Deterministic tie-break: score -> shortfall -> start slot -> melt finish
+            selected_candidate = min(
+                viable_slots_data,
+                key=lambda c: (
+                    c["score"],
+                    c["shortfall_kg"],
+                    c["start_slot"],
+                    c["melt_finish_minute"],
+                ),
+            )
 
         # After checking potential slots, choose one if any were found
-        if viable_slots_data:
-            # Randomly select one of the found viable slots
-            (
-                selected_start_slot,
-                selected_mh_levels_before_pour,
-                selected_mh_downtime_before_pour,
-                selected_melt_finish_minute,
-            ) = random.choice(viable_slots_data)
+        if selected_candidate is not None:
+            selected_start_slot = selected_candidate["start_slot"]
+            selected_mh_levels_before_pour = selected_candidate["mh_levels_before_pour"]
+            selected_mh_downtime_before_pour = selected_candidate[
+                "mh_downtime_before_pour"
+            ]
+            selected_melt_finish_minute = selected_candidate["melt_finish_minute"]
 
             x_schedule_vector[2 * batch_idx_in_order] = selected_start_slot
             x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
@@ -1208,7 +1248,8 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             internal_mh_levels_kg = selected_mh_levels_before_pour
             internal_mh_downtime_remaining_min = selected_mh_downtime_before_pour
 
-            # --- NEW PRIORITIZED POUR LOGIC FOR GREEDY ---
+            # Greedy state update follows simulator rule:
+            # pour as much as capacity allows; the remainder is overflow (not added to level).
             g_poured_amount_A = 0
             g_poured_amount_B = 0
             g_remaining_metal = IF_BATCH_OUTPUT_KG
@@ -1221,16 +1262,13 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             elif g_preferred_f == "B":
                 g_furnaces_in_fill_order = ["B", "A"]
             else:  # Fallback
-                # print(f"Greedy Warning: PREFERRED_MH_FURNACE_TO_FILL_FIRST ('{g_preferred_f}') is not 'A' or 'B'. Defaulting to A then B for pour prediction.")
                 g_furnaces_in_fill_order = ["A", "B"]
 
             for g_f_id in g_furnaces_in_fill_order:
                 if g_remaining_metal <= 0:
                     break
 
-                g_space_in_furnace = (
-                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
-                )
+                g_space_in_furnace = MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
                 g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
 
                 if g_amount_to_pour > 0:
@@ -1240,19 +1278,27 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
                         g_poured_amount_B = g_amount_to_pour
                     g_remaining_metal -= g_amount_to_pour
 
+            g_overflow_kg = max(0.0, g_remaining_metal)
+            _ = g_overflow_kg
+
             # Update internal levels (greedy doesn't track overflow penalty, just levels)
             internal_mh_levels_kg["A"] = min(
-                internal_mh_levels_kg["A"] + g_poured_amount_A, MH_MAX_CAPACITY_KG["A"]
+                internal_mh_levels_kg["A"] + g_poured_amount_A,
+                MH_MAX_CAPACITY_KG["A"],
             )
             internal_mh_levels_kg["B"] = min(
-                internal_mh_levels_kg["B"] + g_poured_amount_B, MH_MAX_CAPACITY_KG["B"]
+                internal_mh_levels_kg["B"] + g_poured_amount_B,
+                MH_MAX_CAPACITY_KG["B"],
             )
-            # --- END NEW PRIORITIZED POUR LOGIC FOR GREEDY ---
 
             internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
             internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
 
-            internal_last_mh_sim_minute = selected_melt_finish_minute  # M&H state is now known AT this minute, after pour
+            # M&H state is now known at this minute.
+            internal_last_mh_sim_minute = selected_melt_finish_minute
+            last_if_end_slot_by_furnace[chosen_if_furnace_idx] = (
+                selected_start_slot + T_MELT
+            )
 
             if_furnace_assignment_counter += (
                 1  # Advance furnace assignment for next batch
@@ -1261,34 +1307,22 @@ def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
             # No break here, as we've processed one batch and will continue to the next in batch_order
 
         if not found_slot_for_batch:
-            # If no slot could be found (e.g. M&H never becomes ready or IF slots all conflict)
-            # Assign a fallback (e.g. very late, or rely on -1 to be penalized by scheduling_cost)
-            # For now, leave as -1, to be heavily penalized by scheduling_cost if it can't handle it.
-            # This should ideally be caught by high penalties in scheduling_cost for unplaced batches.
-            # print(
-            #     f"Warning in greedy_assignment: Could not find M&H-aware slot for batch {batch_idx_in_order + 1}."
-            # )
-            # As a simple fallback, try to place it like the old greedy, ignoring M&H, but this might be bad.
-            # For now, we let it remain -1 if truly no M&H-aware slot is found.
-            # This means scheduling_cost MUST be robust to x values of -1 (or handle them).
-            # The current scheduling_cost converts x to int, so -1 might cause issues if not bounded.
-            # Let's ensure scheduling_cost handles negative start times by clamping them.
-            # Or, assign a very late slot that will likely be invalid and heavily penalized.
-            x_schedule_vector[2 * batch_idx_in_order] = (
-                TOTAL_SLOTS  # Invalid start, will be clamped/penalized
-            )
-            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
+            # No globally free IF block left: return deterministic infeasible decode.
+            decoder_feasible = False
+            break
 
-    # Ensure any -1 are replaced, e.g., with a highly penalized slot or handle in scheduling_cost
-    # The current fallback above assigns TOTAL_SLOTS, which scheduling_cost should clamp.
-    # If a batch truly couldn't be scheduled, its x entries would be TOTAL_SLOTS.
-    # `scheduling_cost` clamps `start = max(0, min(start, TOTAL_SLOTS - T_MELT))`.
-    # So `TOTAL_SLOTS` becomes `TOTAL_SLOTS - T_MELT`. This is a valid placement, but likely suboptimal.
-    # A batch that is "unscheduled" (still -1) would need special handling in scheduling_cost or a huge penalty.
-    # The penalty for unpoured_batches in scheduling_cost (via simulate_mh_consumption_v2) might cover this
-    # if unscheduled batches translate to unpoured.
+    # Quick guardrail: decoder output should never contain global overlap.
+    if not _validate_no_global_if_overlap(x_schedule_vector, num_batches):
+        decoder_feasible = False
 
-    return x_schedule_vector.astype(float)
+    # Also mark infeasible if some batches remain unassigned.
+    if np.any(x_schedule_vector[::2] < 0):
+        decoder_feasible = False
+
+    return x_schedule_vector.astype(float), decoder_feasible
+
+
+_EVAL_CACHE = {}
 
 
 # --- คลาส HGA Problem (Level 1) ---
@@ -1310,14 +1344,38 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
 
         # วนลูปแต่ละ Permutation ใน Population
         for batch_order_perm in P:  # Renamed batch_order
-            # 1. แปลง Permutation เป็น x_schedule_vector (schedule) โดย Greedy Assignment
-            x_sched_vec = greedy_assignment(
-                batch_order_perm, num_batches=self.n_var
-            )  # Renamed x
-            evaluated_schedules_x.append(x_sched_vec)  # Store the generated schedule
+            cache_key = tuple(batch_order_perm.tolist())
+            if cache_key in _EVAL_CACHE:
+                energy, makespan, x_cached, cost_cached = _EVAL_CACHE[cache_key]
+                x_sched_vec = x_cached.copy()
+                cost_components = dict(cost_cached)
+            else:
+                # 1. แปลง Permutation เป็น x_schedule_vector (schedule) โดย Greedy Assignment
+                x_sched_vec, decoder_feasible = greedy_assignment(
+                    batch_order_perm, num_batches=self.n_var
+                )  # Renamed x
 
-            # 2. คำนวณ Objectives โดยใช้ scheduling_cost เดิม
-            energy, makespan, cost_components = scheduling_cost(x_sched_vec)
+                if decoder_feasible:
+                    # 2. คำนวณ Objectives โดยใช้ scheduling_cost เดิม
+                    energy, makespan, cost_components = scheduling_cost(x_sched_vec)
+                else:
+                    # Controlled penalty for decode failure (avoid clamp-induced overlap explosions).
+                    energy = 1e15
+                    makespan = TOTAL_SLOTS * SLOT_DURATION * 2
+                    cost_components = {
+                        "total_cost": energy,
+                        "makespan_minutes": makespan,
+                        "decoder_infeasible_penalty": 1e15,
+                    }
+
+                _EVAL_CACHE[cache_key] = (
+                    energy,
+                    makespan,
+                    x_sched_vec.copy(),
+                    dict(cost_components),
+                )
+
+            evaluated_schedules_x.append(x_sched_vec)  # Store the generated schedule
             all_cost_components.append(cost_components)  # Store the detailed components
 
             # เพิ่ม penalty สูงมากถ้า greedy assignment ล้มเหลว (เช่น หา slot ไม่ได้)
@@ -1330,6 +1388,9 @@ class HGAProblem(Problem):  # สืบทอดจาก Problem
 
         # กำหนดค่า Objectives ให้กับ Population
         out["F"] = np.array(results_f)
+        if DEBUG:
+            unique = np.unique(np.round(out["F"], 2), axis=0).shape[0]
+            print("DEBUG unique F:", unique)
         out["schedules"] = np.array(
             evaluated_schedules_x
         )  # Attach all generated schedules to the output

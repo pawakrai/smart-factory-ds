@@ -6,7 +6,10 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import timedelta
 
-df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_May1-15.xlsx", header=4)  # new
+# df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_May1-15.xlsx", header=4)  # new
+df = pd.read_excel(
+    "../data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx", header=4
+)  # new
 
 df_cleaned = df.drop(index=[0, 1])
 df_cleaned.head()
@@ -14,6 +17,27 @@ df_cleaned.head()
 df_cleaned["Date Time"] = pd.to_datetime(
     df_cleaned["Date Time"], format="%d/%m/%Y %H:%M:%S"
 )
+
+# --- Total energy in a specified time range ---
+range_start = pd.to_datetime("2024-10-25 21:00:00")
+range_end = pd.to_datetime("2024-10-27 00:30:00")
+
+df_range = df_cleaned[
+    (df_cleaned["Date Time"] >= range_start) & (df_cleaned["Date Time"] <= range_end)
+].sort_values("Date Time")
+
+if df_range.empty:
+    print("No data available in the specified time range.")
+else:
+    energy_total_kwh = df_range["kWh"].iloc[-1] - df_range["kWh"].iloc[0]
+    duration_hours = (
+        df_range["Date Time"].iloc[-1] - df_range["Date Time"].iloc[0]
+    ).total_seconds() / 3600
+    avg_power_kw = energy_total_kwh / duration_hours if duration_hours > 0 else 0.0
+    print(
+        f"Total energy from {range_start} to {range_end}: {energy_total_kwh:.2f} kWh "
+        f"(avg {avg_power_kw:.2f} kW over {duration_hours:.2f} h)"
+    )
 
 fig = px.line(df_cleaned, x="Date Time", y="kW", title="Hourly kW Usage Over Time")
 fig.update_xaxes(rangeslider_visible=True)

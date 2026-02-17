@@ -51,6 +51,7 @@ try:
         greedy_assignment,
         decode_schedule,
         plot_schedule_and_mh,
+        format_schedule_breakdown,
         # Potentially HGAProblem if we want to test its _evaluate method directly
         # HGAProblem
     )
@@ -283,31 +284,7 @@ if __name__ == "__main__":
     print(
         f"Baseline - Makespan (Objective 2)   : {baseline_cost_components['makespan_minutes']:.2f} min"
     )
-    print(f"Baseline - Cost Component Details:")
-    print(
-        f"  Base IF Energy (kWh)     : {baseline_cost_components['base_if_energy_kwh']:.2f}"
-    )
-    print(
-        f"  IF Holding Penalty       : {baseline_cost_components['if_holding_penalty']:.2f}"
-    )
-    print(
-        f"  IF General Penalty       : {baseline_cost_components['if_general_penalty']:.2f} (Overlaps, Gaps, Breaks)"
-    )
-    print(
-        f"  MH Idle Penalty          : {baseline_cost_components['mh_idle_penalty']:.2f}"
-    )
-    print(
-        f"  MH Reheat Penalty        : {baseline_cost_components['mh_reheat_penalty']:.2f} (Placeholder)"
-    )
-    print(
-        f"  MH Overflow Penalty      : {baseline_cost_components['mh_overflow_penalty']:.2f}"
-    )
-    print(
-        f"  Unpoured Batch Penalty   : {baseline_cost_components['unpoured_batch_penalty']:.2f}"
-    )
-    print(
-        f"  MH Energy (kWh)          : {baseline_cost_components['mh_energy_kwh']:.2f} (Placeholder)"
-    )
+    print(format_schedule_breakdown(baseline_cost_components))
 
     baseline_schedule_decoded = decode_schedule(baseline_x_schedule)
 
@@ -347,45 +324,6 @@ if __name__ == "__main__":
         print("Displayed baseline schedule plot.")
     else:
         print("Baseline schedule could not be decoded for plotting or was empty.")
-
-    # --- Plotting Example for M&H-aware greedy (Illustrative, using its own test data) ---
-    print("\n--- Plotting M&H-Aware Greedy Test Schedule ---")
-    num_plot_batches_mha = min(NUM_BATCHES, 3)
-    mha_batch_order_plot = np.arange(num_plot_batches_mha)
-    mha_x_plot = greedy_assignment(
-        mha_batch_order_plot, num_batches=num_plot_batches_mha
-    )
-
-    if np.all(mha_x_plot != -1):
-        mha_schedule_for_plot = decode_schedule(mha_x_plot)
-        print(f"M&H-aware schedule for plotting: {mha_schedule_for_plot}")
-
-        melt_events_mha_plot = []
-        for s, e, f, b_id in mha_schedule_for_plot:
-            finish_minute = e * SLOT_DURATION
-            melt_events_mha_plot.append((finish_minute, b_id))
-        melt_events_mha_plot.sort(key=lambda w: w[0])
-
-        (
-            cost_mha_plot,
-            makespan_mha_plot,
-            components_mha_plot,  # Get cost for title
-        ) = scheduling_cost(mha_x_plot)
-
-        (_, _, _, sim_time_points_mha, sim_mh_levels_mha, _, _, _, _, _, _) = (
-            simulate_mh_consumption_v2(melt_events_mha_plot)
-        )
-
-        plot_schedule_and_mh(
-            mha_schedule_for_plot,
-            title=f"M&H-Aware Greedy (Test) (Energy: {components_mha_plot['total_cost']:.0f}, Makespan: {makespan_mha_plot:.0f})",
-            simulated_time_points=sim_time_points_mha,
-            simulated_mh_levels=sim_mh_levels_mha,
-            batch_timing=components_mha_plot.get("batch_timing"),
-        )
-        print("Displayed M&H-aware greedy (test) schedule plot.")
-    else:
-        print("Could not generate a valid M&H-aware schedule for plotting.")
 
     print("\nGA Model Validation Script Finished.")
 
