@@ -41,7 +41,7 @@ COLD_START_EXTRA_ENERGY_KWH = 30.0
 
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}
 MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 3.80, "B": 3.50}
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.10, "B": 2.20}
 MH_EMPTY_THRESHOLD_KG = 0.0
 MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
@@ -50,30 +50,30 @@ LOW_LEVEL_NONLINEAR_FACTOR = 3.0
 # TOU price ($/kWh equivalent unit)
 TOU_PRICE_BY_HOUR = np.array(
     [
-        2.2,
-        2.2,
-        2.2,
-        2.2,
-        2.2,
-        2.2,
-        2.4,
-        2.8,
-        2.4,
-        2.8,
-        2.2,
-        2.5,
-        2.6,
-        2.4,
-        2.2,
-        2.0,
-        2.8,
-        2.6,
-        3.4,
-        3.2,
-        2.9,
-        2.6,
-        2.4,
-        2.3,
+        1.8,  # 00:00
+        1.8,  # 01:00
+        1.8,  # 02:00
+        1.8,  # 03:00
+        1.8,  # 04:00
+        1.8,  # 05:00
+        1.9,  # 06:00
+        2.0,  # 07:00
+        2.1,  # 08:00
+        3.2,  # 09:00
+        3.3,  # 10:00
+        3.4,  # 11:00
+        3.5,  # 12:00
+        3.6,  # 13:00
+        3.7,  # 14:00
+        3.8,  # 15:00
+        3.9,  # 16:00
+        4.1,  # 17:00
+        4.3,  # 18:00
+        4.2,  # 19:00
+        4.0,  # 20:00
+        3.6,  # 21:00
+        2.0,  # 22:00
+        1.9,  # 23:00
     ],
     dtype=float,
 )
@@ -128,9 +128,13 @@ OBJ1_COMPONENT_WEIGHTS = {
 
 # Optional constraint-handling mode to prevent "all-penalty" domination.
 USE_CONSTRAINT_HANDLING = False
+OBJ1_EXCLUDE_SERVICE_PENALTIES_WHEN_CONSTRAINED = (
+    True  # CHANGED (Step D): keep Obj1 focused on cost when using constraints.
+)
 MAX_OVERFLOW_KG_ALLOW = 1e-6
 MAX_EMPTY_MIN_ALLOW = 120.0
 MAX_LOW_LEVEL_MIN_ALLOW = 240.0
+MAX_SHORTFALL_KG_ALLOW = 1e-6  # CHANGED (Step B): allow near-zero daily shortfall only.
 HARD_FORBID_OVERFLOW = True
 
 # 3-objective model:
@@ -139,6 +143,7 @@ HARD_FORBID_OVERFLOW = True
 # Obj2: makespan (min)
 OBJ0_WEIGHTS = {
     "overflow_kg": 1000.0,
+    "shortfall_kg": 120.0,  # CHANGED (Step B): main production-feasibility violation weight.
     "empty_min": 3.0,
     "low_level_min": 1.0,
     "parallel_peak_min": 4.0,
@@ -343,6 +348,8 @@ def _violation_vector(m):
     empty_total = float(m["mh_empty_minutes"]["A"] + m["mh_empty_minutes"]["B"])
     low_total = float(m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"])
     overflow_total = float(m["overflow_kg_total"])
+    shortfall_total = float(m.get("shortfall_kg", 0.0))  # CHANGED (Step B)
+    parallel_peak_total = float(m.get("parallel_peak_minutes", 0.0))  # CHANGED (Step E)
     # Guard against NaN/Inf/negative in any upstream metric.
     if not np.isfinite(empty_total) or empty_total < 0.0:
         empty_total = 0.0
@@ -350,11 +357,19 @@ def _violation_vector(m):
         low_total = 0.0
     if not np.isfinite(overflow_total) or overflow_total < 0.0:
         overflow_total = 0.0
+    if not np.isfinite(shortfall_total) or shortfall_total < 0.0:  # CHANGED (Step B)
+        shortfall_total = 0.0
+    if (
+        not np.isfinite(parallel_peak_total) or parallel_peak_total < 0.0
+    ):  # CHANGED (Step E)
+        parallel_peak_total = 0.0
     return np.array(
         [
             overflow_total - MAX_OVERFLOW_KG_ALLOW,
+            shortfall_total - MAX_SHORTFALL_KG_ALLOW,  # CHANGED (Step B)
             empty_total - MAX_EMPTY_MIN_ALLOW,
             low_total - MAX_LOW_LEVEL_MIN_ALLOW,
+            parallel_peak_total - MAX_PARALLEL_PEAK_MIN_ALLOW,  # CHANGED (Step E)
         ],
         dtype=float,
     )
@@ -758,6 +773,9 @@ def simulate_policy_day(policy_params):
                     remaining -= put
 
             if remaining > 1e-9:
+                overflow_kg_total += float(
+                    remaining
+                )  # CHANGED (Step C): accumulate real overflow before failing repair.
                 raise RuntimeError(
                     "Repair failed: attempted pour with insufficient capacity."
                 )
@@ -930,6 +948,7 @@ def simulate_policy_day(policy_params):
             b["poured_A_kg"] = 0.0
             b["poured_B_kg"] = 0.0
             b["overflow_kg"] = IF_BATCH_OUTPUT_KG
+            overflow_kg_total += IF_BATCH_OUTPUT_KG  # CHANGED (Step C): unpoured batch contributes full overflow.
             unpoured_batches.append(b_id)
 
     total_melt_kwh = float(np.sum(melt_kw_series) / 60.0)
@@ -948,12 +967,28 @@ def simulate_policy_day(policy_params):
         / max(CONTRACT_DEMAND_KW, 1.0)
     )
 
+    # CHANGED (Step B): compute poured kg from actual poured mass per batch.
+    total_poured_kg = float(
+        sum(
+            b.get("poured_A_kg", 0.0) + b.get("poured_B_kg", 0.0)
+            for b in batches.values()
+            if b.get("status") == "poured"
+        )
+    )
+    # CHANGED (Step B): compute required IF contribution and resulting daily shortfall.
+    daily_demand_kg = float(
+        (MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"])
+        * SIM_DURATION_MIN
+    )
+    initial_inventory_kg = float(MH_INITIAL_LEVEL_KG["A"] + MH_INITIAL_LEVEL_KG["B"])
+    required_from_if_kg = float(max(0.0, daily_demand_kg - initial_inventory_kg))
+    shortfall_kg = float(max(0.0, required_from_if_kg - total_poured_kg))
+
     if actual_pour_events:
         makespan_minutes = float(max(t for t, _ in actual_pour_events))
-    elif batches:
-        makespan_minutes = float(SIM_DURATION_MIN)
     else:
-        makespan_minutes = 0.0
+        # CHANGED (Step A): if no pour happened, makespan is full-day, never zero.
+        makespan_minutes = float(SIM_DURATION_MIN)
 
     schedule = []
     for b_id in sorted(batches.keys()):
@@ -1004,6 +1039,10 @@ def simulate_policy_day(policy_params):
             "holding_minutes_total": float(total_if_holding_minutes),
             "unpoured_batches_count": len(unpoured_batches),
             "makespan_minutes": makespan_minutes,
+            "total_poured_kg": total_poured_kg,  # CHANGED (Step A)
+            "daily_demand_kg": daily_demand_kg,  # CHANGED (Step B)
+            "required_from_if_kg": required_from_if_kg,  # CHANGED (Step B)
+            "shortfall_kg": shortfall_kg,  # CHANGED (Step B)
             "min_level_reached": min_level_reached,
             "if_use_count_A": furnace_use_count[0],
             "if_use_count_B": furnace_use_count[1],
@@ -1019,11 +1058,12 @@ def evaluate_policy(policy_params):
 
     comp = _compute_obj1_components(m)
     comp_for_obj = dict(comp)
-    if USE_CONSTRAINT_HANDLING:
-        # Avoid double counting: enforce these in constraints instead of penalties.
+    if USE_CONSTRAINT_HANDLING and OBJ1_EXCLUDE_SERVICE_PENALTIES_WHEN_CONSTRAINED:
+        # CHANGED (Step D): avoid penalty pile-up in Obj1 when violations are already constrained.
         comp_for_obj["overflow_penalty"] = 0.0
         comp_for_obj["empty_penalty"] = 0.0
         comp_for_obj["low_level_min_penalty"] = 0.0
+        comp_for_obj["unpoured_penalty"] = 0.0
 
     obj1 = _aggregate_obj1(comp_for_obj)
     obj2 = float(m["makespan_minutes"])
@@ -1045,16 +1085,16 @@ def evaluate_policy(policy_params):
 
     violation_g = _violation_vector(m)
     overflow_violation = float(max(0.0, violation_g[0]))
-    empty_violation = float(max(0.0, violation_g[1]))
-    low_violation = float(max(0.0, violation_g[2]))
+    shortfall_violation = float(max(0.0, violation_g[1]))  # CHANGED (Step B)
+    empty_violation = float(max(0.0, violation_g[2]))
+    low_violation = float(max(0.0, violation_g[3]))
+    parallel_peak_violation = float(max(0.0, violation_g[4]))  # CHANGED (Step E)
     parallel_peak_minutes = float(max(0.0, m.get("parallel_peak_minutes", 0.0)))
-    parallel_peak_violation = max(
-        0.0, parallel_peak_minutes - MAX_PARALLEL_PEAK_MIN_ALLOW
-    )
     total_violation = float(
         np.sum(
             [
                 overflow_violation,
+                shortfall_violation,  # CHANGED (Step B)
                 empty_violation,
                 low_violation,
                 parallel_peak_violation,
@@ -1063,6 +1103,7 @@ def evaluate_policy(policy_params):
     )
     obj0 = (
         OBJ0_WEIGHTS["overflow_kg"] * overflow_violation
+        + OBJ0_WEIGHTS["shortfall_kg"] * shortfall_violation  # CHANGED (Step B)
         + OBJ0_WEIGHTS["empty_min"] * empty_violation
         + OBJ0_WEIGHTS["low_level_min"] * low_violation
         + OBJ0_WEIGHTS["parallel_peak_min"] * parallel_peak_violation
@@ -1092,6 +1133,7 @@ def evaluate_policy(policy_params):
         "pct_overflow_penalty": contribution_pct["overflow_penalty"],
         "pct_unpoured_penalty": contribution_pct["unpoured_penalty"],
         "violation_overflow": overflow_violation,
+        "violation_shortfall_kg": shortfall_violation,  # CHANGED (Step B)
         "violation_empty_min": empty_violation,
         "violation_low_min": low_violation,
         "parallel_peak_minutes": parallel_peak_minutes,
@@ -1116,6 +1158,10 @@ def evaluate_policy(policy_params):
         "if_use_count_B": m["if_use_count_B"],
         "unpoured_batches_count": m["unpoured_batches_count"],
         "makespan_minutes": m["makespan_minutes"],
+        "total_poured_kg": m["total_poured_kg"],  # CHANGED (Step A)
+        "daily_demand_kg": m["daily_demand_kg"],  # CHANGED (Step B)
+        "required_from_if_kg": m["required_from_if_kg"],  # CHANGED (Step B)
+        "shortfall_kg": m["shortfall_kg"],  # CHANGED (Step B)
         "min_level_A": m["min_level_reached"]["A"],
         "min_level_B": m["min_level_reached"]["B"],
         "policy": sim["policy"],
@@ -1187,7 +1233,15 @@ class PolicyProblem(Problem):
             ],
             dtype=float,
         )
-        n_constr = 1 if HARD_FORBID_OVERFLOW else (3 if USE_CONSTRAINT_HANDLING else 0)
+        # CHANGED (Step E): include shortfall + parallel-peak in constraints when enabled.
+        if HARD_FORBID_OVERFLOW and USE_CONSTRAINT_HANDLING:
+            n_constr = 5  # overflow, shortfall, empty, low-level, parallel-peak
+        elif HARD_FORBID_OVERFLOW:
+            n_constr = 1  # overflow only
+        elif USE_CONSTRAINT_HANDLING:
+            n_constr = 5  # overflow, shortfall, empty, low-level, parallel-peak
+        else:
+            n_constr = 0
         super().__init__(n_var=21, n_obj=3, n_constr=n_constr, xl=xl, xu=xu)
 
     def _evaluate(self, X, out, *args, **kwargs):
@@ -1216,13 +1270,27 @@ class PolicyProblem(Problem):
             F.append([o0, o1, o2])
             details.append(d)
             if HARD_FORBID_OVERFLOW:
-                G.append([d.get("violation_overflow", 0.0)])
+                if USE_CONSTRAINT_HANDLING:
+                    # CHANGED (Step E): keep overflow hard and add shortfall/empty/low/parallel constraints.
+                    G.append(
+                        [
+                            d.get("violation_overflow", 0.0),
+                            d.get("violation_shortfall_kg", 0.0),
+                            d.get("violation_empty_min", 0.0),
+                            d.get("violation_low_min", 0.0),
+                            d.get("violation_parallel_peak_min", 0.0),
+                        ]
+                    )
+                else:
+                    G.append([d.get("violation_overflow", 0.0)])
             elif USE_CONSTRAINT_HANDLING:
                 G.append(
                     [
                         d.get("violation_overflow", 0.0),
+                        d.get("violation_shortfall_kg", 0.0),  # CHANGED (Step B)
                         d.get("violation_empty_min", 0.0),
                         d.get("violation_low_min", 0.0),
+                        d.get("violation_parallel_peak_min", 0.0),  # CHANGED (Step E)
                     ]
                 )
 
@@ -1238,6 +1306,18 @@ class PolicyProblem(Problem):
             f_max = np.max(out["F"], axis=0)
             avg_peak = float(np.mean([d["peak_kw"] for d in details]))
             avg_use_b = float(np.mean([d["if_use_count_B"] for d in details]))
+            shortfalls = np.asarray(
+                [d.get("shortfall_kg", 0.0) for d in details], dtype=float
+            )  # CHANGED (Step F)
+            shortfalls = np.where(np.isfinite(shortfalls), shortfalls, 0.0)  # CHANGED (Step F)
+            avg_shortfall = float(np.mean(shortfalls)) if len(shortfalls) > 0 else 0.0  # CHANGED (Step F)
+            min_shortfall = float(np.min(shortfalls)) if len(shortfalls) > 0 else 0.0  # CHANGED (Step F)
+            max_shortfall = float(np.max(shortfalls)) if len(shortfalls) > 0 else 0.0  # CHANGED (Step F)
+            shortfall_ok_pct = (
+                float(np.mean(shortfalls <= MAX_SHORTFALL_KG_ALLOW) * 100.0)
+                if len(shortfalls) > 0
+                else 0.0
+            )  # CHANGED (Step F)
             unique_policy = len(set(key_list))
             unique_x = np.unique(np.round(np.asarray(X, dtype=float), 4), axis=0).shape[
                 0
@@ -1248,6 +1328,16 @@ class PolicyProblem(Problem):
                 "DEBUG avg use_B / avg peak:",
                 round(avg_use_b, 3),
                 round(avg_peak, 3),
+            )
+            print(  # CHANGED (Step F)
+                "DEBUG shortfall avg/min/max:",
+                round(avg_shortfall, 3),
+                round(min_shortfall, 3),
+                round(max_shortfall, 3),
+            )
+            print(  # CHANGED (Step F)
+                "DEBUG shortfall<=allow (%):",
+                round(shortfall_ok_pct, 2),
             )
             print(
                 "DEBUG unique policy keys:", unique_policy, "unique X(4dp):", unique_x
@@ -1281,6 +1371,9 @@ def format_policy_breakdown(cost):
         f"  IF Use Count A/B          : {cost.get('if_use_count_A', 0)} / {cost.get('if_use_count_B', 0)}",
         f"  Unpoured Batches          : {cost.get('unpoured_batches_count', 0)}",
         f"  Makespan (min)            : {cost.get('makespan_minutes', 0.0):.2f}",
+        f"  Total Poured (kg)         : {cost.get('total_poured_kg', 0.0):.2f}",  # CHANGED (Step A)
+        f"  Required From IF (kg)     : {cost.get('required_from_if_kg', 0.0):.2f}",  # CHANGED (Step B)
+        f"  Daily Shortfall (kg)      : {cost.get('shortfall_kg', 0.0):.2f}",  # CHANGED (Step B)
         f"  Min Level Reached A/B     : {cost.get('min_level_A', 0.0):.2f} / {cost.get('min_level_B', 0.0):.2f}",
         "  Obj1 Decomposition (raw / %raw):",
         f"    - Energy Cost           : {cost.get('comp_energy_cost', 0.0):.2f} / {cost.get('pct_energy_cost', 0.0):.2f}%",
@@ -1293,6 +1386,7 @@ def format_policy_breakdown(cost):
         f"    - Unpoured Penalty      : {cost.get('comp_unpoured_penalty', 0.0):.2f} / {cost.get('pct_unpoured_penalty', 0.0):.2f}%",
         "  Constraint Violations:",
         f"    - Overflow (kg)         : {cost.get('violation_overflow', 0.0):.2f}",
+        f"    - Shortfall (kg)        : {cost.get('violation_shortfall_kg', 0.0):.2f}",  # CHANGED (Step B)
         f"    - Empty Minutes         : {cost.get('violation_empty_min', 0.0):.2f}",
         f"    - Low-Level Minutes     : {cost.get('violation_low_min', 0.0):.2f}",
         f"    - Parallel Peak Minutes : {cost.get('violation_parallel_peak_min', 0.0):.2f}",
