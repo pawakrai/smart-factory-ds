@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from pymoo.core.problem import Problem
+from pymoo.core.duplicate import ElementwiseDuplicateElimination
+from pymoo.core.callback import Callback
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PolynomialMutation
@@ -13,14 +15,15 @@ from pymoo.algorithms.moo.nsga2 import NSGA2
 # =============== CONFIG ==================
 HOURS_A_DAY = 24 * 60
 SIM_DURATION_MIN = HOURS_A_DAY
-
 NUM_BATCHES = 12
-IF_BATCH_OUTPUT_KG = 500.0
-POST_POUR_DOWNTIME_MIN = 10
 
 USE_FURNACE_A = True
 USE_FURNACE_B = True
-ALLOW_PARALLEL_IF = True
+ALLOW_PARALLEL_IF = False
+
+IF_BATCH_OUTPUT_KG = 500.0
+POST_POUR_DOWNTIME_MIN = 10
+PREFERRED_MH_FURNACE_TO_FILL_FIRST = "B"
 
 IF_POWER_OPTIONS = [450.0, 475.0, 500.0]
 POWER_PROFILE = {
@@ -28,9 +31,11 @@ POWER_PROFILE = {
     475.0: {"duration_min_hot": 86.0, "energy_kwh_hot": 582.5},
     500.0: {"duration_min_hot": 84.0, "energy_kwh_hot": 587.4},
 }
-IF_POWER_RATING_KW = {"A": 420.0, "B": 420.0}
 
-COLD_START_GAP_THRESHOLD_MIN = 180.0
+# Slight per-furnace efficiency difference gives policy leverage when choosing A vs B.
+IF_FURNACE_EFFICIENCY_FACTOR = {0: 0.99, 1: 1.03}
+
+COLD_START_GAP_THRESHOLD_MIN = 180
 COLD_START_EXTRA_DURATION_MIN = 8.0
 COLD_START_EXTRA_ENERGY_KWH = 30.0
 
@@ -38,29 +43,52 @@ MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}
 MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}
 MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 3.80, "B": 3.50}
 MH_EMPTY_THRESHOLD_KG = 0.0
-
-MH_MIN_OPERATIONAL_LEVEL_KG = {
-    "A": 0.5 * MH_MAX_CAPACITY_KG["A"],
-    "B": 0.5 * MH_MAX_CAPACITY_KG["B"],
-}
+MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
-LOW_LEVEL_NONLINEAR_FACTOR = 5.0
+LOW_LEVEL_NONLINEAR_FACTOR = 3.0
 
-PREFERRED_MH_FURNACE_TO_FILL_FIRST = "B"
+# TOU price ($/kWh equivalent unit)
+TOU_PRICE_BY_HOUR = np.array(
+    [
+        2.2,
+        2.2,
+        2.2,
+        2.2,
+        2.2,
+        2.2,
+        2.4,
+        2.8,
+        2.4,
+        2.8,
+        2.2,
+        2.5,
+        2.6,
+        2.4,
+        2.2,
+        2.0,
+        2.8,
+        2.6,
+        3.4,
+        3.2,
+        2.9,
+        2.6,
+        2.4,
+        2.3,
+    ],
+    dtype=float,
+)
 
-BREAK_TIMES_MINUTES = []
-
-# Demand charge model
 CONTRACT_DEMAND_KW = 1200.0
-DEMAND_CHARGE_RATE_PER_KW = 2000.0
-ALPHA_DEMAND_EQUIV = 0.001
+DEMAND_CHARGE_RATE_PER_KW = 1800.0
+DEMAND_SOFT_ZONE_RATIO = 0.90
 
-# Service penalties
-IF_HOLDING_PENALTY_PER_MIN = 40.0
-MH_EMPTY_PENALTY_PER_MIN = 10000.0
-MH_LOW_LEVEL_MINUTE_PENALTY = 1000.0
-OVERFLOW_PENALTY_PER_KG = 400.0
-UNPOURED_BATCH_PENALTY = 1e9
+# Service penalties (raw units before normalization). Tuned so raw components are
+# closer in order of magnitude and do not completely dominate energy cost.
+IF_HOLDING_PENALTY_PER_MIN = 8.0
+MH_EMPTY_PENALTY_PER_MIN = 150.0
+MH_LOW_LEVEL_MINUTE_PENALTY = 40.0
+OVERFLOW_PENALTY_PER_KG = 5000.0
+UNPOURED_BATCH_PENALTY = 250000.0
 
 SHIFT_START = 8 * 60
 FURNACE_COLORS = {"A": "blue", "B": "green"}
@@ -68,101 +96,590 @@ MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
 furnace_y = {0: 10, 1: 25}
 height = 8
 
-USE_MULTI_OBJECTIVE = True
 DEBUG = True
 _EVAL_CACHE = {}
+DETERMINISTIC_SIMULATION = True
+
+# Objective aggregation mode:
+# - "raw": obj1 = sum(raw components)
+# - "normalized_weighted": obj1 = scale * sum(weight_i * component_i / ref_i)
+OBJ1_AGGREGATION_MODE = "normalized_weighted"
+OBJ1_NORMALIZATION_SCALE = 100000.0
+OBJ1_COMPONENT_REFS = {
+    "energy_cost": 30000.0,
+    "demand_penalty": 150000.0,
+    "holding_penalty": 50000.0,
+    "empty_penalty": 200000.0,
+    "low_level_min_penalty": 80000.0,
+    "low_level_shape_penalty": 250000.0,
+    "overflow_penalty": 120000.0,
+    "unpoured_penalty": 300000.0,
+}
+OBJ1_COMPONENT_WEIGHTS = {
+    "energy_cost": 1.00,
+    "demand_penalty": 0.90,
+    "holding_penalty": 0.50,
+    "empty_penalty": 1.10,
+    "low_level_min_penalty": 0.80,
+    "low_level_shape_penalty": 0.90,
+    "overflow_penalty": 1.20,
+    "unpoured_penalty": 1.30,
+}
+
+# Optional constraint-handling mode to prevent "all-penalty" domination.
+USE_CONSTRAINT_HANDLING = False
+MAX_OVERFLOW_KG_ALLOW = 1e-6
+MAX_EMPTY_MIN_ALLOW = 120.0
+MAX_LOW_LEVEL_MIN_ALLOW = 240.0
+HARD_FORBID_OVERFLOW = True
+
+# 3-objective model:
+# Obj0: weighted violation severity (dimensionless score)
+# Obj1: real operating cost proxy (energy + demand + non-hard service penalties)
+# Obj2: makespan (min)
+OBJ0_WEIGHTS = {
+    "overflow_kg": 1000.0,
+    "empty_min": 3.0,
+    "low_level_min": 1.0,
+    "parallel_peak_min": 4.0,
+}
+MAX_PARALLEL_PEAK_MIN_ALLOW = 0.0
+
+# Optional two-stage optimization:
+# Stage-1 focuses on reducing violations, stage-2 optimizes objective.
+USE_TWO_STAGE_OPTIMIZATION = False
+STAGE1_GENS = 30
+
+# Quantization for policy-aware duplicate elimination / cache keys.
+# This follows decision granularity in the simulator to avoid wasting evaluations
+# on policies that decode to effectively the same control behavior.
+POLICY_KEY_STEPS = {
+    "trigger_a_frac": 0.01,
+    "trigger_b_frac": 0.01,
+    "lookahead_min": 1.0,
+    "level_crit_a_frac": 0.01,
+    "level_crit_b_frac": 0.01,
+    "level_mid_frac": 0.01,
+    "demand_headroom_kw": 5.0,
+    "peak_avoid_weight": 0.01,
+    "furnace_bias": 0.02,
+    "wait_vs_rush": 0.01,
+    "start_score_bias": 0.05,
+    "start_w_depletion": 0.05,
+    "start_w_queue": 0.05,
+    "start_w_peak": 0.05,
+    "min_start_gap_min": 1.0,
+    "gap_peak_coeff": 0.05,
+    "parallel_open_margin_kw": 5.0,
+    "parallel_score_bias": 0.05,
+    "coldstart_weight": 0.05,
+    "tou_weight": 0.05,
+    "balance_weight": 0.05,
+}
+
+EARLY_STOP_PATIENCE_GENS = 20
+EARLY_STOP_DELTA_OBJ0 = 1.0
+EARLY_STOP_DELTA_OBJ1 = 50.0
+EARLY_STOP_DELTA_OBJ2 = 0.5
 
 
 def _build_baseline_load_kw(duration_min=SIM_DURATION_MIN):
     t = np.arange(duration_min, dtype=float)
-    baseline = 320.0 + 80.0 * np.sin(2.0 * np.pi * (t / 1440.0 - 0.1))
-    baseline += 50.0 * np.exp(-((t - 13 * 60.0) ** 2) / (2.0 * (150.0**2)))
-    baseline += 30.0 * np.exp(-((t - 20 * 60.0) ** 2) / (2.0 * (130.0**2)))
+    baseline = 310.0 + 70.0 * np.sin(2.0 * np.pi * (t / 1440.0 - 0.15))
+    baseline += 45.0 * np.exp(-((t - 13 * 60.0) ** 2) / (2.0 * (140.0**2)))
+    baseline += 30.0 * np.exp(-((t - 20 * 60.0) ** 2) / (2.0 * (120.0**2)))
     return np.clip(baseline, 220.0, None)
 
 
-def _get_power_profile(power_kw):
-    return POWER_PROFILE.get(power_kw, POWER_PROFILE[450.0])
+def _hour_price(minute_idx):
+    hour = int(np.clip(minute_idx // 60, 0, 23))
+    return TOU_PRICE_BY_HOUR[hour]
 
 
-def _compute_batch_profile(power_kw, is_cold_start):
-    profile = _get_power_profile(power_kw)
+def _compute_batch_profile(power_kw, is_cold_start, if_furnace):
+    profile = POWER_PROFILE.get(power_kw, POWER_PROFILE[450.0])
     duration_min = profile["duration_min_hot"]
     energy_kwh = profile["energy_kwh_hot"]
     if is_cold_start:
         duration_min += COLD_START_EXTRA_DURATION_MIN
         energy_kwh += COLD_START_EXTRA_ENERGY_KWH
+
+    eff = IF_FURNACE_EFFICIENCY_FACTOR.get(if_furnace, 1.0)
+    energy_kwh *= eff
     return {
         "power_kw": power_kw,
-        "duration_min": duration_min,
+        "duration_min": max(1.0, duration_min),
         "energy_kwh": energy_kwh,
         "is_cold_start": is_cold_start,
     }
 
 
 def _decode_policy_vector(x):
-    level_mid_frac = float(np.clip(x[5], 0.0, 1.0))
-    peak_avoid_weight = float(np.clip(x[7], 0.0, 1.0))
+    # x layout:
+    # [0..1] normalized controls to reduce hard clipping and preserve sensitivity.
+    # [trigA_frac, trigB_frac, lookahead_norm, critA_frac, critB_frac, mid_frac,
+    #  headroom_norm, peak_avoid, furnace_bias, wait_vs_rush,
+    #  start_bias, w_depletion, w_queue, w_peak, min_gap_norm, gap_peak_coeff,
+    #  parallel_margin_norm, parallel_bias, coldstart_weight, tou_weight, balance_weight]
+    x = np.asarray(x, dtype=float)
     return {
-        "L_trigger_A": float(np.clip(x[0], 0.0, MH_MAX_CAPACITY_KG["A"])),
-        "L_trigger_B": float(np.clip(x[1], 0.0, MH_MAX_CAPACITY_KG["B"])),
-        "lookahead_min": int(np.clip(round(x[2]), 0, 180)),
-        "level_crit_A": float(np.clip(x[3], 0.0, MH_MAX_CAPACITY_KG["A"])),
-        "level_crit_B": float(np.clip(x[4], 0.0, MH_MAX_CAPACITY_KG["B"])),
-        "level_mid_frac": level_mid_frac,
-        "demand_headroom_kw": float(np.clip(x[6], 0.0, 500.0)),
-        "peak_avoid_weight": peak_avoid_weight,
+        "trigger_a_frac": float(np.clip(x[0], 0.0, 1.0)),
+        "trigger_b_frac": float(np.clip(x[1], 0.0, 1.0)),
+        "L_trigger_A": float(np.clip(x[0], 0.0, 1.0) * MH_MAX_CAPACITY_KG["A"]),
+        "L_trigger_B": float(np.clip(x[1], 0.0, 1.0) * MH_MAX_CAPACITY_KG["B"]),
+        "lookahead_min": int(np.clip(round(np.clip(x[2], 0.0, 1.0) * 180.0), 0, 180)),
+        "level_crit_a_frac": float(np.clip(x[3], 0.0, 1.0)),
+        "level_crit_b_frac": float(np.clip(x[4], 0.0, 1.0)),
+        "level_crit_A": float(
+            MH_MIN_OPERATIONAL_LEVEL_KG["A"]
+            + np.clip(x[3], 0.0, 1.0)
+            * (MH_MAX_CAPACITY_KG["A"] - MH_MIN_OPERATIONAL_LEVEL_KG["A"])
+        ),
+        "level_crit_B": float(
+            MH_MIN_OPERATIONAL_LEVEL_KG["B"]
+            + np.clip(x[4], 0.0, 1.0)
+            * (MH_MAX_CAPACITY_KG["B"] - MH_MIN_OPERATIONAL_LEVEL_KG["B"])
+        ),
+        "level_mid_frac": float(np.clip(x[5], 0.0, 1.0)),
+        "demand_headroom_kw": float(np.clip(x[6], 0.0, 1.0) * 500.0),
+        "peak_avoid_weight": float(np.clip(x[7], 0.0, 1.0)),
+        "furnace_bias": float(np.clip(x[8], -1.0, 1.0)),
+        "wait_vs_rush": float(np.clip(x[9], 0.0, 1.0)),
+        "start_score_bias": float(np.clip(x[10], -2.0, 2.0)),
+        "start_w_depletion": float(np.clip(x[11], 0.0, 4.0)),
+        "start_w_queue": float(np.clip(x[12], 0.0, 4.0)),
+        "start_w_peak": float(np.clip(x[13], 0.0, 4.0)),
+        "min_start_gap_min": float(np.clip(x[14], 0.0, 1.0) * 120.0),
+        "gap_peak_coeff": float(np.clip(x[15], 0.0, 3.0)),
+        "parallel_open_margin_kw": float(np.clip(x[16], 0.0, 1.0) * 500.0),
+        "parallel_score_bias": float(np.clip(x[17], -2.0, 2.0)),
+        "coldstart_weight": float(np.clip(x[18], 0.0, 2.0)),
+        "tou_weight": float(np.clip(x[19], 0.0, 2.0)),
+        "balance_weight": float(np.clip(x[20], 0.0, 2.0)),
     }
 
 
-def _select_if_power(policy, mh_levels, baseline_kw_t, if_kw_now):
+def _quantize_to_step(value, step):
+    if step <= 0:
+        return float(value)
+    return float(np.round(value / step) * step)
+
+
+def _policy_cache_key(x):
+    p = _decode_policy_vector(np.asarray(x, dtype=float))
+    return (
+        _quantize_to_step(p["trigger_a_frac"], POLICY_KEY_STEPS["trigger_a_frac"]),
+        _quantize_to_step(p["trigger_b_frac"], POLICY_KEY_STEPS["trigger_b_frac"]),
+        int(p["lookahead_min"]),
+        _quantize_to_step(
+            p["level_crit_a_frac"], POLICY_KEY_STEPS["level_crit_a_frac"]
+        ),
+        _quantize_to_step(
+            p["level_crit_b_frac"], POLICY_KEY_STEPS["level_crit_b_frac"]
+        ),
+        _quantize_to_step(p["level_mid_frac"], POLICY_KEY_STEPS["level_mid_frac"]),
+        _quantize_to_step(
+            p["demand_headroom_kw"], POLICY_KEY_STEPS["demand_headroom_kw"]
+        ),
+        _quantize_to_step(
+            p["peak_avoid_weight"], POLICY_KEY_STEPS["peak_avoid_weight"]
+        ),
+        _quantize_to_step(p["furnace_bias"], POLICY_KEY_STEPS["furnace_bias"]),
+        _quantize_to_step(p["wait_vs_rush"], POLICY_KEY_STEPS["wait_vs_rush"]),
+        _quantize_to_step(p["start_score_bias"], POLICY_KEY_STEPS["start_score_bias"]),
+        _quantize_to_step(
+            p["start_w_depletion"], POLICY_KEY_STEPS["start_w_depletion"]
+        ),
+        _quantize_to_step(p["start_w_queue"], POLICY_KEY_STEPS["start_w_queue"]),
+        _quantize_to_step(p["start_w_peak"], POLICY_KEY_STEPS["start_w_peak"]),
+        _quantize_to_step(
+            p["min_start_gap_min"], POLICY_KEY_STEPS["min_start_gap_min"]
+        ),
+        _quantize_to_step(p["gap_peak_coeff"], POLICY_KEY_STEPS["gap_peak_coeff"]),
+        _quantize_to_step(
+            p["parallel_open_margin_kw"], POLICY_KEY_STEPS["parallel_open_margin_kw"]
+        ),
+        _quantize_to_step(
+            p["parallel_score_bias"], POLICY_KEY_STEPS["parallel_score_bias"]
+        ),
+        _quantize_to_step(p["coldstart_weight"], POLICY_KEY_STEPS["coldstart_weight"]),
+        _quantize_to_step(p["tou_weight"], POLICY_KEY_STEPS["tou_weight"]),
+        _quantize_to_step(p["balance_weight"], POLICY_KEY_STEPS["balance_weight"]),
+    )
+
+
+def _compute_obj1_components(m):
+    empty_minutes_total = m["mh_empty_minutes"]["A"] + m["mh_empty_minutes"]["B"]
+    low_minutes_total = m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"]
+    comp = {
+        "energy_cost": float(m["total_energy_cost"]),
+        "demand_penalty": float(m["demand_penalty"]),
+        "holding_penalty": float(
+            m["holding_minutes_total"] * IF_HOLDING_PENALTY_PER_MIN
+        ),
+        "empty_penalty": float(empty_minutes_total * MH_EMPTY_PENALTY_PER_MIN),
+        "low_level_min_penalty": float(low_minutes_total * MH_LOW_LEVEL_MINUTE_PENALTY),
+        "low_level_shape_penalty": float(m["mh_low_level_penalty"]),
+        "overflow_penalty": float(m["overflow_kg_total"] * OVERFLOW_PENALTY_PER_KG),
+        "unpoured_penalty": float(m["unpoured_batches_count"] * UNPOURED_BATCH_PENALTY),
+    }
+    return comp
+
+
+def _aggregate_obj1(components):
+    if OBJ1_AGGREGATION_MODE == "raw":
+        return float(sum(components.values()))
+
+    # normalized_weighted
+    weighted_sum = 0.0
+    for k, v in components.items():
+        ref = max(1e-9, float(OBJ1_COMPONENT_REFS.get(k, 1.0)))
+        w = float(OBJ1_COMPONENT_WEIGHTS.get(k, 1.0))
+        weighted_sum += w * (float(v) / ref)
+    return float(OBJ1_NORMALIZATION_SCALE * weighted_sum)
+
+
+def _violation_vector(m):
+    empty_total = float(m["mh_empty_minutes"]["A"] + m["mh_empty_minutes"]["B"])
+    low_total = float(m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"])
+    overflow_total = float(m["overflow_kg_total"])
+    # Guard against NaN/Inf/negative in any upstream metric.
+    if not np.isfinite(empty_total) or empty_total < 0.0:
+        empty_total = 0.0
+    if not np.isfinite(low_total) or low_total < 0.0:
+        low_total = 0.0
+    if not np.isfinite(overflow_total) or overflow_total < 0.0:
+        overflow_total = 0.0
+    return np.array(
+        [
+            overflow_total - MAX_OVERFLOW_KG_ALLOW,
+            empty_total - MAX_EMPTY_MIN_ALLOW,
+            low_total - MAX_LOW_LEVEL_MIN_ALLOW,
+        ],
+        dtype=float,
+    )
+
+
+class PolicyDuplicateElimination(ElementwiseDuplicateElimination):
+    def is_equal(self, a, b):
+        xa = a.get("X") if hasattr(a, "get") else a.X
+        xb = b.get("X") if hasattr(b, "get") else b.X
+        return _policy_cache_key(xa) == _policy_cache_key(xb)
+
+
+class StagnationEarlyStopCallback(Callback):
+    def __init__(self, patience_gens, delta_obj0=0.0, delta_obj1=0.0, delta_obj2=0.0):
+        super().__init__()
+        self.patience_gens = int(patience_gens)
+        self.delta_obj0 = float(delta_obj0)
+        self.delta_obj1 = float(delta_obj1)
+        self.delta_obj2 = float(delta_obj2)
+        self.best_obj0 = None
+        self.best_obj1 = None
+        self.best_obj2 = None
+        self.stagnant_gens = 0
+
+    def notify(self, algorithm):
+        F = algorithm.pop.get("F")
+        if F is None or len(F) == 0:
+            return
+
+        cur_obj0 = float(np.min(F[:, 0]))
+        cur_obj1 = float(np.min(F[:, 1]))
+        cur_obj2 = float(np.min(F[:, 2]))
+
+        if self.best_obj0 is None:
+            self.best_obj0 = cur_obj0
+            self.best_obj1 = cur_obj1
+            self.best_obj2 = cur_obj2
+            self.stagnant_gens = 0
+            return
+
+        improved_obj0 = cur_obj0 < (self.best_obj0 - self.delta_obj0)
+        improved_obj1 = cur_obj1 < (self.best_obj1 - self.delta_obj1)
+        improved_obj2 = cur_obj2 < (self.best_obj2 - self.delta_obj2)
+
+        if improved_obj0 or improved_obj1 or improved_obj2:
+            self.best_obj0 = min(self.best_obj0, cur_obj0)
+            self.best_obj1 = min(self.best_obj1, cur_obj1)
+            self.best_obj2 = min(self.best_obj2, cur_obj2)
+            self.stagnant_gens = 0
+        else:
+            self.stagnant_gens += 1
+
+        if self.stagnant_gens >= self.patience_gens:
+            print(
+                f"Early stop: no objective improvement in {self.stagnant_gens} generations."
+            )
+            algorithm.termination.force_termination = True
+
+
+def _build_policy_state(
+    policy, mh_levels, baseline_kw_t, if_kw_now, queue_len, price_t
+):
+    eta_a = mh_levels["A"] / max(MH_CONSUMPTION_RATE_KG_PER_MIN["A"], 1e-9)
+    eta_b = mh_levels["B"] / max(MH_CONSUMPTION_RATE_KG_PER_MIN["B"], 1e-9)
+    eta_min = min(eta_a, eta_b)
+    lookahead_ref = max(10.0, float(policy["lookahead_min"]))
+    depletion_urgency = float(np.clip(1.0 - eta_min / lookahead_ref, 0.0, 1.0))
+
+    avg_level_frac = 0.5 * (
+        mh_levels["A"] / max(MH_MAX_CAPACITY_KG["A"], 1e-9)
+        + mh_levels["B"] / max(MH_MAX_CAPACITY_KG["B"], 1e-9)
+    )
+    trigger_hit = float(
+        (mh_levels["A"] <= policy["L_trigger_A"])
+        or (mh_levels["B"] <= policy["L_trigger_B"])
+    )
+    queue_pressure = float(min(2.0, queue_len / 2.0))
+    projected_no_new = baseline_kw_t + if_kw_now
+    margin_kw = CONTRACT_DEMAND_KW - projected_no_new
+    margin_ratio = float(np.clip(margin_kw / max(CONTRACT_DEMAND_KW, 1e-9), -1.0, 1.0))
+    price_norm = float(
+        np.clip(
+            (price_t - np.min(TOU_PRICE_BY_HOUR)) / (np.ptp(TOU_PRICE_BY_HOUR) + 1e-9),
+            0.0,
+            1.0,
+        )
+    )
+    return {
+        "eta_min": eta_min,
+        "depletion_urgency": depletion_urgency,
+        "avg_level_frac": avg_level_frac,
+        "trigger_hit": trigger_hit,
+        "queue_pressure": queue_pressure,
+        "margin_kw": margin_kw,
+        "margin_ratio": margin_ratio,
+        "price_norm": price_norm,
+    }
+
+
+def _start_score(policy, state):
+    shortage_term = (1.0 - state["avg_level_frac"]) * policy["wait_vs_rush"]
+    score = policy["start_score_bias"]
+    score += policy["start_w_depletion"] * state["depletion_urgency"]
+    score += policy["start_w_queue"] * state["queue_pressure"]
+    score += 0.8 * state["trigger_hit"]
+    score += 0.7 * shortage_term
+    score -= policy["start_w_peak"] * max(0.0, -state["margin_ratio"])
+    score -= policy["tou_weight"] * state["price_norm"] * (1.0 - policy["wait_vs_rush"])
+    return float(score)
+
+
+def _dynamic_min_start_gap(policy, state):
+    peak_risk = max(0.0, -state["margin_ratio"])
+    return float(
+        policy["min_start_gap_min"] + policy["gap_peak_coeff"] * peak_risk * 60.0
+    )
+
+
+def _parallel_allowed(policy, state, start_score):
+    return bool(
+        ALLOW_PARALLEL_IF
+        and state["margin_kw"] >= policy["parallel_open_margin_kw"]
+        and start_score >= policy["parallel_score_bias"]
+    )
+
+
+def _select_if_power(policy, mh_levels, baseline_kw_t, if_kw_now, minute_idx):
     level_min = min(mh_levels["A"], mh_levels["B"])
     crit_level = min(policy["level_crit_A"], policy["level_crit_B"])
     top_level = min(MH_MAX_CAPACITY_KG["A"], MH_MAX_CAPACITY_KG["B"])
     mid_level = crit_level + (top_level - crit_level) * policy["level_mid_frac"]
 
+    # urgency from M&H level
     if level_min <= crit_level:
-        desired_power = 500.0
+        urgency_pref = 2
     elif level_min <= mid_level:
-        desired_power = 475.0
+        urgency_pref = 1
     else:
-        desired_power = 450.0
+        urgency_pref = 0
 
-    demand_guard = CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
-    weighted_guard = demand_guard - policy["peak_avoid_weight"] * 100.0
-    if baseline_kw_t + if_kw_now + desired_power > weighted_guard:
-        if desired_power == 500.0:
-            desired_power = 475.0
-        elif desired_power == 475.0:
-            desired_power = 450.0
+    # evaluate options with peak + TOU aware score
+    best_p = 450.0
+    best_score = float("inf")
+    price_t = _hour_price(minute_idx)
+    soft_guard = CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
+    wait_weight = 1.0 - policy["wait_vs_rush"]
+    peak_weight = policy["peak_avoid_weight"]
 
-    return desired_power
+    for idx, p in enumerate(IF_POWER_OPTIONS):
+        # Encourage high power when urgent, low power when not urgent.
+        urgency_score = abs(idx - urgency_pref) * (
+            120.0 + 220.0 * policy["wait_vs_rush"]
+        )
+        projected_kw = baseline_kw_t + if_kw_now + p
+        soft_peak = max(0.0, projected_kw - soft_guard)
+        peak_score = peak_weight * (soft_peak**2) / 50.0
+        tou_score = wait_weight * policy["tou_weight"] * price_t * (p / 60.0)
+        score = urgency_score + peak_score + tou_score
+        if score < best_score:
+            best_score = score
+            best_p = p
+    return best_p
 
 
-def _should_start_batch(policy, mh_levels):
-    forecast_a = (
-        mh_levels["A"] - MH_CONSUMPTION_RATE_KG_PER_MIN["A"] * policy["lookahead_min"]
+def _select_if_furnace(
+    policy, idle_furnaces, current_level, t, last_if_release_time, furnace_use_count
+):
+    if len(idle_furnaces) <= 1:
+        return idle_furnaces[0]
+
+    best_f = idle_furnaces[0]
+    best_score = float("inf")
+    for f in idle_furnaces:
+        # map furnace to associated holding-furnace risk proxy
+        assoc = "A" if f == 0 else "B"
+        level = current_level[assoc]
+        deficit = max(0.0, MH_MIN_OPERATIONAL_LEVEL_KG[assoc] - level)
+        low_risk = deficit / max(MH_MIN_OPERATIONAL_LEVEL_KG[assoc], 1e-9)
+
+        last_release = last_if_release_time.get(f)
+        cooldown_gap = 0.0 if last_release is None else max(0.0, t - last_release)
+        setup_risk = 0.0 if cooldown_gap < COLD_START_GAP_THRESHOLD_MIN else 1.0
+
+        # furnace bias: +1 prefers B (f=1), -1 prefers A (f=0)
+        bias_term = -policy["furnace_bias"] if f == 1 else policy["furnace_bias"]
+        count_a = furnace_use_count.get(0, 0)
+        count_b = furnace_use_count.get(1, 0)
+        imbalance = (count_b - count_a) if f == 1 else (count_a - count_b)
+        balance_term = (
+            policy["balance_weight"] * imbalance / max(1, count_a + count_b + 1)
+        )
+
+        score = (
+            2.8 * low_risk
+            + policy["coldstart_weight"] * setup_risk
+            + 0.8 * bias_term
+            + balance_term
+        )
+        if score < best_score:
+            best_score = score
+            best_f = f
+    return best_f
+
+
+def _total_idle_minutes_from_intervals(intervals):
+    if not intervals:
+        return 0.0
+    items = sorted(intervals, key=lambda w: w[0])
+    merged = [[items[0][0], items[0][1]]]
+    for s, e in items[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    idle = 0.0
+    for i in range(1, len(merged)):
+        idle += max(0.0, merged[i][0] - merged[i - 1][1])
+    return idle
+
+
+def quick_capacity_sanity_check():
+    """Coarse feasibility check before running GA/NSGA-II."""
+    daily_demand_kg = (
+        MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
+    ) * SIM_DURATION_MIN
+    initial_inventory_kg = MH_INITIAL_LEVEL_KG["A"] + MH_INITIAL_LEVEL_KG["B"]
+    required_from_if_kg = max(0.0, daily_demand_kg - initial_inventory_kg)
+
+    min_melt_duration = min(v["duration_min_hot"] for v in POWER_PROFILE.values())
+    available_if = int(USE_FURNACE_A) + int(USE_FURNACE_B)
+    parallel_if_slots = available_if if ALLOW_PARALLEL_IF else min(1, available_if)
+
+    batches_time_limit = int(
+        (SIM_DURATION_MIN / max(min_melt_duration, 1e-9)) * parallel_if_slots
     )
-    forecast_b = (
-        mh_levels["B"] - MH_CONSUMPTION_RATE_KG_PER_MIN["B"] * policy["lookahead_min"]
+    supply_time_limit_kg = batches_time_limit * IF_BATCH_OUTPUT_KG
+
+    # Receiver-side bottleneck: need 500 kg free capacity before each pour.
+    total_consume_rate = (
+        MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
     )
-    return forecast_a <= policy["L_trigger_A"] or forecast_b <= policy["L_trigger_B"]
+    minutes_to_free_one_batch = IF_BATCH_OUTPUT_KG / max(total_consume_rate, 1e-9)
+    batches_receive_limit = int(SIM_DURATION_MIN / max(minutes_to_free_one_batch, 1e-9))
+    supply_receive_limit_kg = batches_receive_limit * IF_BATCH_OUTPUT_KG
+
+    max_batches_current_config = int(NUM_BATCHES)
+    supply_config_cap_kg = max_batches_current_config * IF_BATCH_OUTPUT_KG
+    effective_max_batches = min(
+        max_batches_current_config, batches_time_limit, batches_receive_limit
+    )
+    effective_max_supply_kg = effective_max_batches * IF_BATCH_OUTPUT_KG
+    effective_total_available_kg = initial_inventory_kg + effective_max_supply_kg
+    daily_shortfall_kg = max(0.0, daily_demand_kg - effective_total_available_kg)
+
+    min_batches_required = int(np.ceil(required_from_if_kg / IF_BATCH_OUTPUT_KG))
+    overtime_needed_min = max(
+        0.0, min_batches_required * min_melt_duration - SIM_DURATION_MIN
+    )
+
+    report = {
+        "daily_demand_kg": float(daily_demand_kg),
+        "initial_inventory_kg": float(initial_inventory_kg),
+        "required_from_if_kg": float(required_from_if_kg),
+        "config_num_batches": int(max_batches_current_config),
+        "config_supply_cap_kg": float(supply_config_cap_kg),
+        "time_limit_batches": int(batches_time_limit),
+        "receive_limit_batches": int(batches_receive_limit),
+        "effective_max_batches": int(effective_max_batches),
+        "effective_max_supply_kg": float(effective_max_supply_kg),
+        "effective_total_available_kg": float(effective_total_available_kg),
+        "daily_shortfall_kg": float(daily_shortfall_kg),
+        "min_batches_required": int(min_batches_required),
+        "min_overtime_needed_min": float(overtime_needed_min),
+        "is_feasible_coarse": bool(daily_shortfall_kg <= 1e-9),
+    }
+    return report
+
+
+def print_capacity_sanity_report(report):
+    print("\n=== Capacity Sanity Check (coarse) ===")
+    print("Demand/day (kg):", round(report["daily_demand_kg"], 2))
+    print("Initial inventory (kg):", round(report["initial_inventory_kg"], 2))
+    print("Required from IF (kg):", round(report["required_from_if_kg"], 2))
+    print(
+        "Config batches/cap (kg):",
+        report["config_num_batches"],
+        "/",
+        round(report["config_supply_cap_kg"], 2),
+    )
+    print(
+        "Batch limits [time, receive, effective]:",
+        report["time_limit_batches"],
+        report["receive_limit_batches"],
+        report["effective_max_batches"],
+    )
+    print("Effective IF supply (kg):", round(report["effective_max_supply_kg"], 2))
+    print(
+        "Effective total available (kg):",
+        round(report["effective_total_available_kg"], 2),
+    )
+    print("Daily shortfall (kg):", round(report["daily_shortfall_kg"], 2))
+    print(
+        "Min batches required / min overtime:",
+        report["min_batches_required"],
+        "batches /",
+        round(report["min_overtime_needed_min"], 1),
+        "min",
+    )
+    print("Coarse feasibility:", "PASS" if report["is_feasible_coarse"] else "FAIL")
 
 
 def simulate_policy_day(policy_params):
     policy = _decode_policy_vector(policy_params)
-
     baseline_kw = _build_baseline_load_kw(SIM_DURATION_MIN)
-    if_kw_series = np.zeros(SIM_DURATION_MIN)
-    melt_kw_series = np.zeros(SIM_DURATION_MIN)
-    reheat_kw_series = np.zeros(SIM_DURATION_MIN)
-    total_plant_kw = np.zeros(SIM_DURATION_MIN)
+
+    if_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
+    melt_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
+    reheat_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
+    total_plant_kw = np.zeros(SIM_DURATION_MIN, dtype=float)
+    energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)
 
     mh_levels_series = {
-        "A": np.zeros(SIM_DURATION_MIN),
-        "B": np.zeros(SIM_DURATION_MIN),
+        "A": np.zeros(SIM_DURATION_MIN, dtype=float),
+        "B": np.zeros(SIM_DURATION_MIN, dtype=float),
     }
-
     current_level = MH_INITIAL_LEVEL_KG.copy()
     downtime_remaining = {"A": 0, "B": 0}
 
@@ -179,58 +696,55 @@ def simulate_policy_day(policy_params):
     batches = {}
     batch_id_counter = 0
     ready_to_pour_queue = []
+    actual_pour_events = []
 
     total_if_holding_minutes = 0
-    overflow_kg_total = 0.0
     mh_empty_minutes = {"A": 0, "B": 0}
     mh_low_level_minutes = {"A": 0, "B": 0}
     mh_low_level_penalty = 0.0
     min_level_reached = {"A": current_level["A"], "B": current_level["B"]}
 
-    actual_pour_events = []
+    overflow_kg_total = 0.0
     unpoured_batches = []
-
     last_if_release_time = {0: None, 1: None}
+    furnace_use_count = {0: 0, 1: 0}
+    if_active_intervals = []
+    last_start_min = -1_000_000
+    parallel_peak_minutes = 0.0
 
     for t in range(SIM_DURATION_MIN):
-        # 1) Move melting -> holding as soon as melt duration is complete.
+        # 1) progress melting -> holding
         for f_idx in available_if_furnaces:
-            state = if_states[f_idx]
-            if not state["active"]:
-                continue
-            if state["status"] == "melting":
-                b_id = state["batch_id"]
+            st = if_states[f_idx]
+            if st["active"] and st["status"] == "melting":
+                b_id = st["batch_id"]
                 if t >= batches[b_id]["melt_finish_min"]:
-                    state["status"] = "holding"
+                    st["status"] = "holding"
                     batches[b_id]["status"] = "holding"
                     ready_to_pour_queue.append(b_id)
 
-        # 2) Holding minute accumulation (for ready queue).
-        total_if_holding_minutes += len(ready_to_pour_queue)
-
-        # 3) Pour as early as possible (can pour multiple batches in same minute).
+        # 2) pour with feasibility repair (no overflow)
         keep_pouring = True
         while keep_pouring and ready_to_pour_queue:
             keep_pouring = False
             b_id = ready_to_pour_queue[0]
-            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
-            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
-            total_available = available_capacity_A + available_capacity_B
 
-            if total_available <= 0:
+            # Respect post-pour downtime for receiving in M&H.
+            if downtime_remaining["A"] > 0 or downtime_remaining["B"] > 0:
+                break
+
+            available_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
+            available_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
+            total_available = available_A + available_B
+            if total_available < IF_BATCH_OUTPUT_KG:
                 break
 
             remaining = IF_BATCH_OUTPUT_KG
             poured_A = 0.0
             poured_B = 0.0
-
-            if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A":
-                fill_order = ["A", "B"]
-            elif PREFERRED_MH_FURNACE_TO_FILL_FIRST == "B":
-                fill_order = ["B", "A"]
-            else:
-                fill_order = ["A", "B"]
-
+            fill_order = (
+                ["A", "B"] if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A" else ["B", "A"]
+            )
             for f_id in fill_order:
                 if remaining <= 0:
                     break
@@ -243,115 +757,145 @@ def simulate_policy_day(policy_params):
                         poured_B += put
                     remaining -= put
 
-            overflow_kg = max(0.0, remaining)
-            overflow_kg_total += overflow_kg
+            if remaining > 1e-9:
+                raise RuntimeError(
+                    "Repair failed: attempted pour with insufficient capacity."
+                )
 
-            current_level["A"] = min(
-                current_level["A"] + poured_A, MH_MAX_CAPACITY_KG["A"]
+            current_level["A"] = np.clip(
+                current_level["A"] + poured_A, 0.0, MH_MAX_CAPACITY_KG["A"]
             )
-            current_level["B"] = min(
-                current_level["B"] + poured_B, MH_MAX_CAPACITY_KG["B"]
+            current_level["B"] = np.clip(
+                current_level["B"] + poured_B, 0.0, MH_MAX_CAPACITY_KG["B"]
             )
 
-            # Downtime from pour
             downtime_remaining["A"] = POST_POUR_DOWNTIME_MIN
             downtime_remaining["B"] = POST_POUR_DOWNTIME_MIN
 
             batches[b_id]["poured_A_kg"] = poured_A
             batches[b_id]["poured_B_kg"] = poured_B
-            batches[b_id]["overflow_kg"] = overflow_kg
+            batches[b_id]["overflow_kg"] = 0.0
             batches[b_id]["pour_min"] = t
             batches[b_id]["status"] = "poured"
 
             f_idx = batches[b_id]["if_furnace"]
             if_states[f_idx] = {"active": False, "status": "idle", "batch_id": None}
             last_if_release_time[f_idx] = t
-
             actual_pour_events.append((t, b_id))
             ready_to_pour_queue.pop(0)
             keep_pouring = True
 
-        # 4) Start new batches by policy.
-        if batch_id_counter < NUM_BATCHES and _should_start_batch(
-            policy, current_level
-        ):
+        # 3) holding minutes only for batches that still could not pour.
+        total_if_holding_minutes += len(ready_to_pour_queue)
+
+        # 4) policy start decision (score-based + dynamic spacing + demand-gating)
+        if batch_id_counter < NUM_BATCHES:
             any_if_active = any(if_states[f]["active"] for f in available_if_furnaces)
-            can_start_if = ALLOW_PARALLEL_IF or (not any_if_active)
-            if can_start_if:
-                idle_furnaces = [
-                    f for f in available_if_furnaces if not if_states[f]["active"]
-                ]
-                if idle_furnaces:
-                    chosen_if = idle_furnaces[0]
-                    gap = (
-                        None
-                        if last_if_release_time[chosen_if] is None
-                        else t - last_if_release_time[chosen_if]
-                    )
-                    is_cold_start = gap is None or gap >= COLD_START_GAP_THRESHOLD_MIN
+            idle = [f for f in available_if_furnaces if not if_states[f]["active"]]
+            if idle:
+                if_kw_now = 0.0
+                for f in available_if_furnaces:
+                    st = if_states[f]
+                    if st["active"]:
+                        if_kw_now += batches[st["batch_id"]]["power_kw"]
+                state = _build_policy_state(
+                    policy,
+                    current_level,
+                    baseline_kw[t],
+                    if_kw_now,
+                    len(ready_to_pour_queue),
+                    _hour_price(t),
+                )
+                start_score = _start_score(policy, state)
+                min_gap_now = _dynamic_min_start_gap(policy, state)
+                gap_ok = (t - last_start_min) >= min_gap_now
+                can_parallel_now = _parallel_allowed(policy, state, start_score)
+                if (not any_if_active) or can_parallel_now:
+                    if start_score >= 0.0 and gap_ok:
+                        chosen_if = _select_if_furnace(
+                            policy,
+                            idle,
+                            current_level,
+                            t,
+                            last_if_release_time,
+                            furnace_use_count,
+                        )
 
-                    if_kw_now = 0.0
-                    for f in available_if_furnaces:
-                        st = if_states[f]
-                        if st["active"]:
-                            b = batches[st["batch_id"]]
-                            if_kw_now += b["power_kw"]
-                    selected_power = _select_if_power(
-                        policy, current_level, baseline_kw[t], if_kw_now
-                    )
-                    profile = _compute_batch_profile(selected_power, is_cold_start)
-                    duration = max(1, int(round(profile["duration_min"])))
-                    melt_finish = min(SIM_DURATION_MIN, t + duration)
+                        gap = (
+                            None
+                            if last_if_release_time[chosen_if] is None
+                            else t - last_if_release_time[chosen_if]
+                        )
+                        is_cold_start = (
+                            gap is None or gap >= COLD_START_GAP_THRESHOLD_MIN
+                        )
 
-                    b_id = batch_id_counter + 1
-                    batches[b_id] = {
-                        "batch_id": b_id,
-                        "if_furnace": chosen_if,
-                        "start_min": t,
-                        "melt_finish_min": melt_finish,
-                        "pour_min": None,
-                        "power_kw": selected_power,
-                        "is_cold_start": is_cold_start,
-                        "status": "melting",
-                    }
+                        selected_power = _select_if_power(
+                            policy, current_level, baseline_kw[t], if_kw_now, t
+                        )
+                        projected_total = baseline_kw[t] + if_kw_now + selected_power
+                        hard_guard = CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
+                        shortage_override = state["depletion_urgency"] >= 0.92
+                        if projected_total <= hard_guard or shortage_override:
+                            profile = _compute_batch_profile(
+                                selected_power, is_cold_start, chosen_if
+                            )
+                            duration = int(round(profile["duration_min"]))
+                            duration = max(1, duration)
+                            melt_finish = min(SIM_DURATION_MIN, t + duration)
 
-                    if_states[chosen_if] = {
-                        "active": True,
-                        "status": "melting",
-                        "batch_id": b_id,
-                    }
-                    batch_id_counter += 1
+                            b_id = batch_id_counter + 1
+                            batches[b_id] = {
+                                "batch_id": b_id,
+                                "if_furnace": chosen_if,
+                                "start_min": t,
+                                "melt_finish_min": melt_finish,
+                                "pour_min": None,
+                                "power_kw": selected_power,
+                                "is_cold_start": is_cold_start,
+                                "status": "melting",
+                                "energy_kwh_profile": profile["energy_kwh"],
+                            }
+                            if_states[chosen_if] = {
+                                "active": True,
+                                "status": "melting",
+                                "batch_id": b_id,
+                            }
+                            furnace_use_count[chosen_if] += 1
+                            batch_id_counter += 1
+                            last_start_min = t
 
-        # 5) IF load per minute from state.
+        # 5) IF load minute
         minute_if_kw = 0.0
         minute_melt_kw = 0.0
         minute_reheat_kw = 0.0
         for f_idx in available_if_furnaces:
-            state = if_states[f_idx]
-            if not state["active"]:
+            st = if_states[f_idx]
+            if not st["active"]:
                 continue
-            b = batches[state["batch_id"]]
+            b = batches[st["batch_id"]]
             p_kw = b["power_kw"]
-            if state["status"] == "melting":
+            if st["status"] == "melting":
                 minute_melt_kw += p_kw
                 minute_if_kw += p_kw
-            elif state["status"] == "holding":
+            elif st["status"] == "holding":
                 minute_reheat_kw += p_kw
                 minute_if_kw += p_kw
         if_kw_series[t] = minute_if_kw
         melt_kw_series[t] = minute_melt_kw
         reheat_kw_series[t] = minute_reheat_kw
 
-        # 6) M&H consumption and penalties.
+        if minute_if_kw > 0:
+            if_active_intervals.append((t, t + 1))
+
+        # 6) M&H consumption + continuity penalties
         for f_id in ["A", "B"]:
-            if downtime_remaining[f_id] > 0:
-                downtime_remaining[f_id] -= 1
-            else:
-                if current_level[f_id] > MH_EMPTY_THRESHOLD_KG:
-                    current_level[f_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[f_id]
-                    current_level[f_id] = max(current_level[f_id], 0.0)
+            if current_level[f_id] > MH_EMPTY_THRESHOLD_KG:
+                current_level[f_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[f_id]
+                current_level[f_id] = max(current_level[f_id], 0.0)
 
             min_level_reached[f_id] = min(min_level_reached[f_id], current_level[f_id])
+
             if current_level[f_id] <= MH_EMPTY_THRESHOLD_KG:
                 mh_empty_minutes[f_id] += 1
             elif current_level[f_id] < MH_MIN_OPERATIONAL_LEVEL_KG[f_id]:
@@ -362,9 +906,21 @@ def simulate_policy_day(policy_params):
                     1.0 + LOW_LEVEL_NONLINEAR_FACTOR * (deficit_ratio**2)
                 )
 
+            current_level[f_id] = np.clip(
+                current_level[f_id], 0.0, MH_MAX_CAPACITY_KG[f_id]
+            )
             mh_levels_series[f_id][t] = current_level[f_id]
 
-        total_plant_kw[t] = baseline_kw[t] + if_kw_series[t]
+            if downtime_remaining[f_id] > 0:
+                downtime_remaining[f_id] -= 1
+
+        total_plant_kw[t] = baseline_kw[t] + minute_if_kw
+        energy_cost_series[t] = (minute_if_kw / 60.0) * _hour_price(t)
+        active_if_count = sum(
+            1 for f in available_if_furnaces if if_states[f]["active"]
+        )
+        if active_if_count >= 2 and total_plant_kw[t] > (0.95 * CONTRACT_DEMAND_KW):
+            parallel_peak_minutes += 1.0
 
     # finalize unpoured batches
     for b_id, b in batches.items():
@@ -376,14 +932,21 @@ def simulate_policy_day(policy_params):
             b["overflow_kg"] = IF_BATCH_OUTPUT_KG
             unpoured_batches.append(b_id)
 
-    # derived metrics
     total_melt_kwh = float(np.sum(melt_kw_series) / 60.0)
     total_reheat_kwh = float(np.sum(reheat_kw_series) / 60.0)
     total_if_kwh = float(np.sum(if_kw_series) / 60.0)
+    total_energy_cost = float(np.sum(energy_cost_series))
 
     peak_kw = float(np.max(total_plant_kw)) if len(total_plant_kw) else 0.0
     demand_excess = max(0.0, peak_kw - CONTRACT_DEMAND_KW)
-    demand_penalty = demand_excess * DEMAND_CHARGE_RATE_PER_KW
+    soft_zone = max(0.0, peak_kw - CONTRACT_DEMAND_KW * DEMAND_SOFT_ZONE_RATIO)
+    demand_penalty = (
+        DEMAND_CHARGE_RATE_PER_KW * demand_excess
+        + 0.25
+        * DEMAND_CHARGE_RATE_PER_KW
+        * (soft_zone**2)
+        / max(CONTRACT_DEMAND_KW, 1.0)
+    )
 
     if actual_pour_events:
         makespan_minutes = float(max(t for t, _ in actual_pour_events))
@@ -408,6 +971,8 @@ def simulate_policy_day(policy_params):
             }
         )
 
+    total_if_idle_minutes = _total_idle_minutes_from_intervals(if_active_intervals)
+
     return {
         "policy": policy,
         "schedule": schedule,
@@ -428,6 +993,7 @@ def simulate_policy_day(policy_params):
             "melt_kwh": total_melt_kwh,
             "reheat_kwh": total_reheat_kwh,
             "total_if_kwh": total_if_kwh,
+            "total_energy_cost": total_energy_cost,
             "peak_kw": peak_kw,
             "demand_excess_kw": demand_excess,
             "demand_penalty": demand_penalty,
@@ -439,6 +1005,10 @@ def simulate_policy_day(policy_params):
             "unpoured_batches_count": len(unpoured_batches),
             "makespan_minutes": makespan_minutes,
             "min_level_reached": min_level_reached,
+            "if_use_count_A": furnace_use_count[0],
+            "if_use_count_B": furnace_use_count[1],
+            "if_idle_minutes_total": total_if_idle_minutes,
+            "parallel_peak_minutes": float(parallel_peak_minutes),
         },
     }
 
@@ -447,29 +1017,90 @@ def evaluate_policy(policy_params):
     sim = simulate_policy_day(policy_params)
     m = sim["metrics"]
 
-    service_penalty = 0.0
-    service_penalty += m["holding_minutes_total"] * IF_HOLDING_PENALTY_PER_MIN
-    service_penalty += (
-        m["mh_empty_minutes"]["A"] + m["mh_empty_minutes"]["B"]
-    ) * MH_EMPTY_PENALTY_PER_MIN
-    service_penalty += (
-        m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"]
-    ) * MH_LOW_LEVEL_MINUTE_PENALTY
-    service_penalty += m["overflow_kg_total"] * OVERFLOW_PENALTY_PER_KG
-    service_penalty += m["unpoured_batches_count"] * UNPOURED_BATCH_PENALTY
-    service_penalty += m["mh_low_level_penalty"]
+    comp = _compute_obj1_components(m)
+    comp_for_obj = dict(comp)
+    if USE_CONSTRAINT_HANDLING:
+        # Avoid double counting: enforce these in constraints instead of penalties.
+        comp_for_obj["overflow_penalty"] = 0.0
+        comp_for_obj["empty_penalty"] = 0.0
+        comp_for_obj["low_level_min_penalty"] = 0.0
 
-    obj1 = (
-        m["total_if_kwh"] + ALPHA_DEMAND_EQUIV * m["demand_penalty"] + service_penalty
+    obj1 = _aggregate_obj1(comp_for_obj)
+    obj2 = float(m["makespan_minutes"])
+
+    raw_obj1_total = float(sum(comp.values()))
+    normalized_terms = {}
+    for k, v in comp.items():
+        ref = max(1e-9, float(OBJ1_COMPONENT_REFS.get(k, 1.0)))
+        w = float(OBJ1_COMPONENT_WEIGHTS.get(k, 1.0))
+        normalized_terms[k] = w * (float(v) / ref)
+    normalized_sum = float(sum(normalized_terms.values()))
+    contribution_pct = {}
+    if raw_obj1_total > 1e-9:
+        for k, v in comp.items():
+            contribution_pct[k] = 100.0 * float(v) / raw_obj1_total
+    else:
+        for k in comp:
+            contribution_pct[k] = 0.0
+
+    violation_g = _violation_vector(m)
+    overflow_violation = float(max(0.0, violation_g[0]))
+    empty_violation = float(max(0.0, violation_g[1]))
+    low_violation = float(max(0.0, violation_g[2]))
+    parallel_peak_minutes = float(max(0.0, m.get("parallel_peak_minutes", 0.0)))
+    parallel_peak_violation = max(
+        0.0, parallel_peak_minutes - MAX_PARALLEL_PEAK_MIN_ALLOW
     )
-    obj2 = m["makespan_minutes"]
+    total_violation = float(
+        np.sum(
+            [
+                overflow_violation,
+                empty_violation,
+                low_violation,
+                parallel_peak_violation,
+            ]
+        )
+    )
+    obj0 = (
+        OBJ0_WEIGHTS["overflow_kg"] * overflow_violation
+        + OBJ0_WEIGHTS["empty_min"] * empty_violation
+        + OBJ0_WEIGHTS["low_level_min"] * low_violation
+        + OBJ0_WEIGHTS["parallel_peak_min"] * parallel_peak_violation
+    )
 
     cost_components = {
+        "obj0_violation": obj0,
         "obj1_total": obj1,
+        "obj1_raw_total": raw_obj1_total,
+        "obj1_mode": OBJ1_AGGREGATION_MODE,
+        "obj1_normalized_sum": normalized_sum,
         "obj2_makespan": obj2,
+        "comp_energy_cost": comp["energy_cost"],
+        "comp_demand_penalty": comp["demand_penalty"],
+        "comp_holding_penalty": comp["holding_penalty"],
+        "comp_empty_penalty": comp["empty_penalty"],
+        "comp_low_level_min_penalty": comp["low_level_min_penalty"],
+        "comp_low_level_shape_penalty": comp["low_level_shape_penalty"],
+        "comp_overflow_penalty": comp["overflow_penalty"],
+        "comp_unpoured_penalty": comp["unpoured_penalty"],
+        "pct_energy_cost": contribution_pct["energy_cost"],
+        "pct_demand_penalty": contribution_pct["demand_penalty"],
+        "pct_holding_penalty": contribution_pct["holding_penalty"],
+        "pct_empty_penalty": contribution_pct["empty_penalty"],
+        "pct_low_level_min_penalty": contribution_pct["low_level_min_penalty"],
+        "pct_low_level_shape_penalty": contribution_pct["low_level_shape_penalty"],
+        "pct_overflow_penalty": contribution_pct["overflow_penalty"],
+        "pct_unpoured_penalty": contribution_pct["unpoured_penalty"],
+        "violation_overflow": overflow_violation,
+        "violation_empty_min": empty_violation,
+        "violation_low_min": low_violation,
+        "parallel_peak_minutes": parallel_peak_minutes,
+        "violation_parallel_peak_min": float(parallel_peak_violation),
+        "total_violation": total_violation,
         "total_if_kwh": m["total_if_kwh"],
         "melt_kwh": m["melt_kwh"],
         "reheat_kwh": m["reheat_kwh"],
+        "total_energy_cost": m["total_energy_cost"],
         "peak_kw": m["peak_kw"],
         "demand_excess_kw": m["demand_excess_kw"],
         "demand_penalty": m["demand_penalty"],
@@ -480,6 +1111,9 @@ def evaluate_policy(policy_params):
         "mh_low_level_penalty": m["mh_low_level_penalty"],
         "overflow_kg_total": m["overflow_kg_total"],
         "holding_minutes_total": m["holding_minutes_total"],
+        "if_idle_minutes_total": m["if_idle_minutes_total"],
+        "if_use_count_A": m["if_use_count_A"],
+        "if_use_count_B": m["if_use_count_B"],
         "unpoured_batches_count": m["unpoured_batches_count"],
         "makespan_minutes": m["makespan_minutes"],
         "min_level_A": m["min_level_reached"]["A"],
@@ -492,43 +1126,109 @@ def evaluate_policy(policy_params):
         "if_kw": sim["if_kw"],
         "total_plant_kw": sim["total_plant_kw"],
     }
-    return obj1, obj2, cost_components
+    return obj0, obj1, obj2, cost_components
 
 
 class PolicyProblem(Problem):
     def __init__(self):
-        # [triggerA, triggerB, lookahead, critA, critB, mid_frac, demand_headroom, peak_weight]
-        xl = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=float)
-        xu = np.array(
+        # [trigA_frac, trigB_frac, lookahead_norm, critA_frac, critB_frac, mid_frac,
+        #  headroom_norm, peak_weight, furnace_bias, wait_vs_rush,
+        #  start_bias, w_dep, w_queue, w_peak, min_gap_norm, gap_peak_coeff,
+        #  parallel_margin_norm, parallel_bias, coldstart_w, tou_w, balance_w]
+        xl = np.array(
             [
-                MH_MAX_CAPACITY_KG["A"],
-                MH_MAX_CAPACITY_KG["B"],
-                180.0,
-                MH_MAX_CAPACITY_KG["A"],
-                MH_MAX_CAPACITY_KG["B"],
-                1.0,
-                500.0,
-                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                -1.0,
+                0.0,
+                -2.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                -2.0,
+                0.0,
+                0.0,
+                0.0,
             ],
             dtype=float,
         )
-        super().__init__(n_var=8, n_obj=2, n_constr=0, xl=xl, xu=xu)
+        xu = np.array(
+            [
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                1.0,
+                2.0,
+                4.0,
+                4.0,
+                4.0,
+                1.0,
+                3.0,
+                1.0,
+                2.0,
+                2.0,
+                2.0,
+                2.0,
+            ],
+            dtype=float,
+        )
+        n_constr = 1 if HARD_FORBID_OVERFLOW else (3 if USE_CONSTRAINT_HANDLING else 0)
+        super().__init__(n_var=21, n_obj=3, n_constr=n_constr, xl=xl, xu=xu)
 
     def _evaluate(self, X, out, *args, **kwargs):
         F = []
         details = []
+        generation_cache = {}
+        key_list = []
+        G = []
         for x in X:
-            key = tuple(np.round(np.asarray(x, dtype=float), 4))
-            cached = _EVAL_CACHE.get(key)
-            if cached is None:
-                o1, o2, c = evaluate_policy(x)
-                _EVAL_CACHE[key] = (o1, o2, c)
+            key = _policy_cache_key(x)
+            key_list.append(key)
+            cached = generation_cache.get(key)
+            if cached is not None:
+                o0, o1, o2, d = cached
+            elif DETERMINISTIC_SIMULATION:
+                cached = _EVAL_CACHE.get(key)
+                if cached is None:
+                    o0, o1, o2, d = evaluate_policy(x)
+                    _EVAL_CACHE[key] = (o0, o1, o2, d)
+                else:
+                    o0, o1, o2, d = cached
             else:
-                o1, o2, c = cached
-            F.append([o1, o2])
-            details.append(c)
+                # Keep caching disabled in stochastic mode to avoid bias.
+                o0, o1, o2, d = evaluate_policy(x)
+            generation_cache[key] = (o0, o1, o2, d)
+            F.append([o0, o1, o2])
+            details.append(d)
+            if HARD_FORBID_OVERFLOW:
+                G.append([d.get("violation_overflow", 0.0)])
+            elif USE_CONSTRAINT_HANDLING:
+                G.append(
+                    [
+                        d.get("violation_overflow", 0.0),
+                        d.get("violation_empty_min", 0.0),
+                        d.get("violation_low_min", 0.0),
+                    ]
+                )
 
         out["F"] = np.asarray(F, dtype=float)
+        if HARD_FORBID_OVERFLOW or USE_CONSTRAINT_HANDLING:
+            out["G"] = np.asarray(G, dtype=float)
         out["cost_details"] = details
         out["schedules"] = np.array([d["schedule"] for d in details], dtype=object)
 
@@ -536,8 +1236,22 @@ class PolicyProblem(Problem):
             unique = np.unique(np.round(out["F"], 2), axis=0).shape[0]
             f_min = np.min(out["F"], axis=0)
             f_max = np.max(out["F"], axis=0)
+            avg_peak = float(np.mean([d["peak_kw"] for d in details]))
+            avg_use_b = float(np.mean([d["if_use_count_B"] for d in details]))
+            unique_policy = len(set(key_list))
+            unique_x = np.unique(np.round(np.asarray(X, dtype=float), 4), axis=0).shape[
+                0
+            ]
             print("DEBUG unique F:", unique)
             print("DEBUG F min:", np.round(f_min, 2), "max:", np.round(f_max, 2))
+            print(
+                "DEBUG avg use_B / avg peak:",
+                round(avg_use_b, 3),
+                round(avg_peak, 3),
+            )
+            print(
+                "DEBUG unique policy keys:", unique_policy, "unique X(4dp):", unique_x
+            )
 
 
 def format_policy_breakdown(cost):
@@ -545,11 +1259,16 @@ def format_policy_breakdown(cost):
         return "No cost details available."
     lines = [
         "Cost Component Details:",
+        f"  Obj0 Violation            : {cost.get('obj0_violation', 0.0):.2f}",
         f"  Obj1 Total                : {cost.get('obj1_total', 0.0):.2f}",
+        f"  Obj1 Raw Sum              : {cost.get('obj1_raw_total', 0.0):.2f}",
+        f"  Obj1 Mode                 : {cost.get('obj1_mode', 'raw')}",
+        f"  Obj1 Normalized Sum       : {cost.get('obj1_normalized_sum', 0.0):.4f}",
         f"  Obj2 Makespan (min)       : {cost.get('obj2_makespan', 0.0):.2f}",
         f"  IF Total kWh              : {cost.get('total_if_kwh', 0.0):.2f}",
         f"    - Melt kWh              : {cost.get('melt_kwh', 0.0):.2f}",
         f"    - Reheat kWh            : {cost.get('reheat_kwh', 0.0):.2f}",
+        f"  Energy Cost (TOU)         : {cost.get('total_energy_cost', 0.0):.2f}",
         f"  Peak kW                   : {cost.get('peak_kw', 0.0):.2f}",
         f"  Demand Excess kW          : {cost.get('demand_excess_kw', 0.0):.2f}",
         f"  Demand Penalty            : {cost.get('demand_penalty', 0.0):.2f}",
@@ -558,11 +1277,45 @@ def format_policy_breakdown(cost):
         f"  MH Low-Level Penalty      : {cost.get('mh_low_level_penalty', 0.0):.2f}",
         f"  Overflow kg (total)       : {cost.get('overflow_kg_total', 0.0):.2f}",
         f"  Holding Minutes (total)   : {cost.get('holding_minutes_total', 0.0):.2f}",
+        f"  IF Idle Minutes (system)  : {cost.get('if_idle_minutes_total', 0.0):.2f}",
+        f"  IF Use Count A/B          : {cost.get('if_use_count_A', 0)} / {cost.get('if_use_count_B', 0)}",
         f"  Unpoured Batches          : {cost.get('unpoured_batches_count', 0)}",
         f"  Makespan (min)            : {cost.get('makespan_minutes', 0.0):.2f}",
         f"  Min Level Reached A/B     : {cost.get('min_level_A', 0.0):.2f} / {cost.get('min_level_B', 0.0):.2f}",
+        "  Obj1 Decomposition (raw / %raw):",
+        f"    - Energy Cost           : {cost.get('comp_energy_cost', 0.0):.2f} / {cost.get('pct_energy_cost', 0.0):.2f}%",
+        f"    - Demand Penalty        : {cost.get('comp_demand_penalty', 0.0):.2f} / {cost.get('pct_demand_penalty', 0.0):.2f}%",
+        f"    - Holding Penalty       : {cost.get('comp_holding_penalty', 0.0):.2f} / {cost.get('pct_holding_penalty', 0.0):.2f}%",
+        f"    - Empty Penalty         : {cost.get('comp_empty_penalty', 0.0):.2f} / {cost.get('pct_empty_penalty', 0.0):.2f}%",
+        f"    - Low-Level Min Penalty : {cost.get('comp_low_level_min_penalty', 0.0):.2f} / {cost.get('pct_low_level_min_penalty', 0.0):.2f}%",
+        f"    - Low-Level Shape       : {cost.get('comp_low_level_shape_penalty', 0.0):.2f} / {cost.get('pct_low_level_shape_penalty', 0.0):.2f}%",
+        f"    - Overflow Penalty      : {cost.get('comp_overflow_penalty', 0.0):.2f} / {cost.get('pct_overflow_penalty', 0.0):.2f}%",
+        f"    - Unpoured Penalty      : {cost.get('comp_unpoured_penalty', 0.0):.2f} / {cost.get('pct_unpoured_penalty', 0.0):.2f}%",
+        "  Constraint Violations:",
+        f"    - Overflow (kg)         : {cost.get('violation_overflow', 0.0):.2f}",
+        f"    - Empty Minutes         : {cost.get('violation_empty_min', 0.0):.2f}",
+        f"    - Low-Level Minutes     : {cost.get('violation_low_min', 0.0):.2f}",
+        f"    - Parallel Peak Minutes : {cost.get('violation_parallel_peak_min', 0.0):.2f}",
+        f"    - Total Violation       : {cost.get('total_violation', 0.0):.2f}",
     ]
     return "\n".join(lines)
+
+
+class ViolationFirstProblem(Problem):
+    def __init__(self):
+        base = PolicyProblem()
+        super().__init__(n_var=base.n_var, n_obj=2, n_constr=0, xl=base.xl, xu=base.xu)
+
+    def _evaluate(self, X, out, *args, **kwargs):
+        F = []
+        details = []
+        for x in X:
+            _, _, o2, d = evaluate_policy(x)
+            v = d.get("total_violation", 0.0)
+            F.append([v, o2])
+            details.append(d)
+        out["F"] = np.asarray(F, dtype=float)
+        out["cost_details"] = details
 
 
 def plot_policy_result(cost_details, title_prefix="Policy Result"):
@@ -571,11 +1324,9 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     baseline_kw = cost_details.get("baseline_kw")
     if_kw = cost_details.get("if_kw")
     total_kw = cost_details.get("total_plant_kw")
-    batch_timing = cost_details.get("batch_timing", {})
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(18, 11), sharex=True)
 
-    # 1) IF Gantt
     for item in schedule:
         b_id = item["batch_id"]
         f_idx = item["if_furnace"]
@@ -616,7 +1367,6 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax1.grid(True, axis="y", alpha=0.4)
     ax1.set_title(f"{title_prefix} - IF Gantt (melt=gray, holding/reheat=red)")
 
-    # 2) M&H levels
     t_shifted = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN)
     if mh_levels is not None:
         for mh in ["A", "B"]:
@@ -638,7 +1388,6 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax2.grid(True, alpha=0.4)
     ax2.legend(loc="upper right")
 
-    # 3) Plant load
     if baseline_kw is not None and if_kw is not None and total_kw is not None:
         ax3.plot(
             t_shifted, baseline_kw, label="Baseline kW", color="gray", linewidth=1.5
@@ -662,13 +1411,6 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax3.grid(True, alpha=0.4)
     ax3.legend(loc="upper right")
 
-    for break_start, break_end in BREAK_TIMES_MINUTES:
-        bs = SHIFT_START + break_start
-        be = SHIFT_START + break_end
-        ax1.axvspan(bs, be, facecolor="grey", alpha=0.2, zorder=-1)
-        ax2.axvspan(bs, be, facecolor="grey", alpha=0.2, zorder=-1)
-        ax3.axvspan(bs, be, facecolor="grey", alpha=0.2, zorder=-1)
-
     xticks = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN + 1, 60)
     ax3.set_xticks(xticks)
     ax3.set_xticklabels([f"{(x // 60) % 24:02d}:{x % 60:02d}" for x in xticks])
@@ -689,20 +1431,56 @@ def _pick_display_population(result):
 
 def main():
     np.random.seed(42)
+    sanity = quick_capacity_sanity_check()
+    print_capacity_sanity_report(sanity)
 
     problem = PolicyProblem()
     sampling = FloatRandomSampling()
-    crossover = SBX(prob=0.9, eta=15)
-    mutation = PolynomialMutation(prob=1.0 / problem.n_var, eta=20)
+    # More exploratory variation while remaining stable for policy tuning.
+    crossover = SBX(prob=0.92, eta=8)
+    mutation = PolynomialMutation(prob=0.45, eta=8)
 
     algorithm = NSGA2(
-        pop_size=60,
+        pop_size=80,
         sampling=sampling,
         crossover=crossover,
         mutation=mutation,
-        eliminate_duplicates=True,
+        eliminate_duplicates=PolicyDuplicateElimination(),
     )
-    termination = get_termination("n_gen", 80)
+    termination = get_termination("n_gen", 100)
+    callback = StagnationEarlyStopCallback(
+        patience_gens=EARLY_STOP_PATIENCE_GENS,
+        delta_obj0=EARLY_STOP_DELTA_OBJ0,
+        delta_obj1=EARLY_STOP_DELTA_OBJ1,
+        delta_obj2=EARLY_STOP_DELTA_OBJ2,
+    )
+
+    if USE_TWO_STAGE_OPTIMIZATION:
+        print("Running stage-1 (violation-first) optimization...")
+        stage1_problem = ViolationFirstProblem()
+        stage1_result = minimize(
+            stage1_problem,
+            NSGA2(
+                pop_size=80,
+                sampling=FloatRandomSampling(),
+                crossover=SBX(prob=0.90, eta=10),
+                mutation=PolynomialMutation(prob=0.50, eta=10),
+                eliminate_duplicates=PolicyDuplicateElimination(),
+            ),
+            get_termination("n_gen", STAGE1_GENS),
+            seed=42,
+            verbose=True,
+            save_history=False,
+        )
+        seed_X = stage1_result.pop.get("X") if stage1_result.pop is not None else None
+        if seed_X is not None and len(seed_X) > 0:
+            algorithm = NSGA2(
+                pop_size=80,
+                sampling=seed_X,
+                crossover=crossover,
+                mutation=mutation,
+                eliminate_duplicates=PolicyDuplicateElimination(),
+            )
 
     print("Running Policy NSGA-II optimization...")
     result = minimize(
@@ -712,6 +1490,7 @@ def main():
         seed=42,
         verbose=True,
         save_history=False,
+        callback=callback,
     )
     print("Optimization finished.")
 
@@ -722,18 +1501,39 @@ def main():
     if F_results is None or len(F_results) == 0:
         print("Warning: no objective points available for plotting Pareto front.")
     else:
+        unique_pareto = np.unique(np.round(F_results, 2), axis=0).shape[0]
+        print("Pareto unique points (rounded 2dp):", unique_pareto)
+        print(
+            "Obj0 range:",
+            float(np.min(F_results[:, 0])),
+            "->",
+            float(np.max(F_results[:, 0])),
+        )
+        print(
+            "Obj1 range:",
+            float(np.min(F_results[:, 1])),
+            "->",
+            float(np.max(F_results[:, 1])),
+        )
+        print(
+            "Obj2 range:",
+            float(np.min(F_results[:, 2])),
+            "->",
+            float(np.max(F_results[:, 2])),
+        )
+
         plt.figure(figsize=(10, 6))
         plt.scatter(
-            F_results[:, 0],
             F_results[:, 1],
+            F_results[:, 2],
             c="red",
             s=35,
             edgecolors="k",
             label="Policy Pareto Front",
         )
-        plt.xlabel("Obj1 (Energy + Demand + Service Penalty)")
+        plt.xlabel("Obj1 (Cost)")
         plt.ylabel("Obj2 (Makespan min)")
-        plt.title("Policy Tuning Pareto Front")
+        plt.title("Policy Pareto Front (3-objective; shown Obj1 vs Obj2)")
         plt.grid(True)
         plt.legend()
         plt.show()
@@ -747,1548 +1547,28 @@ def main():
     print(f"\nShowing {num_to_show} solution(s):")
     for i in range(num_to_show):
         ind = show_pop[i]
-        f1, f2 = ind.F if ind.F is not None else (None, None)
+        fvals = ind.F if ind.F is not None else (None, None, None)
+        f0, f1, f2 = fvals
         details = ind.get("cost_details")
         print(f"\nSolution #{i+1}")
         print("  Policy X:", np.round(ind.X, 3))
+        if f0 is not None:
+            print(f"  Obj0 (Violation): {f0:.3f}")
         if f1 is not None:
             print(f"  Obj1: {f1:.3f}")
         if f2 is not None:
             print(f"  Obj2: {f2:.3f}")
         if details:
+            print(
+                "  use_B:",
+                details.get("if_use_count_B", 0),
+                "idle_min:",
+                round(details.get("if_idle_minutes_total", 0.0), 2),
+                "peak_kW:",
+                round(details.get("peak_kw", 0.0), 2),
+            )
             print(format_policy_breakdown(details))
-            plot_policy_result(
-                details,
-                title_prefix=f"Policy #{i+1}",
-            )
-
-
-if __name__ == "__main__":
-    main()
-# This is a new file, populated with the content of app_v3.py
-
-import numpy as np
-import matplotlib.pyplot as plt
-from pymoo.core.problem import Problem
-from pymoo.operators.sampling.rnd import PermutationRandomSampling
-from pymoo.operators.crossover.ox import OrderCrossover
-from pymoo.operators.mutation.inversion import InversionMutation
-
-# from pymoo.operators.mutation import SwapMutation
-from pymoo.operators.mutation.pm import PolynomialMutation
-from pymoo.operators.crossover.sbx import SBX
-from pymoo.optimize import minimize
-from pymoo.termination import get_termination
-from pymoo.algorithms.moo.nsga2 import NSGA2
-from typing import Dict, Tuple
-
-
-# =============== CONFIG ==================
-
-HOURS_A_DAY = 24 * 60  # 1440
-SLOT_DURATION = 5  # 1 slot = 10 นาที
-TOTAL_SLOTS = HOURS_A_DAY // SLOT_DURATION  # 1 วัน = 144 slots ถ้า 10 นาที/slot
-
-T_MELT = 18  # Melting 9 slot = 90 นาที (9 * 10 min/slot)
-NUM_BATCHES = 10  # <<< DEFINE GLOBALLY HERE
-
-# กำหนดว่าเตาไหนใช้งานได้บ้าง
-USE_FURNACE_A = True
-USE_FURNACE_B = True
-
-# --- New Constants for Advanced Simulation Logic ---
-# Penalty rate per minute for an IF holding a batch after melt completion
-IF_HOLDING_ENERGY_PENALTY_PER_MINUTE = 7.5  # Example value, adjust as needed
-# Very high penalty for any batch that cannot be poured by the end of simulation
-UNPOURED_BATCH_PENALTY = 1e13  # Increased penalty
-# Penalty for idle time between consecutive batches on the same IF furnace.
-# ค่าตรงนี้แทน \"โอกาสที่สูญเสีย\" เมื่อเตาหลอมถูกปล่อยว่าง ทั้งในแง่พลังงานสูญเปล่า
-# (ต้องอุ่นใหม่ / cold start) และกำลังการผลิตที่ไม่ถูกใช้
-IF_GAP_TIME_PENALTY_RATE_PER_MINUTE = 1.0  # cost unit per minute of gap
-# Penalty for IF working during designated break times
-IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE = (
-    10000  # Example: 100 cost unit per minute of work in break
-)
-# Average Power Rating for each IF in kW
-IF_POWER_RATING_KW = {"A": 420, "B": 420}
-
-# === New: Per-batch power options & empirical profiles (from plant data) ===
-# Options of maximum power that can be used per melting batch (kW)
-IF_POWER_OPTIONS = [450.0, 475.0, 500.0]
-
-# Empirical profiles for a "hot" furnace (no significant cooldown between batches).
-# Values are approximate means derived from recent plant data in
-# `data/สรุปการหลอมทุก Batch new.xlsx`.
-# Each entry maps power -> (expected_duration_min_hot, expected_energy_kwh_hot)
-POWER_PROFILE: Dict[float, Dict[str, float]] = {
-    # 3 samples, Energy ≈ [593, 614, 576], Duration ≈ [94, 92, 88]
-    450.0: {"duration_min_hot": 88.0, "energy_kwh_hot": 565.8},
-    # 2 samples, Energy ≈ [613, 579], Duration ≈ [94, 90]
-    475.0: {"duration_min_hot": 86.0, "energy_kwh_hot": 582.5},
-    # 4 samples, Energy ≈ [585, 585, 576, 576], Duration ≈ [84, 84, 84, 86]
-    500.0: {"duration_min_hot": 84.0, "energy_kwh_hot": 587.4},
-}
-
-# Default power levels that the heuristic will use for each batch type.
-# These can be adjusted easily when experimenting with different policies.
-IF_POWER_FOR_HOT_BATCH_KW = 450
-IF_POWER_FOR_COLD_START_BATCH_KW = 450
-
-# Cool / Cold start modelling (gap-based)
-# If the idle gap since the previous batch on the same furnace exceeds this threshold,
-# the next batch is treated as a "cold start".
-COLD_START_GAP_THRESHOLD_MIN = 180.0  # minutes
-# Additional time & energy associated with a cold start, relative to the hot profile.
-COLD_START_EXTRA_DURATION_MIN = 8.0
-COLD_START_EXTRA_ENERGY_KWH = 30.0
-
-# เตา M&H (โค้ดเดิมไว้ plot)
-MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}  # ความจุสูงสุดแต่ละเตา (kg)
-MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}  # ระดับเริ่มต้น (kg)
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.80, "B": 2.50}  # อัตราการใช้ kg/min แต่ละเตา
-MH_EMPTY_THRESHOLD_KG = 0  # ระดับต่ำสุดที่ยอมรับได้ (kg)
-IF_BATCH_OUTPUT_KG = 500.0  # ปริมาณที่ IF ผลิตต่อ batch (kg)
-POST_POUR_DOWNTIME_MIN = 10  # เวลาหยุดหลังเทเสร็จ (นาที)
-MH_IDLE_PENALTY_RATE = 1.0  # Penalty ต่อนาทีที่เตา M&H ว่าง (ไม่มีโลหะให้ใช้งาน)
-MH_REHEAT_PENALTY_RATE = 20.0  # Placeholder penalty สำหรับ reheat
-OVERFLOW_PENALTY_PER_KG = 50.0
-DEBUG = False
-
-# ระดับน้ำโลหะที่ถือว่า \"ปลอดภัย\" สำหรับการทำงานของหัวพ่นไฟ (Operational level)
-# หากต่ำกว่านี้จะถือว่าเตาทำงานไม่มีประสิทธิภาพ (ต้องใช้พลังงานมากขึ้น / อุ่นได้ช้าลง)
-MH_MIN_OPERATIONAL_LEVEL_KG = {
-    "A": 0.5 * MH_MAX_CAPACITY_KG["A"],  # 50% ของความจุสูงสุด
-    "B": 0.5 * MH_MAX_CAPACITY_KG["B"],
-}
-# Penalty ต่อนาทีเมื่อระดับน้ำอยู่ในช่วง (0, MH_MIN_OPERATIONAL_LEVEL_KG)
-# แทนต้นทุนโอกาสจากกำลังการผลิตที่ลดลงและประสิทธิภาพการถ่ายเทความร้อนที่แย่ลง
-MH_LOW_LEVEL_PENALTY_RATE = 200.0
-
-
-def _select_if_power_kw(is_cold_start: bool) -> float:
-    return (
-        IF_POWER_FOR_COLD_START_BATCH_KW if is_cold_start else IF_POWER_FOR_HOT_BATCH_KW
-    )
-
-
-def _get_power_profile(power_kw: float) -> Dict[str, float]:
-    return POWER_PROFILE.get(power_kw, next(iter(POWER_PROFILE.values())))
-
-
-def _compute_batch_profile(is_cold_start: bool) -> Dict[str, float]:
-    power_kw = _select_if_power_kw(is_cold_start)
-    profile = _get_power_profile(power_kw)
-    duration_min = profile["duration_min_hot"]
-    energy_kwh = profile["energy_kwh_hot"]
-    cold_start_energy_kwh = 0.0
-    if is_cold_start:
-        duration_min += COLD_START_EXTRA_DURATION_MIN
-        cold_start_energy_kwh = COLD_START_EXTRA_ENERGY_KWH
-        energy_kwh += cold_start_energy_kwh
-    return {
-        "power_kw": power_kw,
-        "duration_min": duration_min,
-        "energy_kwh": energy_kwh,
-        "is_cold_start": is_cold_start,
-        "cold_start_energy_kwh": cold_start_energy_kwh,
-    }
-
-
-# ช่วงเวลาที่ต้องการให้เตา IF ทำงานเพื่อใช้ไฟฟ้าต้นทุนต่ำ (เช่น จาก Solar)
-# ระบุเป็นนาทีตั้งแต่เริ่มวัน เช่น 12:00-13:00 => (12*60, 13*60)
-SOLAR_PREFERRED_WINDOWS_MIN = [
-    (12 * 60, 13 * 60),  # ช่วงเที่ยง – บ่ายหนึ่ง
-]
-# ตัวคูณส่วนลดต้นทุนพลังงานเมื่ออยู่ในช่วง Solar เต็ม ๆ
-# 0.0 = ไม่มีส่วนลด, 1.0 = พลังงานในช่วงนี้ไม่คิด cost เลย
-SOLAR_ENERGY_DISCOUNT_FACTOR = 0.5
-
-# กำหนดช่วงเวลาพัก (นาทีตั้งแต่เริ่มวัน 0 - 1440)
-# ตัวอย่าง: 9:00-9:15 และ 12:00-13:00
-BREAK_TIMES_MINUTES = [
-    # (8 * 60, 8 * 60 + 40),  # 08:00 - 08:40
-    # (20 * 60, 20 * 60 + 40),  # 20:00 - 20:40
-]
-
-# +++ NEW CONFIG FOR MH FILLING PREFERENCE +++
-PREFERRED_MH_FURNACE_TO_FILL_FIRST = (
-    "B"  # Options: "A", "B", or None for default/other logic
-)
-
-# --- Plotting Config ---
-FURNACE_COLORS = {"A": "blue", "B": "green"}
-MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
-
-# furnace plot position (สำหรับ IF Gantt)
-furnace_y = {0: 10, 1: 25}
-height = 8
-
-SHIFT_START = 8 * 60
-
-
-def scheduling_cost(x):
-    """
-    1) สร้างตาราง schedule ของ IF
-    2) ตรวจ overlap / penalty IF
-    3) ทำ mini-simulation M&H เพื่อคำนวณ Energy + penalty
-    4) รวมทั้งหมดเป็น cost
-    """
-
-    # ----------------------------
-    # 1) สร้างตาราง (start, end, furnace, batch_id)
-    # ----------------------------
-    n = len(x) // 2
-    schedule = []
-    for i in range(n):
-        start = int(x[2 * i])
-        furnace = int(round(x[2 * i + 1]))
-
-        # กันไม่ให้หลุด slot
-        start = max(0, min(start, TOTAL_SLOTS - T_MELT))
-        end = start + T_MELT
-        schedule.append((start, end, furnace, i + 1))
-
-    # ----------------------------
-    # 2) ตรวจ Overlap IF -> penalty_if
-    # ----------------------------
-    # ตัวอย่างเช็คเช่นเดิม:
-    penalty_if = 0.0
-
-    # (2.1) ลงโทษถ้าเตาไหนปิดแต่ x ระบุใช้เตานั้น
-    for s, e, f, b_id in schedule:
-        if f == 0 and not USE_FURNACE_A:
-            penalty_if += 1e12
-        if f == 1 and not USE_FURNACE_B:
-            penalty_if += 1e12
-
-    # (2.2) ห้ามซ้อนในเตาเดียวกัน
-    usage_for_furnace = {0: [0] * TOTAL_SLOTS, 1: [0] * TOTAL_SLOTS}
-    for s, e, f, b_id in schedule:
-        for t_slot in range(s, e):  # Renamed t to t_slot to avoid conflict
-            usage_for_furnace[f][t_slot] += 1
-
-    if USE_FURNACE_A:
-        for t_slot in range(TOTAL_SLOTS):
-            if usage_for_furnace[0][t_slot] > 1:
-                penalty_if += (usage_for_furnace[0][t_slot] - 1) * 1e9
-
-    if USE_FURNACE_B:
-        for t_slot in range(TOTAL_SLOTS):
-            if usage_for_furnace[1][t_slot] > 1:
-                penalty_if += (usage_for_furnace[1][t_slot] - 1) * 1e9
-
-    # (2.3) ถ้าเปิดทั้ง A,B => global check + Penalty if overlap
-    global_usage = [0] * TOTAL_SLOTS
-    # Constraint: ห้ามซ้อนทับกันเลย ไม่ว่าจะเตาไหน (สำหรับ IF)
-    for s, e, f, b_id in schedule:
-        for t_slot in range(s, e):
-            # เช็คว่า slot นี้ถูกใช้ไปหรือยัง (โดย IF อื่น)
-            if global_usage[t_slot] > 0:
-                # ซ้อนทับ! ลงโทษหนักๆ
-                penalty_if += 1e12  # Penalty สูงมากสำหรับการซ้อนทับของ IF
-            global_usage[t_slot] += 1  # นับว่า slot นี้ถูกใช้แล้วโดย IF
-
-    # (2.4) Penalty for Gap Time within the same IF furnace
-    if_gap_time_penalty = 0.0
-    schedule_by_furnace = {0: [], 1: []}
-    for s, e, f, b_id in schedule:
-        schedule_by_furnace[f].append((s, e, f, b_id))
-
-    for f_idx in [0, 1]:
-        if (f_idx == 0 and not USE_FURNACE_A) or (f_idx == 1 and not USE_FURNACE_B):
-            continue
-
-        furnace_schedule = sorted(schedule_by_furnace[f_idx], key=lambda item: item[0])
-        last_batch_end_slot = (
-            0  # Assuming work can start from slot 0 or after previous batch
-        )
-        is_first_batch_in_furnace = True
-        for s, e, f, b_id in furnace_schedule:
-            if not is_first_batch_in_furnace:
-                gap_slots = s - last_batch_end_slot
-                if gap_slots > 0:
-                    gap_minutes = gap_slots * SLOT_DURATION
-                    if_gap_time_penalty += (
-                        gap_minutes * IF_GAP_TIME_PENALTY_RATE_PER_MINUTE
-                    )
-            last_batch_end_slot = e
-            is_first_batch_in_furnace = False
-
-    penalty_if += if_gap_time_penalty  # Add to existing IF penalties
-
-    # (2.5) Penalty for IF working during break times
-    if_working_in_break_penalty = 0.0
-    for s, e, f, b_id in schedule:
-        start_minute_abs = s * SLOT_DURATION
-        end_minute_abs = e * SLOT_DURATION  # exclusive end minute
-        for break_start_abs, break_end_abs in BREAK_TIMES_MINUTES:
-            # Calculate overlap duration
-            overlap_start = max(start_minute_abs, break_start_abs)
-            overlap_end = min(end_minute_abs, break_end_abs)
-            if overlap_end > overlap_start:
-                overlap_duration_minutes = overlap_end - overlap_start
-                if_working_in_break_penalty += (
-                    overlap_duration_minutes * IF_WORKING_IN_BREAK_PENALTY_PER_MINUTE
-                )
-
-    penalty_if += if_working_in_break_penalty  # Add to existing IF penalties
-
-    # ----------------------------
-    # 2.6) คำนวณ makespan slot => makespan (นาที)
-    # ----------------------------
-    makespan_slot = max(e for (s, e, f, b_id) in schedule) if schedule else 0
-    makespan_min = makespan_slot * SLOT_DURATION
-
-    # ----------------------------
-    # 2.7) IF energy & cold start accounting
-    # ----------------------------
-    base_total_energy_if_kwh = 0.0  # พลังงานรวมจริงของ IF (kWh) ไม่คิดราคา
-    base_if_energy_kwh_no_reheat = 0.0
-    cold_start_energy_kwh = 0.0
-    priced_total_energy_if_cost = 0.0  # ต้นทุนพลังงานของ IF หลังคิดส่วนลด Solar
-    num_cold_start_events = 0
-
-    def _fraction_overlap_with_windows(
-        start_minute: float,
-        duration_min: float,
-        windows: list[tuple[int, int]],
-    ) -> float:
-        """
-        คำนวณสัดส่วนเวลาของ batch ที่ทับกับช่วงเวลาที่ระบุใน windows.
-        """
-        if duration_min <= 0 or not windows:
-            return 0.0
-        end_minute = start_minute + duration_min
-        total_overlap = 0.0
-        for w_start, w_end in windows:
-            overlap_start = max(start_minute, w_start)
-            overlap_end = min(end_minute, w_end)
-            if overlap_end > overlap_start:
-                total_overlap += overlap_end - overlap_start
-        return total_overlap / duration_min
-
-    # ----------------------------
-    # 3) Apply reheat-aware timeline (batch continues at max power until pour)
-    # ----------------------------
-    reheat_result = _apply_reheat_and_shift_schedule(schedule)
-    batch_timing = reheat_result["batch_timing"]
-    batch_profiles = reheat_result["batch_profiles"]
-    (
-        MH_idle_penalty,
-        MH_reheat_penalty,  # Still placeholder
-        total_energy_mh,  # Still placeholder
-        time_points,
-        mh_levels,
-        actual_pour_events,
-        unpoured_batches_at_end,
-        total_if_holding_minutes,
-        pour_induced_mh_overflow_penalty,
-        MH_low_level_penalty,
-        batch_pour_times,
-    ) = reheat_result["sim_outputs"]
-
-    # Compute IF energy and cold-start count from reheat-aware timing
-    for b_id, profile in batch_profiles.items():
-        timing = batch_timing.get(b_id)
-        if not timing:
-            continue
-        base_if_energy_kwh_no_reheat += profile["energy_kwh"]
-        base_total_energy_if_kwh += profile["energy_kwh"]
-        if profile["is_cold_start"]:
-            num_cold_start_events += 1
-            cold_start_energy_kwh += profile["cold_start_energy_kwh"]
-
-        solar_frac = _fraction_overlap_with_windows(
-            timing["start_min"],
-            profile["duration_min"],
-            SOLAR_PREFERRED_WINDOWS_MIN,
-        )
-        energy_cost_kwh = profile["energy_kwh"] * (
-            1.0 - SOLAR_ENERGY_DISCOUNT_FACTOR * solar_frac
-        )
-        priced_total_energy_if_cost += energy_cost_kwh
-
-    # Reheat energy (kWh) at max IF power
-    reheat_energy_kwh = 0.0
-    for s, e, f, b_id in schedule:
-        timing = batch_timing.get(b_id)
-        if not timing:
-            continue
-        reheat_minutes = max(0.0, timing["pour_min"] - timing["melt_finish_min"])
-        furnace_key = "A" if f == 0 else "B"
-        reheat_energy_kwh += reheat_minutes * IF_POWER_RATING_KW[furnace_key] / 60.0
-
-    base_total_energy_if_kwh += reheat_energy_kwh
-    priced_total_energy_if_cost += reheat_energy_kwh
-
-    # --- ลบการตรวจสอบ M&H Overflow Penalty แบบเดิมออก ---
-    # penalty_mh_overflow = 0.0 (This is now handled by pour_induced_mh_overflow_penalty from sim)
-
-    # ----------------------------
-    # 5) รวม cost
-    # ----------------------------
-    # Add IF holding energy penalty
-    # IF_HOLDING_ENERGY_PENALTY_PER_MINUTE is currently 50.
-    # If this is meant to be an actual energy cost, it needs to be kW * (minutes/60)
-    # For now, let's assume it's a separate penalty, not directly kWh.
-    # If you want to convert this to kWh based on a standby power:
-    # standby_power_A_kw = ... (define this)
-    # standby_power_B_kw = ... (define this)
-    # holding_energy_kwh = (total_if_holding_minutes_A / 60.0 * standby_power_A_kw) + ...
-    if_holding_penalty_cost = (
-        total_if_holding_minutes * IF_HOLDING_ENERGY_PENALTY_PER_MINUTE
-    )
-
-    # Add penalty for unpoured batches
-    unpoured_batches_penalty_cost = (
-        len(unpoured_batches_at_end) * UNPOURED_BATCH_PENALTY
-    )
-
-    # final cost (Objective 1: Energy/Cost)
-    # The 'cost' objective nowสะท้อน \"ต้นทุนพลังงาน\" หลังคิดส่วนลด Solar + penalty อื่น ๆ
-    cost = 0.0
-    cost += priced_total_energy_if_cost  # IF energy cost after Solar discount
-    cost += if_holding_penalty_cost  # This is still a penalty value, not kWh unless redefined
-    cost += total_energy_mh  # พลังงาน M&H (ยังเป็น placeholder)
-    cost += (
-        penalty_if  # Overlap IF / ปิดเตา / Gap Time / IF in Break (จากการวางแผนเบื้องต้น)
-    )
-    cost += MH_idle_penalty  # Penalty จาก M&H idle
-    cost += MH_reheat_penalty  # Penalty M&H reheat (ยังเป็น placeholder)
-    cost += MH_low_level_penalty  # Penalty M&H ทำงานที่ระดับน้ำต่ำ
-    cost += pour_induced_mh_overflow_penalty  # Penalty M&H overflow จากการเทจริง
-    cost += unpoured_batches_penalty_cost  # Penalty สำหรับ batch ที่ไม่ได้เท
-
-    # Objective 2: Makespan
-    # Recalculate makespan based on actual pour times
-    if actual_pour_events:
-        makespan_min_actual = max(ape[0] for ape in actual_pour_events)
-    elif schedule:  # If schedule exists but no pours happened (all unpoured)
-        makespan_min_actual = (
-            1440  # Max simulation time, heavily penalized by unpoured_penalty
-        )
-    else:  # No schedule
-        makespan_min_actual = 0
-
-    # If there are unpoured batches, makespan is effectively very bad.
-    # The unpoured_batches_penalty_cost already makes the solution undesirable.
-    # We can let makespan_min_actual reflect the last pour, or be max sim time if all failed.
-
-    # Return detailed cost components as well
-    cost_components = {
-        "total_cost": cost,
-        "makespan_minutes": makespan_min_actual,
-        # พลังงานจริงของ IF (kWh) และต้นทุนหลังคิด Solar ส่วนลด
-        "base_if_energy_kwh": base_total_energy_if_kwh,
-        "base_if_energy_kwh_no_reheat": base_if_energy_kwh_no_reheat,
-        "cold_start_energy_kwh": cold_start_energy_kwh,
-        "priced_if_energy_cost_kwh": priced_total_energy_if_cost,
-        "if_holding_penalty": if_holding_penalty_cost,
-        "if_general_penalty": penalty_if,  # Contains overlap, gap, break penalties
-        "mh_idle_penalty": MH_idle_penalty,
-        "mh_reheat_penalty": MH_reheat_penalty,  # Placeholder
-        "mh_overflow_penalty": pour_induced_mh_overflow_penalty,
-        "mh_low_level_penalty": MH_low_level_penalty,
-        "unpoured_batch_penalty": unpoured_batches_penalty_cost,
-        "mh_energy_kwh": total_energy_mh,  # Placeholder
-        "num_cold_start_events": num_cold_start_events,
-        "reheat_energy_kwh": reheat_energy_kwh,
-        "batch_timing": batch_timing,
-    }
-
-    return cost, makespan_min_actual, cost_components
-
-
-def _apply_reheat_and_shift_schedule(schedule, max_iterations: int = 6):
-    """
-    Shift IF timeline so each batch continues reheating at max power until poured.
-    Returns per-batch timing and the final M&H simulation outputs.
-    """
-    if not schedule:
-        sim_outputs = simulate_mh_consumption_v2([])
-        return {"batch_timing": {}, "sim_outputs": sim_outputs}
-
-    planned = sorted(schedule, key=lambda item: item[0])
-    planned_start_min = {b_id: s * SLOT_DURATION for s, e, f, b_id in planned}
-    actual_start_min = dict(planned_start_min)
-    sim_outputs = None
-    batch_profiles = {}
-
-    def _build_profiles_and_events(start_map, prev_pour_times):
-        profiles = {}
-        melt_events = []
-        last_end_by_furnace = {}
-
-        for s, e, f, b_id in planned:
-            start_min = start_map[b_id]
-            prev_end = last_end_by_furnace.get(f)
-            if prev_end is None:
-                is_cold_start = True
-            else:
-                gap_minutes = start_min - prev_end
-                is_cold_start = gap_minutes >= COLD_START_GAP_THRESHOLD_MIN
-
-            profile = _compute_batch_profile(is_cold_start)
-            profiles[b_id] = profile
-            melt_finish = start_min + profile["duration_min"]
-            melt_events.append((melt_finish, b_id))
-
-            last_end_by_furnace[f] = prev_pour_times.get(b_id, melt_finish)
-
-        melt_events.sort(key=lambda w: w[0])
-        return profiles, melt_events
-
-    prev_pour_times = {}
-    for _ in range(max_iterations):
-        batch_profiles, melt_events = _build_profiles_and_events(
-            actual_start_min, prev_pour_times
-        )
-        sim_outputs = simulate_mh_consumption_v2(melt_events)
-        batch_pour_times = sim_outputs[-1]
-
-        new_actual_start_min = {}
-        prev_end = None
-        for s, e, f, b_id in planned:
-            planned_start = planned_start_min[b_id]
-            start_min = (
-                planned_start if prev_end is None else max(planned_start, prev_end)
-            )
-            new_actual_start_min[b_id] = start_min
-
-            profile = batch_profiles.get(b_id) or _compute_batch_profile(True)
-            melt_finish = start_min + profile["duration_min"]
-            pour_min = batch_pour_times.get(b_id, melt_finish)
-            prev_end = max(prev_end if prev_end is not None else 0.0, pour_min)
-
-        if new_actual_start_min == actual_start_min:
-            break
-        actual_start_min = new_actual_start_min
-        prev_pour_times = batch_pour_times
-
-    batch_timing = {}
-    batch_pour_times = sim_outputs[-1] if sim_outputs else {}
-    batch_profiles, _ = _build_profiles_and_events(actual_start_min, batch_pour_times)
-    for s, e, f, b_id in planned:
-        start_min = actual_start_min[b_id]
-        profile = batch_profiles.get(b_id) or _compute_batch_profile(True)
-        melt_finish = start_min + profile["duration_min"]
-        pour_min = batch_pour_times.get(b_id, melt_finish)
-        batch_timing[b_id] = {
-            "start_min": start_min,
-            "melt_finish_min": melt_finish,
-            "pour_min": pour_min,
-            "furnace": f,
-        }
-
-    return {
-        "batch_timing": batch_timing,
-        "batch_profiles": batch_profiles,
-        "sim_outputs": sim_outputs,
-    }
-
-
-def simulate_mh_consumption_v2(melt_completion_events):  # Changed input
-    """
-    จำลองระดับน้ำในเตา M&H A และ B แบบนาทีต่อนาที
-    คำนวณ penalties และคืน time series สำหรับ plot
-    NEW: Handles pour queue, M&H capacity check before pour, IF holding times, and pour-induced overflow.
-    """
-    simulation_duration_min = 1440
-    time_points = np.arange(simulation_duration_min)
-    mh_levels = {
-        "A": np.zeros(simulation_duration_min),
-        "B": np.zeros(simulation_duration_min),
-    }
-    mh_status = {"A": "idle", "B": "idle"}
-
-    current_level = MH_INITIAL_LEVEL_KG.copy()
-    downtime_remaining = {"A": 0, "B": 0}
-    idle_duration = {"A": 0, "B": 0}
-
-    total_idle_penalty = 0.0
-    total_reheat_penalty = 0.0  # Placeholder
-    total_low_level_penalty = 0.0  # Penalty for operating with low metal level
-    pour_induced_mh_overflow_penalty = 0.0  # New
-
-    ready_to_pour_queue = []  # Stores (melt_finish_minute, batch_id)
-    actual_pour_events = []  # Stores (actual_pour_minute, batch_id)
-    batch_pour_times = {}  # batch_id -> actual pour minute
-    total_if_holding_minutes = 0
-
-    melt_event_idx = 0
-
-    for t in range(simulation_duration_min):
-        minute_of_day = t
-
-        # Add newly completed IF batches to ready_to_pour_queue
-        while (
-            melt_event_idx < len(melt_completion_events)
-            and melt_completion_events[melt_event_idx][0] <= minute_of_day
-        ):
-            if melt_completion_events[melt_event_idx][0] == minute_of_day:
-                ready_to_pour_queue.append(melt_completion_events[melt_event_idx])
-                # print(f"Minute {t}: Batch {melt_completion_events[melt_event_idx][1]} melt complete, added to pour queue.") # Debug
-            melt_event_idx += 1
-
-        # Increment IF holding time for batches in queue
-        total_if_holding_minutes += len(ready_to_pour_queue)
-
-        # Attempt to pour batches from the queue
-        poured_this_minute_batch_ids = []  # To avoid modifying queue while iterating
-
-        # Sort queue by melt_finish_time (FIFO for pouring attempts) - already sorted by append order if events are sorted
-        # ready_to_pour_queue.sort(key=lambda x: x[0]) # Might not be necessary if events added in order
-
-        for i in range(len(ready_to_pour_queue)):
-            melt_finish_min_q, batch_id_q = ready_to_pour_queue[i]
-
-            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
-            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
-            total_available_mh_capacity = available_capacity_A + available_capacity_B
-
-            # อนุญาตให้พยายามเทได้ถ้ามี capacity มากกว่า 0
-            # ส่วนที่เหลือจากการเทจะถูกนับเป็น overflow และลงโทษ
-            if total_available_mh_capacity > 0:
-                # print(f"Minute {t}: Attempting to pour Batch {batch_id_q}. Total M&H available: {total_available_mh_capacity:.1f} kg.") # Debug
-
-                # --- NEW PRIORITIZED POURING LOGIC ---
-                poured_amount_A_this_batch = 0
-                poured_amount_B_this_batch = 0
-                remaining_metal_to_distribute = IF_BATCH_OUTPUT_KG
-
-                furnaces_in_fill_order = []
-                preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
-
-                if preferred_f == "A":
-                    furnaces_in_fill_order = ["A", "B"]
-                elif preferred_f == "B":
-                    furnaces_in_fill_order = ["B", "A"]
-                else:
-                    # Default behavior if PREFERRED_MH_FURNACE_TO_FILL_FIRST is None or invalid
-                    # Fallback: try to fill the one with more space first, then the other.
-                    # For now, if not "A" or "B", let's default to A then B as a simple fallback.
-                    # print(f"Warning: PREFERRED_MH_FURNACE_TO_FILL_FIRST ('{preferred_f}') is not 'A' or 'B'. Defaulting to A then B.")
-                    furnaces_in_fill_order = ["A", "B"]
-
-                for f_id in furnaces_in_fill_order:
-                    if remaining_metal_to_distribute <= 0:
-                        break
-
-                    space_in_this_furnace = (
-                        MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
-                    )
-                    amount_to_pour_here = min(
-                        remaining_metal_to_distribute, space_in_this_furnace
-                    )
-
-                    if amount_to_pour_here > 0:
-                        if f_id == "A":
-                            poured_amount_A_this_batch = amount_to_pour_here
-                        else:  # f_id == "B"
-                            poured_amount_B_this_batch = amount_to_pour_here
-                        remaining_metal_to_distribute -= amount_to_pour_here
-
-                overflow_kg = max(0.0, remaining_metal_to_distribute)
-                pour_induced_mh_overflow_penalty += (
-                    overflow_kg * OVERFLOW_PENALTY_PER_KG
-                )
-
-                current_level["A"] = min(
-                    current_level["A"] + poured_amount_A_this_batch,
-                    MH_MAX_CAPACITY_KG["A"],
-                )
-                current_level["B"] = min(
-                    current_level["B"] + poured_amount_B_this_batch,
-                    MH_MAX_CAPACITY_KG["B"],
-                )
-                # --- END NEW PRIORITIZED POURING LOGIC ---
-
-                for furnace_id_mh in ["A", "B"]:
-                    downtime_remaining[furnace_id_mh] = POST_POUR_DOWNTIME_MIN
-                    mh_status[furnace_id_mh] = "downtime"
-
-                actual_pour_events.append((t, batch_id_q))
-                batch_pour_times[batch_id_q] = t
-                poured_this_minute_batch_ids.append(batch_id_q)
-                # print(f"Minute {t}: Batch {batch_id_q} poured successfully. M&H A: {current_level['A']:.1f}, B: {current_level['B']:.1f}") # Debug
-
-                # Since one pour happens per minute (conceptual simplification), break from trying other queued batches this minute
-                # Or, allow multiple if sim logic handles it. For now, assume one pour action can be processed.
-                # To allow multiple pours if capacity allows for subsequent batches in the same minute:
-                # we need to update current_level *immediately* and re-check for next in queue.
-                # For simplicity, let's assume the check for total_available_mh_capacity uses levels *at the start of the minute*.
-                # A single batch pour event is resolved. If other batches are also ready, they wait for next minute's check.
-                # This means if multiple batches become ready and M&H has huge capacity, they still pour one per minute.
-                # This simplification might be acceptable.
-                break  # Only one pour attempt resolution per minute from the queue
-            # else: # Debug
-            # print(f"Minute {t}: Batch {batch_id_q} cannot pour. Total M&H available: {total_available_mh_capacity:.1f} kg. Needed: {IF_BATCH_OUTPUT_KG} kg.")
-
-        # Remove poured batches from the main queue
-        if poured_this_minute_batch_ids:
-            ready_to_pour_queue = [
-                item
-                for item in ready_to_pour_queue
-                if item[1] not in poured_this_minute_batch_ids
-            ]
-
-        for furnace_id in ["A", "B"]:
-            # Handle Downtime
-            if downtime_remaining[furnace_id] > 0:
-                downtime_remaining[furnace_id] -= 1
-                mh_status[furnace_id] = "downtime"
-                if downtime_remaining[furnace_id] == 0:
-                    mh_status[furnace_id] = (
-                        "running"
-                        if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG
-                        else "idle"
-                    )
-                mh_levels[furnace_id][t] = current_level[furnace_id]
-                continue  # Skip consumption and idle penalty if in downtime
-
-            if mh_status[furnace_id] == "downtime":
-                mh_levels[furnace_id][t] = current_level[furnace_id]
-                continue
-
-            if current_level[furnace_id] > MH_EMPTY_THRESHOLD_KG:
-                current_level[furnace_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[furnace_id]
-                current_level[furnace_id] = max(current_level[furnace_id], 0)
-                mh_status[furnace_id] = "running"
-                if current_level[furnace_id] <= MH_EMPTY_THRESHOLD_KG:
-                    mh_status[furnace_id] = "idle"
-                    # idle_duration[furnace_id] = 1 # Start/reset idle duration counter
-            else:  # Already at or below threshold
-                mh_status[furnace_id] = "idle"
-                # if mh_status was already "idle", increment idle_duration
-                # idle_duration[furnace_id] += 1
-
-            # Apply idle penalty if the furnace is idle (ไม่มีโลหะให้ใช้)
-            if mh_status[furnace_id] == "idle":
-                total_idle_penalty += MH_IDLE_PENALTY_RATE
-
-            # Apply low-level penalty whenระดับน้ำอยู่ต่ำกว่า operational level แต่ยังไม่ว่าง
-            current_level_now = current_level[furnace_id]
-            if (
-                current_level_now > MH_EMPTY_THRESHOLD_KG
-                and current_level_now < MH_MIN_OPERATIONAL_LEVEL_KG[furnace_id]
-            ):
-                total_low_level_penalty += MH_LOW_LEVEL_PENALTY_RATE
-
-            mh_levels[furnace_id][t] = current_level[furnace_id]
-
-    total_energy_mh = 0.0  # Placeholder
-    unpoured_batches_at_end = [
-        item[1] for item in ready_to_pour_queue
-    ]  # Batches remaining in queue
-    for batch_id in unpoured_batches_at_end:
-        # If never poured, treat as reheating until end of simulation window
-        batch_pour_times.setdefault(batch_id, simulation_duration_min)
-
-    return (
-        total_idle_penalty,
-        total_reheat_penalty,
-        total_energy_mh,
-        time_points,
-        mh_levels,
-        actual_pour_events,
-        unpoured_batches_at_end,
-        total_if_holding_minutes,
-        pour_induced_mh_overflow_penalty,
-        total_low_level_penalty,
-        batch_pour_times,
-    )
-
-
-def decode_schedule(x_vector):
-    x = x_vector
-    n = len(x) // 2
-    schedule = []
-    for i in range(n):
-        start = int(x[2 * i])
-        f = int(round(x[2 * i + 1]))
-        start = max(0, min(start, TOTAL_SLOTS - T_MELT))
-        end = start + T_MELT
-        schedule.append((start, end, f, i + 1))
-    schedule.sort(key=lambda s: s[0])
-    return schedule
-
-
-def plot_schedule_and_mh(
-    schedule,
-    title="Melting Schedule & M&H",
-    simulated_time_points=None,
-    simulated_mh_levels=None,
-    batch_timing=None,
-):
-    """
-    พล็อต Gantt chart ของ IF และ กราฟระดับน้ำใน M&H A, B
-    Now accepts pre-simulated M&H data.
-    """
-    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(18, 9), sharex=True)
-
-    # --- Use pre-simulated M&H levels if provided ---
-    if simulated_time_points is not None and simulated_mh_levels is not None:
-        time_points_shifted = simulated_time_points + SHIFT_START
-        mh_levels_to_plot = simulated_mh_levels
-    # --- Fallback to re-simulating if not provided (should be avoided for consistency) ---
-    elif (
-        schedule
-    ):  # Fallback, ideally this branch is not hit from main optimization flow
-        print(
-            "Warning: Re-simulating M&H for plotting. Use pre-simulated data for consistency."
-        )
-        # makespan_slot = (
-        #     max(e for (s, e, f, b_id) in schedule) if schedule else 0
-        # )  # Ensure schedule is not empty
-        # # makespan_min = makespan_slot * SLOT_DURATION # Not directly used by v2 sim for duration
-
-        melt_completion_events_plot = []
-        if batch_timing:
-            for b_id, timing in batch_timing.items():
-                melt_completion_events_plot.append((timing["melt_finish_min"], b_id))
-        else:
-            for s, e, f, b_id in schedule:
-                finish_minute = e * SLOT_DURATION
-                melt_completion_events_plot.append((finish_minute, b_id))
-        melt_completion_events_plot.sort(key=lambda w: w[0])
-
-        (
-            _,
-            _,
-            _,  # Penalties not needed for plotting
-            time_points_plot,
-            mh_levels_plot,
-            _,
-            _,
-            _,
-            _,  # Other outputs not needed for basic plot
-            _,  # low level penalty (not needed for plotting)
-            _,  # batch_pour_times (not needed for plotting)
-        ) = simulate_mh_consumption_v2(melt_completion_events_plot)
-        time_points_shifted = time_points_plot + SHIFT_START
-        mh_levels_to_plot = mh_levels_plot
-    else:  # Empty schedule
-        time_points_shifted = np.arange(SHIFT_START, SHIFT_START + 1440)
-        mh_levels_to_plot = {
-            "A": np.full(1440, MH_INITIAL_LEVEL_KG["A"]),
-            "B": np.full(1440, MH_INITIAL_LEVEL_KG["B"]),
-        }
-
-    # ---------------------------
-    # พล็อต Gantt chart (ax1)
-    # ---------------------------
-    for start, end, f, b_id in schedule:
-        if (
-            f not in furnace_y
-        ):  # Using global furnace_y here, ensure it's what's intended
-            print(f"Warning: Invalid IF index '{f}' for batch {b_id}. Skipping plot.")
-            continue
-        if batch_timing and b_id in batch_timing:
-            timing = batch_timing[b_id]
-            melt_start_t = SHIFT_START + timing["start_min"]
-            melt_finish_t = SHIFT_START + timing["melt_finish_min"]
-            pour_t = SHIFT_START + timing["pour_min"]
-            melt_dur = max(0.0, melt_finish_t - melt_start_t)
-            reheat_dur = max(0.0, pour_t - melt_finish_t)
-
-            ax1.broken_barh(
-                [(melt_start_t, melt_dur)],
-                (furnace_y[f], height),
-                facecolors="gray",
-                edgecolor="black",
-            )
-            if reheat_dur > 0:
-                ax1.broken_barh(
-                    [(melt_finish_t, reheat_dur)],
-                    (furnace_y[f], height),
-                    facecolors="red",
-                    edgecolor="black",
-                )
-        else:
-            melt_start_t = SHIFT_START + start * SLOT_DURATION
-            melt_dur = (end - start) * SLOT_DURATION
-            ax1.broken_barh(
-                [(melt_start_t, melt_dur)],
-                (furnace_y[f], height),  # Using global furnace_y and height
-                facecolors=FURNACE_COLORS.get(f, "gray"),  # ใช้สีจาก config
-                edgecolor="black",
-            )
-        ax1.text(
-            melt_start_t + melt_dur / 2,
-            furnace_y[f] + height / 2,  # Using global furnace_y and height
-            f"{b_id}",
-            ha="center",
-            va="center",
-            color="white",
-            fontsize=10,
-        )
-
-    ax1.set_xlim(SHIFT_START, SHIFT_START + 1440)
-    ax1.set_ylabel("IF Furnace")
-    ax1.set_yticks(
-        [furnace_y[0] + height / 2, furnace_y[1] + height / 2]
-    )  # Using global furnace_y and height
-    ax1.set_yticklabels(["Furnace A", "Furnace B"])
-    ax1.set_title(title)
-    ax1.grid(True, axis="y", linestyle="-", alpha=0.5)
-
-    # เส้นแบ่ง slot
-    for slot_i in range(TOTAL_SLOTS + 1):
-        line_x = SHIFT_START + slot_i * SLOT_DURATION
-        ax1.axvline(x=line_x, color="gray", alpha=0.3, linestyle="--")
-
-    # ---------------------------
-    # subplot ล่าง (ax2) - M&H levels
-    # ---------------------------
-    max_plot_capacity = max(MH_MAX_CAPACITY_KG.values()) * 1.1
-
-    for furnace_id_mh_plot in ["A", "B"]:  # Renamed furnace_id to furnace_id_mh_plot
-        ax2.plot(
-            time_points_shifted,
-            mh_levels_to_plot[furnace_id_mh_plot],  # Use mh_levels_to_plot
-            color=MH_FURNACE_COLORS[furnace_id_mh_plot],
-            linewidth=2,
-            label=f"M&H {furnace_id_mh_plot} Level",
-        )
-        # เส้น Max Capacity
-        ax2.axhline(
-            y=MH_MAX_CAPACITY_KG[furnace_id_mh_plot],
-            color=MH_FURNACE_COLORS[furnace_id_mh_plot],
-            linestyle=":",
-            alpha=0.7,
-            label=f"M&H {furnace_id_mh_plot} Max Cap ({MH_MAX_CAPACITY_KG[furnace_id_mh_plot]} kg)",
-        )
-
-    # เส้น Empty Threshold
-    ax2.axhline(
-        y=MH_EMPTY_THRESHOLD_KG,
-        color="black",
-        linestyle="--",
-        alpha=0.7,
-        label=f"Empty Threshold ({MH_EMPTY_THRESHOLD_KG} kg)",
-    )
-
-    ax2.set_ylim(0, max_plot_capacity)
-    ax2.set_xlabel("Time (HH:MM)")
-    ax2.set_ylabel("Metal in M&H (kg)")
-
-    # xticks ราย ชม.
-    xticks_ax2 = np.arange(SHIFT_START, SHIFT_START + 1441, 60)  # Renamed xticks
-    ax2.set_xticks(xticks_ax2)
-    xlabels_ax2 = [
-        f"{(x_val // 60) % 24:02d}:{x_val % 60:02d}" for x_val in xticks_ax2
-    ]  # Renamed xlabels and x
-    ax2.set_xticklabels(xlabels_ax2)
-    ax2.set_title("Simulated M&H Levels")
-    ax2.grid(True, which="major", axis="both", alpha=0.5)
-    ax2.legend(loc="upper right")
-
-    # Add shaded regions for break times on both subplots
-    for break_start, break_end in BREAK_TIMES_MINUTES:
-        # Adjust for SHIFT_START for plotting coordinates
-        plot_break_start = break_start  # Break times are absolute day minutes
-        plot_break_end = break_end
-
-        # Ensure breaks are within the plotted x-axis range (0 to 1440 relative to day start for sim data,
-        # then shifted by SHIFT_START for plot)
-        # The time_points_shifted already accounts for SHIFT_START
-        # We need to ensure the axvspan uses coordinates relative to the plot's x-axis
-
-        # For ax1 (IF Gantt)
-        ax1.axvspan(
-            plot_break_start,
-            plot_break_end,
-            facecolor="grey",
-            alpha=0.2,
-            zorder=-1,
-        )
-        # For ax2 (M&H Levels)
-        ax2.axvspan(
-            plot_break_start,
-            plot_break_end,
-            facecolor="grey",
-            alpha=0.2,
-            zorder=-1,
-        )
-
-    plt.tight_layout()
-    plt.show()
-
-
-def format_schedule_breakdown(cost_components: dict) -> str:
-    if not cost_components:
-        return "Cost component details are not available."
-
-    base_if_energy = cost_components.get("base_if_energy_kwh", 0.0)
-    base_if_no_reheat = cost_components.get("base_if_energy_kwh_no_reheat", 0.0)
-    reheat_energy = cost_components.get("reheat_energy_kwh", 0.0)
-    cold_start_energy = cost_components.get("cold_start_energy_kwh", 0.0)
-
-    lines = [
-        "Cost Component Details:",
-        f"  Base IF Energy (kWh)     : {base_if_energy:.2f}",
-        f"    - Melt Energy (kWh)    : {base_if_no_reheat:.2f}",
-        f"    - Cold Start Extra     : {cold_start_energy:.2f}",
-        f"    - Reheat Energy (kWh)  : {reheat_energy:.2f}",
-        f"  IF Holding Penalty       : {cost_components.get('if_holding_penalty', 0.0):.2f}",
-        f"  IF General Penalty       : {cost_components.get('if_general_penalty', 0.0):.2f} (Overlaps, Gaps, Breaks)",
-        f"  MH Idle Penalty          : {cost_components.get('mh_idle_penalty', 0.0):.2f}",
-        f"  MH Reheat Penalty        : {cost_components.get('mh_reheat_penalty', 0.0):.2f} (Placeholder)",
-        f"  MH Overflow Penalty      : {cost_components.get('mh_overflow_penalty', 0.0):.2f}",
-        f"  MH Low Level Penalty     : {cost_components.get('mh_low_level_penalty', 0.0):.2f}",
-        f"  Unpoured Batch Penalty   : {cost_components.get('unpoured_batch_penalty', 0.0):.2f}",
-        f"  MH Energy (kWh)          : {cost_components.get('mh_energy_kwh', 0.0):.2f} (Placeholder)",
-    ]
-    return "\n".join(lines)
-
-
-def _greedy_fast_forward_mh_state(
-    target_minute: int,
-    current_levels_kg: dict,  # {"A": level, "B": level}
-    downtime_remaining_min: dict,  # {"A": dt, "B": dt}
-    last_simulated_minute: int,
-):
-    """
-    O(1) forward for greedy lookahead (no pours in between).
-    Returns state at the BEGINNING of target_minute.
-    """
-    dt = max(0, target_minute - last_simulated_minute - 1)
-    if dt == 0:
-        return current_levels_kg.copy(), downtime_remaining_min.copy()
-
-    new_levels = current_levels_kg.copy()
-    new_down = downtime_remaining_min.copy()
-
-    for f in ["A", "B"]:
-        d0 = new_down[f]
-        blocked = min(dt, d0)
-        run_minutes = dt - blocked
-
-        new_down[f] = max(0, d0 - dt)
-
-        if run_minutes > 0:
-            new_levels[f] = max(
-                0.0,
-                new_levels[f] - run_minutes * MH_CONSUMPTION_RATE_KG_PER_MIN[f],
-            )
-
-    return new_levels, new_down
-
-
-def _score_candidate_slot(
-    start_slot: int,
-    melt_finish_minute: int,
-    mh_levels_before_pour: dict,
-    total_available_mh_capacity: float,
-    last_if_end_slot_for_furnace: int | None,
-) -> tuple[float, float, float, float]:
-    """
-    Deterministic slot scoring for greedy decoder.
-    Designed to reduce noisy fitness and avoid unstable random choices.
-    """
-    if last_if_end_slot_for_furnace is None:
-        predicted_if_gap_minutes = 0.0
-    else:
-        predicted_if_gap_minutes = max(
-            0, (start_slot - last_if_end_slot_for_furnace) * SLOT_DURATION
-        )
-
-    low_level_risk = 0.0
-    for f_id in ["A", "B"]:
-        low_level_risk += max(
-            0.0, MH_MIN_OPERATIONAL_LEVEL_KG[f_id] - mh_levels_before_pour[f_id]
-        )
-
-    shortfall_kg = max(0.0, IF_BATCH_OUTPUT_KG - total_available_mh_capacity)
-
-    w_makespan = 1.0
-    w_low = 30.0
-    w_gap = 10.0
-    w_shortfall = 3000.0
-    score = (
-        w_makespan * melt_finish_minute
-        + w_low * low_level_risk
-        + w_gap * predicted_if_gap_minutes
-        + w_shortfall * shortfall_kg
-    )
-    return score, shortfall_kg, predicted_if_gap_minutes, low_level_risk
-
-
-def _validate_no_global_if_overlap(x_schedule_vector, num_batches: int) -> bool:
-    usage = np.zeros(TOTAL_SLOTS, dtype=int)
-    for i in range(num_batches):
-        start = int(x_schedule_vector[2 * i])
-        if start < 0:
-            continue
-        end = start + T_MELT
-        if start < 0 or end > TOTAL_SLOTS:
-            return False
-        for t_slot in range(start, end):
-            if usage[t_slot] > 0:
-                return False
-            usage[t_slot] = 1
-    return True
-
-
-# --- ฟังก์ชัน Greedy Assignment (Level 2) ---
-def greedy_assignment(batch_order, num_batches=NUM_BATCHES):
-    """
-    กำหนด start_slot และ furnace สำหรับลำดับ batch ที่กำหนด
-    โดยห้ามมี batch ใดๆ ทำงานซ้อนทับกันเลย (Global Constraint for IFs)
-    และพยายามจัดตาราง IF ให้สอดคล้องกับความพร้อมของ M&H (M&H-aware).
-    Deterministic decoder:
-    - no random choice (stable fitness for same permutation)
-    - uses slot scoring
-    - fallback avoids clamp-induced overlap explosion
-    """
-    x_schedule_vector = np.full(
-        num_batches * 2, -1, dtype=int
-    )  # Initialize with -1 (unscheduled)
-    global_if_used_slots = np.zeros(TOTAL_SLOTS, dtype=int)
-    decoder_feasible = True
-
-    available_if_furnaces_for_assignment = []
-    if USE_FURNACE_A:
-        available_if_furnaces_for_assignment.append(0)
-    if USE_FURNACE_B:
-        available_if_furnaces_for_assignment.append(1)
-
-    if not available_if_furnaces_for_assignment:
-        print("Error in greedy_assignment: No available IF furnaces!")
-        return x_schedule_vector.astype(float), False
-
-    # Internal M&H state for greedy's simulation
-    internal_mh_levels_kg = MH_INITIAL_LEVEL_KG.copy()
-    internal_mh_downtime_remaining_min = {"A": 0, "B": 0}
-    internal_last_mh_sim_minute = -1  # Simulates from minute 0 onwards
-
-    if_furnace_assignment_counter = 0
-    last_if_end_slot_by_furnace = {0: None, 1: None}
-    candidate_scan_kernel = np.ones(T_MELT, dtype=int)
-    max_candidate_starts_to_scan = 60
-
-    for (
-        batch_idx_in_order
-    ) in batch_order:  # batch_idx_in_order is the actual batch ID (0 to N-1)
-        chosen_if_furnace_idx = -1
-        if len(available_if_furnaces_for_assignment) == 1:
-            chosen_if_furnace_idx = available_if_furnaces_for_assignment[0]
-        elif len(available_if_furnaces_for_assignment) > 1:
-            chosen_if_furnace_idx = available_if_furnaces_for_assignment[
-                if_furnace_assignment_counter
-                % len(available_if_furnaces_for_assignment)
-            ]
-            # Cycle through furnaces more robustly for subsequent batches
-            # if_furnace_assignment_counter is advanced per BATCH, not per furnace chosen
-        else:  # Should be caught by earlier check
-            continue
-
-        found_slot_for_batch = False
-        viable_slots_data = []
-
-        # Start searching for an IF start slot from the end of the last IF operation,
-        # or from 0 if this is the first batch.
-        # More accurately, from the earliest possible time considering M&H readiness.
-        # The search for if_start_slot is in SLOTS.
-        # The M&H simulation is in MINUTES.
-
-        # Determine the earliest minute this batch *could* start melting based on IF availability
-        # This means searching for a free IF slot first.
-        # --- REMOVED BREAK TIME CHECK FROM HERE ---
-        # The greedy assignment will no longer try to avoid IF operations during breaks;
-        # this will be handled by a penalty in scheduling_cost.
-
-        free_run = (
-            np.convolve(global_if_used_slots, candidate_scan_kernel, mode="valid") == 0
-        )
-        candidate_starts = np.flatnonzero(free_run)
-
-        used_slots = np.where(global_if_used_slots == 1)[0]
-        min_start_slot = int(used_slots.max() + 1) if used_slots.size else 0
-        min_start_slot = max(0, min_start_slot - T_MELT)
-
-        candidate_starts = candidate_starts[candidate_starts >= min_start_slot]
-        candidate_starts = candidate_starts[:max_candidate_starts_to_scan]
-
-        for potential_if_start_slot in candidate_starts:
-
-            # # NEW Constraint: Check if IF operation falls into any break time
-            # if_op_start_minute = potential_if_start_slot * SLOT_DURATION
-            # if_op_end_minute = (potential_if_start_slot + T_MELT) * SLOT_DURATION
-            # is_in_break = False
-            # for break_start_abs, break_end_abs in BREAK_TIMES_MINUTES:
-            #     # Check for overlap:
-            #     # (IF_start < Break_end) and (IF_end > Break_start)
-            #     if (
-            #         if_op_start_minute < break_end_abs
-            #         and if_op_end_minute > break_start_abs
-            #     ):
-            #         is_in_break = True
-            #         break
-
-            # if is_in_break:
-            #     continue  # Skip this slot as it overlaps with a break time
-
-            potential_if_melt_finish_minute = (
-                potential_if_start_slot + T_MELT
-            ) * SLOT_DURATION
-
-            # Ensure we are not trying to schedule IF to finish in the past relative to M&H sim
-            if potential_if_melt_finish_minute < internal_last_mh_sim_minute:
-                continue
-
-            # Constraint 2: M&H readiness at potential_if_melt_finish_minute
-            # Simulate M&H state up to the point just before this potential pour
-            mh_levels_before_pour, mh_downtime_before_pour = (
-                _greedy_fast_forward_mh_state(
-                    potential_if_melt_finish_minute,
-                    internal_mh_levels_kg,
-                    internal_mh_downtime_remaining_min,
-                    internal_last_mh_sim_minute,
-                )
-            )
-
-            # --- REMOVED BREAK TIME CHECK FOR POURING FROM HERE ---
-            # The original check `is_break_at_pour_minute` is removed from greedy_assignment.
-            # If a pour happens during a break, simulate_mh_consumption_v2 will handle M&H downtime correctly.
-            # The IF working during break penalty is now the main deterrent for IF activity during breaks.
-
-            # Check if M&H furnaces are in post-pour downtime from a *previous* pour
-            # The fast-forward helper updates downtime state deterministically.
-
-            available_capacity_A = MH_MAX_CAPACITY_KG["A"] - mh_levels_before_pour["A"]
-            available_capacity_B = MH_MAX_CAPACITY_KG["B"] - mh_levels_before_pour["B"]
-            total_available_mh_capacity = available_capacity_A + available_capacity_B
-
-            score, shortfall_kg, _, _ = _score_candidate_slot(
-                potential_if_start_slot,
-                potential_if_melt_finish_minute,
-                mh_levels_before_pour,
-                total_available_mh_capacity,
-                last_if_end_slot_by_furnace[chosen_if_furnace_idx],
-            )
-            candidate = {
-                "start_slot": potential_if_start_slot,
-                "mh_levels_before_pour": mh_levels_before_pour.copy(),
-                "mh_downtime_before_pour": mh_downtime_before_pour.copy(),
-                "melt_finish_minute": potential_if_melt_finish_minute,
-                "score": score,
-                "shortfall_kg": shortfall_kg,
-            }
-
-            # Align with simulator: candidate is viable if there is any free MH capacity.
-            if total_available_mh_capacity > 0:
-                viable_slots_data.append(candidate)
-
-        selected_candidate = None
-        if viable_slots_data:
-            # Deterministic tie-break: score -> shortfall -> start slot -> melt finish
-            selected_candidate = min(
-                viable_slots_data,
-                key=lambda c: (
-                    c["score"],
-                    c["shortfall_kg"],
-                    c["start_slot"],
-                    c["melt_finish_minute"],
-                ),
-            )
-
-        # After checking potential slots, choose one if any were found
-        if selected_candidate is not None:
-            selected_start_slot = selected_candidate["start_slot"]
-            selected_mh_levels_before_pour = selected_candidate["mh_levels_before_pour"]
-            selected_mh_downtime_before_pour = selected_candidate[
-                "mh_downtime_before_pour"
-            ]
-            selected_melt_finish_minute = selected_candidate["melt_finish_minute"]
-
-            x_schedule_vector[2 * batch_idx_in_order] = selected_start_slot
-            x_schedule_vector[2 * batch_idx_in_order + 1] = chosen_if_furnace_idx
-
-            for t_slot_update in range(
-                selected_start_slot, selected_start_slot + T_MELT
-            ):
-                global_if_used_slots[t_slot_update] = 1
-
-            # Update internal M&H state to reflect this pour
-            # Set M&H state to what it was just before this chosen pour
-            internal_mh_levels_kg = selected_mh_levels_before_pour
-            internal_mh_downtime_remaining_min = selected_mh_downtime_before_pour
-
-            # Greedy state update follows simulator rule:
-            # pour as much as capacity allows; the remainder is overflow (not added to level).
-            g_poured_amount_A = 0
-            g_poured_amount_B = 0
-            g_remaining_metal = IF_BATCH_OUTPUT_KG
-
-            g_furnaces_in_fill_order = []
-            g_preferred_f = PREFERRED_MH_FURNACE_TO_FILL_FIRST
-
-            if g_preferred_f == "A":
-                g_furnaces_in_fill_order = ["A", "B"]
-            elif g_preferred_f == "B":
-                g_furnaces_in_fill_order = ["B", "A"]
-            else:  # Fallback
-                g_furnaces_in_fill_order = ["A", "B"]
-
-            for g_f_id in g_furnaces_in_fill_order:
-                if g_remaining_metal <= 0:
-                    break
-
-                g_space_in_furnace = (
-                    MH_MAX_CAPACITY_KG[g_f_id] - internal_mh_levels_kg[g_f_id]
-                )
-                g_amount_to_pour = min(g_remaining_metal, g_space_in_furnace)
-
-                if g_amount_to_pour > 0:
-                    if g_f_id == "A":
-                        g_poured_amount_A = g_amount_to_pour
-                    else:  # g_f_id == "B"
-                        g_poured_amount_B = g_amount_to_pour
-                    g_remaining_metal -= g_amount_to_pour
-
-            g_overflow_kg = max(0.0, g_remaining_metal)
-            _ = g_overflow_kg
-
-            # Update internal levels (greedy doesn't track overflow penalty, just levels)
-            internal_mh_levels_kg["A"] = min(
-                internal_mh_levels_kg["A"] + g_poured_amount_A,
-                MH_MAX_CAPACITY_KG["A"],
-            )
-            internal_mh_levels_kg["B"] = min(
-                internal_mh_levels_kg["B"] + g_poured_amount_B,
-                MH_MAX_CAPACITY_KG["B"],
-            )
-
-            internal_mh_downtime_remaining_min["A"] = POST_POUR_DOWNTIME_MIN
-            internal_mh_downtime_remaining_min["B"] = POST_POUR_DOWNTIME_MIN
-
-            # M&H state is now known at this minute.
-            internal_last_mh_sim_minute = selected_melt_finish_minute
-            last_if_end_slot_by_furnace[chosen_if_furnace_idx] = (
-                selected_start_slot + T_MELT
-            )
-
-            if_furnace_assignment_counter += (
-                1  # Advance furnace assignment for next batch
-            )
-            found_slot_for_batch = True
-            # No break here, as we've processed one batch and will continue to the next in batch_order
-
-        if not found_slot_for_batch:
-            # No globally free IF block left: return deterministic infeasible decode.
-            decoder_feasible = False
-            break
-
-    # Quick guardrail: decoder output should never contain global overlap.
-    if not _validate_no_global_if_overlap(x_schedule_vector, num_batches):
-        decoder_feasible = False
-
-    # Also mark infeasible if some batches remain unassigned.
-    if np.any(x_schedule_vector[::2] < 0):
-        decoder_feasible = False
-
-    return x_schedule_vector.astype(float), decoder_feasible
-
-
-_EVAL_CACHE = {}
-
-
-# --- คลาส HGA Problem (Level 1) ---
-class HGAProblem(Problem):  # สืบทอดจาก Problem
-    def __init__(self, num_batches_hga=NUM_BATCHES):  # Renamed num_batches
-        super().__init__(
-            n_var=num_batches_hga,
-            n_obj=2,
-            n_constr=0,
-            xl=0,
-            xu=num_batches_hga - 1,  # Use num_batches_hga
-        )  # Bounds สำหรับ Permutation
-
-    def _evaluate(self, P, out, *args, **kwargs):
-        # P คือ population ณ generation ปัจจุบัน (array of permutations)
-        results_f = []  # เก็บ objective values [energy, makespan]
-        evaluated_schedules_x = []  # Store x_schedule_vector for each individual in P
-        all_cost_components = []  # Store cost_components for each individual
-
-        # วนลูปแต่ละ Permutation ใน Population
-        for batch_order_perm in P:  # Renamed batch_order
-            cache_key = tuple(batch_order_perm.tolist())
-            if cache_key in _EVAL_CACHE:
-                energy, makespan, x_cached, cost_cached = _EVAL_CACHE[cache_key]
-                x_sched_vec = x_cached.copy()
-                cost_components = dict(cost_cached)
-            else:
-                # 1. แปลง Permutation เป็น x_schedule_vector (schedule) โดย Greedy Assignment
-                x_sched_vec, decoder_feasible = greedy_assignment(
-                    batch_order_perm, num_batches=self.n_var
-                )  # Renamed x
-
-                if decoder_feasible:
-                    # 2. คำนวณ Objectives โดยใช้ scheduling_cost เดิม
-                    energy, makespan, cost_components = scheduling_cost(x_sched_vec)
-                else:
-                    # Controlled penalty for decode failure (avoid clamp-induced overlap explosions).
-                    energy = 1e15
-                    makespan = TOTAL_SLOTS * SLOT_DURATION * 2
-                    cost_components = {
-                        "total_cost": energy,
-                        "makespan_minutes": makespan,
-                        "decoder_infeasible_penalty": 1e15,
-                    }
-
-                _EVAL_CACHE[cache_key] = (
-                    energy,
-                    makespan,
-                    x_sched_vec.copy(),
-                    dict(cost_components),
-                )
-
-            evaluated_schedules_x.append(x_sched_vec)  # Store the generated schedule
-            all_cost_components.append(cost_components)  # Store the detailed components
-
-            # เพิ่ม penalty สูงมากถ้า greedy assignment ล้มเหลว (เช่น หา slot ไม่ได้)
-            # (ตรวจจาก x_sched_vec ที่ได้ หรือเพิ่ม flag จาก greedy_assignment)
-            # ตัวอย่าง: ตรวจสอบว่า makespan ดูสมเหตุสมผลไหม
-            if makespan > TOTAL_SLOTS * SLOT_DURATION * 1.1:  # ถ้า makespan ยาวผิดปกติ
-                energy += 1e15  # ลงโทษหนักๆ
-
-            results_f.append([energy, makespan])
-
-        # กำหนดค่า Objectives ให้กับ Population
-        out["F"] = np.array(results_f)
-        if DEBUG:
-            unique = np.unique(np.round(out["F"], 2), axis=0).shape[0]
-            print("DEBUG unique F:", unique)
-        out["schedules"] = np.array(
-            evaluated_schedules_x
-        )  # Attach all generated schedules to the output
-        out["cost_details"] = all_cost_components  # Attach all cost component dicts
-
-
-def main():
-    # ===== Run HGA using NSGA-II =====
-    problem = HGAProblem(NUM_BATCHES)  # <--- ใช้ HGAProblem
-
-    # --- Operators สำหรับ Permutation ---
-    sampling = PermutationRandomSampling()
-    crossover = OrderCrossover()
-    mutation = InversionMutation()
-
-    algorithm = NSGA2(
-        pop_size=50,
-        sampling=sampling,  # <--- ใช้ Permutation Sampling
-        crossover=crossover,  # <--- ใช้ Permutation Crossover
-        mutation=mutation,  # <--- ใช้ Permutation Mutation
-        eliminate_duplicates=True,  # อาจจะต้อง custom duplicate detection สำหรับ permutation ถ้าจำเป็น
-    )
-
-    termination = get_termination("n_gen", 100)  # หรือเกณฑ์อื่นๆ
-
-    print("Running HGA optimization...")
-    result = minimize(
-        problem, algorithm, termination, seed=42, verbose=True, save_history=False
-    )  # ปิด history ถ้าไม่ได้ใช้ เพื่อประหยัด memory
-
-    print("Optimization finished.")
-
-    # ===== Plot Result (Pareto Front) =====
-    F_results = result.F  # Renamed F to F_results Objective values [energy, makespan]
-    plt.figure(figsize=(10, 6))
-    plt.scatter(
-        F_results[:, 0],
-        F_results[:, 1],
-        c="red",
-        s=40,
-        edgecolors="k",
-        label="HGA Pareto Front",
-    )  # เปลี่ยนสี/label
-    plt.xlabel("Total Energy Consumption")
-    plt.ylabel("Makespan (minutes)")
-    plt.title("HGA Pareto Front for Melting Schedule")
-    plt.grid(True)
-    plt.legend()
-    plt.show()
-
-    # ===== แสดงผลลัพธ์และ Plot ตารางเวลาสำหรับ Solutions ที่ดีที่สุด =====
-    print("\nProcessing results...")
-
-    opt_population = (
-        result.opt
-    )  # Population object containing non-dominated individuals
-
-    num_to_show = min(5, len(opt_population) if opt_population is not None else 0)
-
-    if num_to_show == 0:
-        print("\nNo solutions found in the Pareto front to display.")
-    else:
-        print(f"\nShowing top {num_to_show} (up to 5) solutions from the Pareto front:")
-
-    for i in range(num_to_show):
-        individual = opt_population[i]
-        permutation = individual.X  # The permutation (decision variables)
-        energy, makespan = individual.F  # The objective values
-
-        # Retrieve the stored x_vector (schedule) generated during evaluation
-        x_vector = individual.get("schedules")
-        cost_details = individual.get("cost_details")  # Retrieve cost details
-
-        print(f"\nSolution #{i+1}")
-        print(f"  Batch Order (Permutation): {permutation}")
-        # print(f"  Total Energy (from F): {energy:.2f}") # This is 'cost' which includes penalties
-        # print(f"  Makespan (from F)    : {makespan:.2f}")
-
-        if cost_details:
-            print(f"  Total Cost (Objective 1) : {cost_details['total_cost']:.2f}")
-            print(
-                f"  Makespan (Objective 2)   : {cost_details['makespan_minutes']:.2f} min"
-            )
-            print(f"  --------------------------------------------------")
-            print(format_schedule_breakdown(cost_details))
-            print(f"  --------------------------------------------------")
-        else:
-            # Fallback if cost_details are not available for some reason
-            print(f"  Total Cost (from F)      : {energy:.2f}")
-            print(f"  Makespan (from F)        : {makespan:.2f} min")
-
-        # --- Plot ตารางเวลา using the retrieved x_vector ---
-        if x_vector is not None:
-            print(f"  Retrieved Schedule Vec (x): {np.round(x_vector, 2)}")
-            # Check if the schedule vector indicates any valid scheduling attempt
-            # (e.g., not all default -1 if greedy_assignment could return that for full failure)
-            # The current greedy_assignment assigns TOTAL_SLOTS for fallback.
-            # decode_schedule handles clamping.
-            try:
-                schedule = decode_schedule(x_vector)
-                if schedule:  # Ensure schedule is not empty
-                    # Use makespan from F_results for the title, as it's the 'evaluated' makespan
-                    base_if_energy_kwh = cost_details.get("base_if_energy_kwh", 0.0)
-                    if_holding_penalty_cost = cost_details.get(
-                        "if_holding_penalty", 0.0
-                    )
-                    actual_if_energy_kwh = base_if_energy_kwh + if_holding_penalty_cost
-                    plot_title = f"HGA Schedule - Sol {i+1} (Actual IF Energy: {actual_if_energy_kwh:.0f} kWh, Total Cost: {cost_details['total_cost']:.0f}, Makespan: {cost_details['makespan_minutes']:.0f} min)"
-
-                    plot_schedule_and_mh(
-                        schedule,
-                        title=plot_title,
-                        simulated_time_points=None,  # Trigger re-simulation in plot function for M&H
-                        simulated_mh_levels=None,  # Trigger re-simulation in plot function for M&H
-                        batch_timing=cost_details.get("batch_timing"),
-                    )
-                else:
-                    print(
-                        "  Could not decode schedule for plotting (empty or invalid schedule returned from evaluation)."
-                    )
-            except Exception as e:
-                print(f"  Error plotting schedule for solution {i+1}: {e}")
-                import traceback
-
-                print(traceback.format_exc())
-        else:
-            print(
-                f"  Could not retrieve schedule vector (x) for plotting for solution {i+1} (x_vector is None)."
-            )
+            plot_policy_result(details, title_prefix=f"Policy #{i+1}")
 
 
 if __name__ == "__main__":
