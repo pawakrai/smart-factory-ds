@@ -41,7 +41,7 @@ COLD_START_EXTRA_ENERGY_KWH = 30.0
 
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}
 MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.10, "B": 2.20}
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.00}
 MH_EMPTY_THRESHOLD_KG = 0.0
 MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
@@ -94,7 +94,9 @@ UNPOURED_BATCH_PENALTY = 250000.0
 # Alternating furnaces allows prep for the other furnace during melting.
 PREP_LOAD_TIME_MIN = 15
 ENABLE_PREP_MODEL = True
-ENFORCE_ALTERNATION_FLAG = False  # If True, enforce A/B alternation in force mode when feasible.
+ENFORCE_ALTERNATION_FLAG = (
+    False  # If True, enforce A/B alternation in force mode when feasible.
+)
 SWITCH_PENALTY_PER_REPEAT = 8.0
 PREP_WAIT_COST_PER_MIN = 25.0
 
@@ -124,6 +126,7 @@ OBJ1_COMPONENT_REFS = {
     "unpoured_penalty": 300000.0,
     "prep_wait_penalty": 50000.0,  # NEW/CHANGED
     "switch_penalty": 30000.0,  # NEW/CHANGED
+    "jit_delay_penalty": 20000.0,  # NEW/CHANGED
 }
 OBJ1_COMPONENT_WEIGHTS = {
     "energy_cost": 1.00,
@@ -136,10 +139,13 @@ OBJ1_COMPONENT_WEIGHTS = {
     "unpoured_penalty": 1.30,
     "prep_wait_penalty": 0.50,  # NEW/CHANGED
     "switch_penalty": 0.40,  # NEW/CHANGED
+    "jit_delay_penalty": 0.25,  # NEW/CHANGED
 }
 
 # Optional constraint-handling mode to prevent "all-penalty" domination.
-USE_CONSTRAINT_HANDLING = False
+USE_CONSTRAINT_HANDLING = (
+    True  # NEW/CHANGED: prioritize feasible/service-respecting solutions.
+)
 OBJ1_EXCLUDE_SERVICE_PENALTIES_WHEN_CONSTRAINED = (
     True  # CHANGED (Step D): keep Obj1 focused on cost when using constraints.
 )
@@ -148,7 +154,10 @@ MAX_EMPTY_MIN_ALLOW = 120.0
 MAX_LOW_LEVEL_MIN_ALLOW = 240.0
 MAX_SHORTFALL_KG_ALLOW = 1e-6  # CHANGED (Step B): allow near-zero daily shortfall only.
 HARD_FORBID_OVERFLOW = True
-SIMPLE_POLICY_MODE = True  # NEW/CHANGED: use reduced 10-variable policy for smoother Pareto fronts.
+SIMPLE_POLICY_MODE = (
+    True  # NEW/CHANGED: use reduced 10-variable policy for smoother Pareto fronts.
+)
+JIT_DELAY_COST_PER_MIN = 6.0  # NEW/CHANGED: mild cost for excessive JIT deferral.
 
 # 3-objective model:
 # Obj0: weighted violation severity (dimensionless score)
@@ -183,6 +192,7 @@ POLICY_KEY_STEPS = {
     "alternation_bias": 0.02,
     "force_urgency_threshold": 0.01,
     "power_aggressiveness": 0.01,
+    "jit_slack_min": 1.0,  # NEW/CHANGED
     # Legacy/full-mode keys retained for compatibility.
     "trigger_a_frac": 0.01,
     "trigger_b_frac": 0.01,
@@ -244,7 +254,7 @@ def _compute_batch_profile(power_kw, is_cold_start, if_furnace):
 
 
 def _decode_policy_vector(x):
-    # NEW/CHANGED: simple interpretable policy mode (10 vars) for smoother trade-offs.
+    # NEW/CHANGED: simple interpretable policy mode (11 vars) for smoother trade-offs.
     if SIMPLE_POLICY_MODE:
         x = np.asarray(x, dtype=float)
         lookahead_min = int(np.clip(round(np.clip(x[2], 0.0, 1.0) * 180.0), 0, 180))
@@ -261,6 +271,7 @@ def _decode_policy_vector(x):
             "alternation_bias": float(np.clip(x[7], -1.0, 1.0)),
             "force_urgency_threshold": float(np.clip(x[8], 0.70, 0.98)),
             "power_aggressiveness": float(np.clip(x[9], 0.0, 1.0)),
+            "jit_slack_min": float(np.clip(x[10], 0.0, 1.0) * 60.0),  # NEW/CHANGED
             # Keep these for compatibility with existing helper logic.
             "wait_vs_rush": float(np.clip(x[9], 0.0, 1.0)),
             "start_score_bias": 0.0,
@@ -355,6 +366,9 @@ def _policy_cache_key(x):
             _quantize_to_step(
                 p["power_aggressiveness"], POLICY_KEY_STEPS["power_aggressiveness"]
             ),
+            _quantize_to_step(
+                p["jit_slack_min"], POLICY_KEY_STEPS["jit_slack_min"]
+            ),  # NEW/CHANGED
         )
     return (
         _quantize_to_step(p["trigger_a_frac"], POLICY_KEY_STEPS["trigger_a_frac"]),
@@ -416,6 +430,9 @@ def _compute_obj1_components(m):
         ),  # NEW/CHANGED
         "switch_penalty": float(
             m.get("non_alternation_count", 0.0) * SWITCH_PENALTY_PER_REPEAT
+        ),  # NEW/CHANGED
+        "jit_delay_penalty": float(
+            m.get("jit_delay_minutes", 0.0) * JIT_DELAY_COST_PER_MIN
         ),  # NEW/CHANGED
     }
     return comp
@@ -625,7 +642,9 @@ def _select_if_power(
         # NEW/CHANGED: when forcing feasibility, de-emphasize TOU/peak and push power.
         wait_weight *= 0.25
         peak_weight *= 0.35
-        urgency_pref = min(2, urgency_pref + int(policy.get("power_aggressiveness", 0.5) >= 0.4))
+        urgency_pref = min(
+            2, urgency_pref + int(policy.get("power_aggressiveness", 0.5) >= 0.4)
+        )
 
     for idx, p in enumerate(IF_POWER_OPTIONS):
         # Encourage high power when urgent, low power when not urgent.
@@ -812,6 +831,7 @@ def simulate_policy_day(policy_params):
     reheat_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
     total_plant_kw = np.zeros(SIM_DURATION_MIN, dtype=float)
     energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)
+    reheat_energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)  # NEW/CHANGED
 
     mh_levels_series = {
         "A": np.zeros(SIM_DURATION_MIN, dtype=float),
@@ -848,7 +868,10 @@ def simulate_policy_day(policy_params):
     if_active_intervals = []
     last_start_min = -1_000_000
     parallel_peak_minutes = 0.0
-    prep_ready_time = {0: 0, 1: 0}  # NEW/CHANGED: prep readiness per IF furnace.
+    prep_remaining = {
+        0: 0,
+        1: 0,
+    }  # NEW/CHANGED: prep load remaining minutes per IF furnace.
     prep_wait_minutes = 0.0  # NEW/CHANGED
     start_blocked_by_prep_count = 0  # NEW/CHANGED
     forced_start_count = 0  # NEW/CHANGED
@@ -856,13 +879,20 @@ def simulate_policy_day(policy_params):
     alternation_count = 0  # NEW/CHANGED
     last_started_furnace = None  # NEW/CHANGED
     total_poured_kg_so_far = 0.0  # NEW/CHANGED
+    jit_delay_minutes = 0.0  # NEW/CHANGED
     daily_demand_kg = float(
         (MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"])
         * SIM_DURATION_MIN
     )  # NEW/CHANGED
-    initial_inventory_kg = float(MH_INITIAL_LEVEL_KG["A"] + MH_INITIAL_LEVEL_KG["B"])  # NEW/CHANGED
-    required_from_if_kg = float(max(0.0, daily_demand_kg - initial_inventory_kg))  # NEW/CHANGED
-    min_duration_per_batch = float(min(v["duration_min_hot"] for v in POWER_PROFILE.values()))  # NEW/CHANGED
+    initial_inventory_kg = float(
+        MH_INITIAL_LEVEL_KG["A"] + MH_INITIAL_LEVEL_KG["B"]
+    )  # NEW/CHANGED
+    required_from_if_kg = float(
+        max(0.0, daily_demand_kg - initial_inventory_kg)
+    )  # NEW/CHANGED
+    min_duration_per_batch = float(
+        min(v["duration_min_hot"] for v in POWER_PROFILE.values())
+    )  # NEW/CHANGED
 
     for t in range(SIM_DURATION_MIN):
         # 1) progress melting -> holding
@@ -875,18 +905,38 @@ def simulate_policy_day(policy_params):
                     batches[b_id]["status"] = "holding"
                     ready_to_pour_queue.append(b_id)
 
+        # NEW/CHANGED: reduce prep remaining when another furnace is actively melting.
+        melting_furnaces = [
+            f_idx
+            for f_idx in available_if_furnaces
+            if if_states[f_idx]["active"] and if_states[f_idx]["status"] == "melting"
+        ]
+        if ENABLE_PREP_MODEL:
+            for f_idx in available_if_furnaces:
+                if if_states[f_idx]["active"]:
+                    continue
+                if prep_remaining[f_idx] <= 0:
+                    continue
+                if any(mf != f_idx for mf in melting_furnaces):
+                    prep_remaining[f_idx] = max(0, prep_remaining[f_idx] - 1)
+
         # 2) pour with feasibility repair (no overflow)
         keep_pouring = True
         while keep_pouring and ready_to_pour_queue:
             keep_pouring = False
             b_id = ready_to_pour_queue[0]
 
-            # Respect post-pour downtime for receiving in M&H.
-            if downtime_remaining["A"] > 0 or downtime_remaining["B"] > 0:
-                break
-
-            available_A = MH_MAX_CAPACITY_KG["A"] - current_level["A"]
-            available_B = MH_MAX_CAPACITY_KG["B"] - current_level["B"]
+            # NEW/CHANGED: only furnaces not in downtime are eligible to receive pour.
+            available_A = (
+                MH_MAX_CAPACITY_KG["A"] - current_level["A"]
+                if downtime_remaining["A"] <= 0
+                else 0.0
+            )
+            available_B = (
+                MH_MAX_CAPACITY_KG["B"] - current_level["B"]
+                if downtime_remaining["B"] <= 0
+                else 0.0
+            )
             total_available = available_A + available_B
             if total_available < IF_BATCH_OUTPUT_KG:
                 break
@@ -900,6 +950,10 @@ def simulate_policy_day(policy_params):
             for f_id in fill_order:
                 if remaining <= 0:
                     break
+                if (
+                    downtime_remaining[f_id] > 0
+                ):  # NEW/CHANGED: skip receiving furnace in cooldown.
+                    continue
                 space = MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
                 put = min(remaining, space)
                 if put > 0:
@@ -924,8 +978,10 @@ def simulate_policy_day(policy_params):
                 current_level["B"] + poured_B, 0.0, MH_MAX_CAPACITY_KG["B"]
             )
 
-            downtime_remaining["A"] = POST_POUR_DOWNTIME_MIN
-            downtime_remaining["B"] = POST_POUR_DOWNTIME_MIN
+            if poured_A > 0:
+                downtime_remaining["A"] = POST_POUR_DOWNTIME_MIN  # NEW/CHANGED
+            if poured_B > 0:
+                downtime_remaining["B"] = POST_POUR_DOWNTIME_MIN  # NEW/CHANGED
 
             batches[b_id]["poured_A_kg"] = poured_A
             batches[b_id]["poured_B_kg"] = poured_B
@@ -936,6 +992,10 @@ def simulate_policy_day(policy_params):
 
             f_idx = batches[b_id]["if_furnace"]
             if_states[f_idx] = {"active": False, "status": "idle", "batch_id": None}
+            if ENABLE_PREP_MODEL:
+                prep_remaining[f_idx] = (
+                    PREP_LOAD_TIME_MIN  # NEW/CHANGED: prep starts after pour releases furnace.
+                )
             last_if_release_time[f_idx] = t
             actual_pour_events.append((t, b_id))
             ready_to_pour_queue.pop(0)
@@ -950,7 +1010,9 @@ def simulate_policy_day(policy_params):
                 0.0, required_from_if_kg - total_poured_kg_so_far
             )  # NEW/CHANGED
             remaining_time_min = float(SIM_DURATION_MIN - t)  # NEW/CHANGED
-            batch_needed = int(np.ceil(expected_required_remaining_kg / IF_BATCH_OUTPUT_KG))  # NEW/CHANGED
+            batch_needed = int(
+                np.ceil(expected_required_remaining_kg / IF_BATCH_OUTPUT_KG)
+            )  # NEW/CHANGED
             force_buffer = min_duration_per_batch + (
                 PREP_LOAD_TIME_MIN * 0.5 if ENABLE_PREP_MODEL else 0.0
             )  # NEW/CHANGED
@@ -959,8 +1021,8 @@ def simulate_policy_day(policy_params):
             )  # NEW/CHANGED
 
             any_if_active = any(if_states[f]["active"] for f in available_if_furnaces)
-            idle = [f for f in available_if_furnaces if not if_states[f]["active"]]
-            if idle:
+            idle_all = [f for f in available_if_furnaces if not if_states[f]["active"]]
+            if idle_all:
                 if_kw_now = 0.0
                 for f in available_if_furnaces:
                     st = if_states[f]
@@ -979,16 +1041,41 @@ def simulate_policy_day(policy_params):
                 gap_ok = (t - last_start_min) >= min_gap_now
                 can_parallel_now = _parallel_allowed(policy, state, start_score)
                 if (not any_if_active) or can_parallel_now:
-                    start_allowed = (start_score >= 0.0 and gap_ok) or force_mode  # NEW/CHANGED
+                    start_allowed = (
+                        start_score >= 0.0 and gap_ok
+                    ) or force_mode  # NEW/CHANGED
                     if start_allowed:
-                        if force_mode and ENABLE_PREP_MODEL and ENFORCE_ALTERNATION_FLAG and len(idle) > 1 and last_started_furnace in idle:
-                            alt_idle = [f for f in idle if f != last_started_furnace]
+                        idle_ready = [
+                            f
+                            for f in idle_all
+                            if (not ENABLE_PREP_MODEL) or prep_remaining[f] <= 0
+                        ]  # NEW/CHANGED
+                        if not idle_ready:
+                            start_blocked_by_prep_count += 1  # NEW/CHANGED
+                            if ENABLE_PREP_MODEL:
+                                prep_wait_minutes += float(
+                                    max(0, min(prep_remaining[f] for f in idle_all))
+                                )  # NEW/CHANGED
+                            continue
+
+                        if (
+                            force_mode
+                            and ENABLE_PREP_MODEL
+                            and ENFORCE_ALTERNATION_FLAG
+                            and len(idle_ready) > 1
+                            and last_started_furnace in idle_ready
+                        ):
+                            alt_idle = [
+                                f for f in idle_ready if f != last_started_furnace
+                            ]
                             if alt_idle:
-                                idle = alt_idle + [f for f in idle if f not in alt_idle]  # NEW/CHANGED
+                                idle_ready = alt_idle + [
+                                    f for f in idle_ready if f not in alt_idle
+                                ]  # NEW/CHANGED
 
                         chosen_if = _select_if_furnace(
                             policy,
-                            idle,
+                            idle_ready,
                             current_level,
                             t,
                             last_if_release_time,
@@ -996,10 +1083,14 @@ def simulate_policy_day(policy_params):
                             last_started_furnace=last_started_furnace,
                         )
 
-                        blocked_by_prep = ENABLE_PREP_MODEL and t < prep_ready_time.get(chosen_if, 0)
+                        blocked_by_prep = (
+                            ENABLE_PREP_MODEL and prep_remaining.get(chosen_if, 0) > 0
+                        )
                         if blocked_by_prep:
                             start_blocked_by_prep_count += 1  # NEW/CHANGED
-                            prep_wait_minutes += float(prep_ready_time[chosen_if] - t)  # NEW/CHANGED
+                            prep_wait_minutes += float(
+                                prep_remaining[chosen_if]
+                            )  # NEW/CHANGED
                         if not blocked_by_prep:
                             gap = (
                                 None
@@ -1011,15 +1102,50 @@ def simulate_policy_day(policy_params):
                             )
 
                             selected_power = _select_if_power(
-                                policy, current_level, baseline_kw[t], if_kw_now, t, force_mode=force_mode
+                                policy,
+                                current_level,
+                                baseline_kw[t],
+                                if_kw_now,
+                                t,
+                                force_mode=force_mode,
                             )
-                            projected_total = baseline_kw[t] + if_kw_now + selected_power
-                            hard_guard = CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
-                            shortage_override = (
-                                force_mode
-                                and state["depletion_urgency"]
-                                >= policy.get("force_urgency_threshold", 0.92)
+                            # NEW/CHANGED: JIT start delay based on pour-ready ETA and policy slack.
+                            cap_free_now = 0.0
+                            if downtime_remaining["A"] <= 0:
+                                cap_free_now += max(
+                                    0.0, MH_MAX_CAPACITY_KG["A"] - current_level["A"]
+                                )
+                            if downtime_remaining["B"] <= 0:
+                                cap_free_now += max(
+                                    0.0, MH_MAX_CAPACITY_KG["B"] - current_level["B"]
+                                )
+                            need_cap = max(0.0, IF_BATCH_OUTPUT_KG - cap_free_now)
+                            total_cons_rate = max(
+                                1e-9,
+                                MH_CONSUMPTION_RATE_KG_PER_MIN["A"]
+                                + MH_CONSUMPTION_RATE_KG_PER_MIN["B"],
                             )
+                            time_to_free = need_cap / total_cons_rate
+                            pour_ready_eta_min = max(
+                                time_to_free, float(max(downtime_remaining.values()))
+                            )
+                            est_duration = _compute_batch_profile(
+                                selected_power, is_cold_start, chosen_if
+                            )["duration_min"]
+                            hold_risk = max(0.0, pour_ready_eta_min - est_duration)
+                            jit_slack = float(policy.get("jit_slack_min", 0.0))
+                            if (not force_mode) and hold_risk > jit_slack:
+                                jit_delay_minutes += 1.0
+                                continue
+                            projected_total = (
+                                baseline_kw[t] + if_kw_now + selected_power
+                            )
+                            hard_guard = (
+                                CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
+                            )
+                            shortage_override = force_mode and state[
+                                "depletion_urgency"
+                            ] >= policy.get("force_urgency_threshold", 0.92)
                             if projected_total <= hard_guard or shortage_override:
                                 profile = _compute_batch_profile(
                                     selected_power, is_cold_start, chosen_if
@@ -1060,10 +1186,10 @@ def simulate_policy_day(policy_params):
 
                                 if ENABLE_PREP_MODEL and len(available_if_furnaces) > 1:
                                     other_f = 1 - chosen_if
-                                    prep_ready_time[other_f] = max(
-                                        prep_ready_time.get(other_f, 0),
-                                        t + PREP_LOAD_TIME_MIN,
-                                    )  # NEW/CHANGED
+                                    # NEW/CHANGED: do not set prep for other on start; prep accrues via melting minute updates.
+                                    prep_remaining[other_f] = max(
+                                        0, prep_remaining.get(other_f, 0)
+                                    )
 
         # 5) IF load minute
         minute_if_kw = 0.0
@@ -1116,6 +1242,9 @@ def simulate_policy_day(policy_params):
 
         total_plant_kw[t] = baseline_kw[t] + minute_if_kw
         energy_cost_series[t] = (minute_if_kw / 60.0) * _hour_price(t)
+        reheat_energy_cost_series[t] = (minute_reheat_kw / 60.0) * _hour_price(
+            t
+        )  # NEW/CHANGED
         active_if_count = sum(
             1 for f in available_if_furnaces if if_states[f]["active"]
         )
@@ -1137,6 +1266,7 @@ def simulate_policy_day(policy_params):
     total_reheat_kwh = float(np.sum(reheat_kw_series) / 60.0)
     total_if_kwh = float(np.sum(if_kw_series) / 60.0)
     total_energy_cost = float(np.sum(energy_cost_series))
+    reheat_energy_cost = float(np.sum(reheat_energy_cost_series))  # NEW/CHANGED
 
     peak_kw = float(np.max(total_plant_kw)) if len(total_plant_kw) else 0.0
     demand_excess = max(0.0, peak_kw - CONTRACT_DEMAND_KW)
@@ -1206,6 +1336,7 @@ def simulate_policy_day(policy_params):
         "metrics": {
             "melt_kwh": total_melt_kwh,
             "reheat_kwh": total_reheat_kwh,
+            "reheat_energy_cost": reheat_energy_cost,  # NEW/CHANGED
             "total_if_kwh": total_if_kwh,
             "total_energy_cost": total_energy_cost,
             "peak_kw": peak_kw,
@@ -1226,7 +1357,10 @@ def simulate_policy_day(policy_params):
             "non_alternation_count": float(non_alternation_count),  # NEW/CHANGED
             "alternation_ratio": alternation_ratio,  # NEW/CHANGED
             "forced_start_count": float(forced_start_count),  # NEW/CHANGED
-            "start_blocked_by_prep_count": float(start_blocked_by_prep_count),  # NEW/CHANGED
+            "start_blocked_by_prep_count": float(
+                start_blocked_by_prep_count
+            ),  # NEW/CHANGED
+            "jit_delay_minutes": float(jit_delay_minutes),  # NEW/CHANGED
             "min_level_reached": min_level_reached,
             "if_use_count_A": furnace_use_count[0],
             "if_use_count_B": furnace_use_count[1],
@@ -1247,6 +1381,7 @@ def evaluate_policy(policy_params):
         comp_for_obj["overflow_penalty"] = 0.0
         comp_for_obj["empty_penalty"] = 0.0
         comp_for_obj["low_level_min_penalty"] = 0.0
+        comp_for_obj["low_level_shape_penalty"] = 0.0  # NEW/CHANGED
         comp_for_obj["unpoured_penalty"] = 0.0
 
     obj1 = _aggregate_obj1(comp_for_obj)
@@ -1310,6 +1445,7 @@ def evaluate_policy(policy_params):
         "comp_unpoured_penalty": comp["unpoured_penalty"],
         "comp_prep_wait_penalty": comp["prep_wait_penalty"],  # NEW/CHANGED
         "comp_switch_penalty": comp["switch_penalty"],  # NEW/CHANGED
+        "comp_jit_delay_penalty": comp["jit_delay_penalty"],  # NEW/CHANGED
         "pct_energy_cost": contribution_pct["energy_cost"],
         "pct_demand_penalty": contribution_pct["demand_penalty"],
         "pct_holding_penalty": contribution_pct["holding_penalty"],
@@ -1328,6 +1464,7 @@ def evaluate_policy(policy_params):
         "total_if_kwh": m["total_if_kwh"],
         "melt_kwh": m["melt_kwh"],
         "reheat_kwh": m["reheat_kwh"],
+        "reheat_energy_cost": m.get("reheat_energy_cost", 0.0),  # NEW/CHANGED
         "total_energy_cost": m["total_energy_cost"],
         "peak_kw": m["peak_kw"],
         "demand_excess_kw": m["demand_excess_kw"],
@@ -1352,7 +1489,10 @@ def evaluate_policy(policy_params):
         "non_alternation_count": m.get("non_alternation_count", 0.0),  # NEW/CHANGED
         "alternation_ratio": m.get("alternation_ratio", 0.0),  # NEW/CHANGED
         "forced_start_count": m.get("forced_start_count", 0.0),  # NEW/CHANGED
-        "start_blocked_by_prep_count": m.get("start_blocked_by_prep_count", 0.0),  # NEW/CHANGED
+        "start_blocked_by_prep_count": m.get(
+            "start_blocked_by_prep_count", 0.0
+        ),  # NEW/CHANGED
+        "jit_delay_minutes": m.get("jit_delay_minutes", 0.0),  # NEW/CHANGED
         "min_level_A": m["min_level_reached"]["A"],
         "min_level_B": m["min_level_reached"]["B"],
         "policy": sim["policy"],
@@ -1369,21 +1509,21 @@ def evaluate_policy(policy_params):
 class PolicyProblem(Problem):
     def __init__(self):
         if SIMPLE_POLICY_MODE:
-            # NEW/CHANGED: compact 10-variable policy for smoother NSGA-II trade-offs.
+            # NEW/CHANGED: compact 11-variable policy for smoother NSGA-II trade-offs.
             xl = np.array(
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.70, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.70, 0.0, 0.0],
                 dtype=float,
             )
             xu = np.array(
-                [1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 0.98, 1.0],
+                [1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 0.98, 1.0, 1.0],
                 dtype=float,
             )
-            n_var = 10
+            n_var = 11
         else:
-        # [trigA_frac, trigB_frac, lookahead_norm, critA_frac, critB_frac, mid_frac,
-        #  headroom_norm, peak_weight, furnace_bias, wait_vs_rush,
-        #  start_bias, w_dep, w_queue, w_peak, min_gap_norm, gap_peak_coeff,
-        #  parallel_margin_norm, parallel_bias, coldstart_w, tou_w, balance_w]
+            # [trigA_frac, trigB_frac, lookahead_norm, critA_frac, critB_frac, mid_frac,
+            #  headroom_norm, peak_weight, furnace_bias, wait_vs_rush,
+            #  start_bias, w_dep, w_queue, w_peak, min_gap_norm, gap_peak_coeff,
+            #  parallel_margin_norm, parallel_bias, coldstart_w, tou_w, balance_w]
             xl = np.array(
                 [
                     0.0,
@@ -1522,10 +1662,18 @@ class PolicyProblem(Problem):
             shortfalls = np.asarray(
                 [d.get("shortfall_kg", 0.0) for d in details], dtype=float
             )  # CHANGED (Step F)
-            shortfalls = np.where(np.isfinite(shortfalls), shortfalls, 0.0)  # CHANGED (Step F)
-            avg_shortfall = float(np.mean(shortfalls)) if len(shortfalls) > 0 else 0.0  # CHANGED (Step F)
-            min_shortfall = float(np.min(shortfalls)) if len(shortfalls) > 0 else 0.0  # CHANGED (Step F)
-            max_shortfall = float(np.max(shortfalls)) if len(shortfalls) > 0 else 0.0  # CHANGED (Step F)
+            shortfalls = np.where(
+                np.isfinite(shortfalls), shortfalls, 0.0
+            )  # CHANGED (Step F)
+            avg_shortfall = (
+                float(np.mean(shortfalls)) if len(shortfalls) > 0 else 0.0
+            )  # CHANGED (Step F)
+            min_shortfall = (
+                float(np.min(shortfalls)) if len(shortfalls) > 0 else 0.0
+            )  # CHANGED (Step F)
+            max_shortfall = (
+                float(np.max(shortfalls)) if len(shortfalls) > 0 else 0.0
+            )  # CHANGED (Step F)
             shortfall_ok_pct = (
                 float(np.mean(shortfalls <= MAX_SHORTFALL_KG_ALLOW) * 100.0)
                 if len(shortfalls) > 0
@@ -1582,6 +1730,7 @@ def format_policy_breakdown(cost):
         f"    - Melt kWh              : {cost.get('melt_kwh', 0.0):.2f}",
         f"    - Reheat kWh            : {cost.get('reheat_kwh', 0.0):.2f}",
         f"  Energy Cost (TOU)         : {cost.get('total_energy_cost', 0.0):.2f}",
+        f"  Reheat Energy Cost        : {cost.get('reheat_energy_cost', 0.0):.2f}",  # NEW/CHANGED
         f"  Peak kW                   : {cost.get('peak_kw', 0.0):.2f}",
         f"  Demand Excess kW          : {cost.get('demand_excess_kw', 0.0):.2f}",
         f"  Demand Penalty            : {cost.get('demand_penalty', 0.0):.2f}",
@@ -1602,6 +1751,7 @@ def format_policy_breakdown(cost):
         f"  Alternation Ratio         : {cost.get('alternation_ratio', 0.0):.3f}",  # NEW/CHANGED
         f"  Forced Start Count        : {cost.get('forced_start_count', 0.0):.2f}",  # NEW/CHANGED
         f"  Start Blocked By Prep     : {cost.get('start_blocked_by_prep_count', 0.0):.2f}",  # NEW/CHANGED
+        f"  JIT Delay Minutes         : {cost.get('jit_delay_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Min Level Reached A/B     : {cost.get('min_level_A', 0.0):.2f} / {cost.get('min_level_B', 0.0):.2f}",
         "  Obj1 Decomposition (raw / %raw):",
         f"    - Energy Cost           : {cost.get('comp_energy_cost', 0.0):.2f} / {cost.get('pct_energy_cost', 0.0):.2f}%",
@@ -1614,6 +1764,7 @@ def format_policy_breakdown(cost):
         f"    - Unpoured Penalty      : {cost.get('comp_unpoured_penalty', 0.0):.2f} / {cost.get('pct_unpoured_penalty', 0.0):.2f}%",
         f"    - Prep Wait Penalty     : {cost.get('comp_prep_wait_penalty', 0.0):.2f}",
         f"    - Switch Penalty        : {cost.get('comp_switch_penalty', 0.0):.2f}",
+        f"    - JIT Delay Penalty     : {cost.get('comp_jit_delay_penalty', 0.0):.2f}",
         "  Constraint Violations:",
         f"    - Overflow (kg)         : {cost.get('violation_overflow', 0.0):.2f}",
         f"    - Shortfall (kg)        : {cost.get('violation_shortfall_kg', 0.0):.2f}",  # CHANGED (Step B)
@@ -1818,15 +1969,25 @@ def main():
     )
     print("Optimization finished.")
 
-    F_results = result.F
-    if F_results is None and result.pop is not None:
-        F_results = result.pop.get("F")
+    F_opt = result.F
+    F_pop = result.pop.get("F") if result.pop is not None else None
+    F_results = F_opt if F_opt is not None else F_pop
 
     if F_results is None or len(F_results) == 0:
         print("Warning: no objective points available for plotting Pareto front.")
     else:
-        unique_pareto = np.unique(np.round(F_results, 2), axis=0).shape[0]
-        print("Pareto unique points (rounded 2dp):", unique_pareto)
+        unique_F_opt = (
+            np.unique(F_opt, axis=0).shape[0]
+            if F_opt is not None and len(F_opt) > 0
+            else 0
+        )  # NEW/CHANGED
+        unique_F_pop = (
+            np.unique(F_pop, axis=0).shape[0]
+            if F_pop is not None and len(F_pop) > 0
+            else 0
+        )  # NEW/CHANGED
+        print("unique_F_opt:", unique_F_opt)  # NEW/CHANGED
+        print("unique_F_pop:", unique_F_pop)  # NEW/CHANGED
         print(
             "Obj0 range:",
             float(np.min(F_results[:, 0])),
@@ -1846,14 +2007,23 @@ def main():
             float(np.max(F_results[:, 2])),
         )
 
+        # NEW/CHANGED: plot population front (feasible first when CV available).
+        F_plot = F_pop if F_pop is not None and len(F_pop) > 0 else F_results
+        if result.pop is not None and F_plot is not None and len(F_plot) > 0:
+            cv = result.pop.get("CV")
+            if cv is not None and len(cv) == len(F_plot):
+                feasible_mask = np.asarray(cv).reshape(-1) <= 1e-9
+                if np.any(feasible_mask):
+                    F_plot = F_plot[feasible_mask]
+
         plt.figure(figsize=(10, 6))
         plt.scatter(
-            F_results[:, 1],
-            F_results[:, 2],
+            F_plot[:, 1],
+            F_plot[:, 2],
             c="red",
             s=35,
             edgecolors="k",
-            label="Policy Pareto Front",
+            label="Population Front",
         )
         plt.xlabel("Obj1 (Cost)")
         plt.ylabel("Obj2 (Makespan min)")
@@ -1909,20 +2079,22 @@ def main():
 
 # NEW/CHANGED: ================== CONFIG SUMMARY ==================
 # SIMPLE_POLICY_MODE:
-#   True  -> compact 10-variable policy (recommended for smoother Pareto front)
+#   True  -> compact 11-variable policy (recommended for smoother Pareto front)
 #   False -> legacy/full policy variable set
 #
 # ENABLE_PREP_MODEL:
-#   True  -> enforce PREP_LOAD_TIME_MIN readiness per furnace.
-#            Starting furnace f prepares the other furnace during melt.
+#   True  -> prep_remaining model is active:
+#            - when furnace pour completes: prep_remaining[f] = PREP_LOAD_TIME_MIN
+#            - while the other furnace is melting: prep_remaining on idle furnace counts down
+#            - a furnace can start melting only when prep_remaining[f] == 0
 #   False -> disable prep-ready blocking dynamics.
 #
 # ENFORCE_ALTERNATION_FLAG:
 #   False -> soft alternation via alternation_bias + switch penalty.
 #   True  -> in force mode, prefer strict A/B alternation when feasible.
 #
-# PREP_LOAD_TIME_MIN / PREP_WAIT_COST_PER_MIN / SWITCH_PENALTY_PER_REPEAT:
-#   Tune these to match plant prep behavior and alternation economics.
+# PREP_LOAD_TIME_MIN / PREP_WAIT_COST_PER_MIN / SWITCH_PENALTY_PER_REPEAT / JIT_DELAY_COST_PER_MIN:
+#   Tune prep-delay, repetition cost, and JIT-delay economics for your plant.
 # ================================================================
 if __name__ == "__main__":
     main()
