@@ -16,6 +16,18 @@ from pymoo.algorithms.soo.nonconvex.ga import GA
 HOURS_A_DAY = 24 * 60
 SIM_DURATION_MIN = HOURS_A_DAY
 NUM_BATCHES = 12
+# NEW/CHANGED: optimization mode switch ("energy" or "service").
+OPT_MODE = "service"
+EPS_LEVEL = 1.0
+# NEW/CHANGED: service-mode scalarization weights (lexicographic-like priorities).
+SERVICE_W_MISSING_BATCHES = 1e9
+SERVICE_W_OVERFLOW = 1e8
+SERVICE_W_ZERO_MINUTES = 1e5
+SERVICE_W_EPS_DEFICIT_AREA = 1e2
+SERVICE_W_LOW_LEVEL_MINUTES = 1.0
+SERVICE_W_HOLDING_MINUTES = 1e4
+SERVICE_W_REHEAT_KWH = 1e5
+SERVICE_W_ENERGY_TIEBREAKER = 1e-6
 
 USE_FURNACE_A = True
 USE_FURNACE_B = True
@@ -41,7 +53,7 @@ COLD_START_EXTRA_ENERGY_KWH = 30.0
 
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}
 MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.80, "B": 2.80}
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.20, "B": 2.30}
 MH_EMPTY_THRESHOLD_KG = 0.0
 MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
@@ -164,16 +176,7 @@ SIMPLE_POLICY_MODE = (
 )
 JIT_DELAY_COST_PER_MIN = 6.0  # NEW/CHANGED: mild cost for excessive JIT deferral.
 
-# 3-objective model:
-# Obj0: weighted violation severity (dimensionless score)
-# Obj1: real operating cost proxy (energy + demand + non-hard service penalties)
-# Obj2: makespan (min)
-OBJ0_WEIGHTS = {
-    "overflow_kg": 1000.0,
-    "empty_min": 3.0,
-    "low_level_min": 1.0,
-    "parallel_peak_min": 4.0,
-}
+# Legacy constants retained (unused in single-objective mode).
 MAX_PARALLEL_PEAK_MIN_ALLOW = 0.0
 
 # Optional two-stage optimization:
@@ -515,30 +518,15 @@ def compute_total_cost(m, comp):
 
 
 def _violation_vector(m):
-    empty_total = float(m["mh_empty_minutes"]["A"] + m["mh_empty_minutes"]["B"])
-    low_total = float(m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"])
-    overflow_total = float(m["overflow_kg_total"])
-    parallel_peak_total = float(m.get("parallel_peak_minutes", 0.0))  # CHANGED (Step E)
-    # Guard against NaN/Inf/negative in any upstream metric.
-    if not np.isfinite(empty_total) or empty_total < 0.0:
-        empty_total = 0.0
-    if not np.isfinite(low_total) or low_total < 0.0:
-        low_total = 0.0
+    overflow_total = float(m.get("overflow_kg_total", 0.0))
     if not np.isfinite(overflow_total) or overflow_total < 0.0:
         overflow_total = 0.0
-    if (
-        not np.isfinite(parallel_peak_total) or parallel_peak_total < 0.0
-    ):  # CHANGED (Step E)
-        parallel_peak_total = 0.0
-    return np.array(
-        [
-            overflow_total - MAX_OVERFLOW_KG_ALLOW,
-            empty_total - MAX_EMPTY_MIN_ALLOW,
-            low_total - MAX_LOW_LEVEL_MIN_ALLOW,
-            parallel_peak_total - MAX_PARALLEL_PEAK_MIN_ALLOW,  # CHANGED (Step E)
-        ],
-        dtype=float,
-    )
+    overflow_violation = float(overflow_total - MAX_OVERFLOW_KG_ALLOW)
+
+    poured_batches = int(m.get("poured_batches_count", 0))
+    missing_batches = float(max(0, NUM_BATCHES - poured_batches))
+    # Constraints are the same for both modes.
+    return np.array([overflow_violation, missing_batches], dtype=float)
 
 
 class PolicyDuplicateElimination(ElementwiseDuplicateElimination):
@@ -874,6 +862,8 @@ def simulate_policy_day(policy_params):
     mh_empty_minutes = {"A": 0, "B": 0}
     mh_low_level_minutes = {"A": 0, "B": 0}
     mh_low_level_penalty = 0.0
+    zero_minutes_total = 0.0  # NEW/CHANGED
+    eps_deficit_area = 0.0  # NEW/CHANGED
     min_level_reached = {"A": current_level["A"], "B": current_level["B"]}
 
     overflow_kg_total = 0.0
@@ -1003,7 +993,9 @@ def simulate_policy_day(policy_params):
         # 4) policy start decision (score-based + dynamic spacing + demand-gating)
         if batch_id_counter < NUM_BATCHES:
             remaining_time_min = float(SIM_DURATION_MIN - t)  # NEW/CHANGED
-            remaining_batches = int(max(0, NUM_BATCHES - batch_id_counter))  # NEW/CHANGED
+            remaining_batches = int(
+                max(0, NUM_BATCHES - batch_id_counter)
+            )  # NEW/CHANGED
             force_buffer = min_duration_per_batch + (
                 PREP_LOAD_TIME_MIN * 0.5 if ENABLE_PREP_MODEL else 0.0
             )  # NEW/CHANGED
@@ -1042,7 +1034,11 @@ def simulate_policy_day(policy_params):
                     ) or force_mode  # NEW/CHANGED
                     if (not force_mode) and t < int(policy.get("start_delay_min", 0.0)):
                         start_allowed = False  # NEW/CHANGED
-                    if any_holding_active and (not ALLOW_PARALLEL_IF) and (not force_mode):
+                    if (
+                        any_holding_active
+                        and (not ALLOW_PARALLEL_IF)
+                        and (not force_mode)
+                    ):
                         start_allowed = False
                     if start_allowed:
                         idle_ready = [
@@ -1118,6 +1114,9 @@ def simulate_policy_day(policy_params):
                             )["duration_min"]
                             hold_risk = max(0.0, pour_ready_eta_min - est_duration)
                             jit_slack = float(policy.get("jit_slack_min", 0.0))
+                            if OPT_MODE == "service":
+                                # NEW/CHANGED: stricter JIT in service mode to reduce holding/reheat.
+                                jit_slack = min(jit_slack, 5.0)
                             if (not force_mode) and hold_risk > jit_slack:
                                 jit_delay_minutes += 1.0
                                 continue
@@ -1224,6 +1223,16 @@ def simulate_policy_day(policy_params):
             if downtime_remaining[f_id] > 0:
                 downtime_remaining[f_id] -= 1
 
+        # NEW/CHANGED: service metrics after per-minute consumption update.
+        if (
+            current_level["A"] <= MH_EMPTY_THRESHOLD_KG
+            or current_level["B"] <= MH_EMPTY_THRESHOLD_KG
+        ):
+            zero_minutes_total += 1.0
+        eps_deficit_area += max(0.0, EPS_LEVEL - current_level["A"]) + max(
+            0.0, EPS_LEVEL - current_level["B"]
+        )
+
         total_plant_kw[t] = baseline_kw[t] + minute_if_kw
         raw_price_t = tou_raw_price_series[t]
         eff_price_t = tou_effective_price_series[t]
@@ -1294,6 +1303,10 @@ def simulate_policy_day(policy_params):
             if b.get("status") == "poured"
         )
     )
+    poured_batches_count = int(
+        sum(1 for b in batches.values() if b.get("status") == "poured")
+    )  # NEW/CHANGED
+    missing_batches = int(max(0, NUM_BATCHES - poured_batches_count))  # NEW/CHANGED
     alternation_ratio = float(
         alternation_count / max(1, alternation_count + non_alternation_count)
     )  # NEW/CHANGED
@@ -1352,9 +1365,13 @@ def simulate_policy_day(policy_params):
             "mh_empty_minutes": mh_empty_minutes,
             "mh_low_level_minutes": mh_low_level_minutes,
             "mh_low_level_penalty": mh_low_level_penalty,
+            "zero_minutes_total": float(zero_minutes_total),  # NEW/CHANGED
+            "eps_deficit_area": float(eps_deficit_area),  # NEW/CHANGED
             "overflow_kg_total": overflow_kg_total,
             "holding_minutes_total": float(total_if_holding_minutes),
             "unpoured_batches_count": len(unpoured_batches),
+            "poured_batches_count": poured_batches_count,  # NEW/CHANGED
+            "missing_batches": missing_batches,  # NEW/CHANGED
             "makespan_minutes": makespan_minutes,
             "total_poured_kg": total_poured_kg,  # CHANGED (Step A)
             "prep_wait_minutes": float(prep_wait_minutes),  # NEW/CHANGED
@@ -1382,7 +1399,33 @@ def evaluate_policy(policy_params):
     m = sim["metrics"]
 
     comp = _compute_obj1_components(m)
-    total_cost = compute_total_cost(m, comp)
+    total_cost_energy = compute_total_cost(m, comp)
+    low_level_minutes_total = float(
+        m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"]
+    )
+    zero_minutes_total = float(m.get("zero_minutes_total", 0.0))
+    eps_deficit_area = float(m.get("eps_deficit_area", 0.0))
+    holding_minutes_total = float(m.get("holding_minutes_total", 0.0))
+    reheat_kwh = float(m.get("reheat_kwh", 0.0))
+    if OPT_MODE == "energy":
+        f_scalar = float(total_cost_energy)
+    elif OPT_MODE == "service":
+        # NEW/CHANGED: service as soft objective (best-effort even if strict feasibility impossible).
+        tmp_g = _violation_vector(m)
+        overflow_v = float(max(0.0, tmp_g[0]))
+        missing_v = float(max(0.0, tmp_g[1]))
+        f_scalar = float(
+            SERVICE_W_MISSING_BATCHES * missing_v
+            + SERVICE_W_OVERFLOW * overflow_v
+            + SERVICE_W_ZERO_MINUTES * zero_minutes_total
+            + SERVICE_W_EPS_DEFICIT_AREA * eps_deficit_area
+            + SERVICE_W_LOW_LEVEL_MINUTES * low_level_minutes_total
+            + SERVICE_W_HOLDING_MINUTES * holding_minutes_total
+            + SERVICE_W_REHEAT_KWH * reheat_kwh
+            + SERVICE_W_ENERGY_TIEBREAKER * m["total_energy_cost"]
+        )
+    else:
+        raise ValueError(f"Invalid OPT_MODE: {OPT_MODE}")
 
     raw_obj1_total = float(sum(comp.values()))
     normalized_terms = {}
@@ -1399,17 +1442,19 @@ def evaluate_policy(policy_params):
         for k in comp:
             contribution_pct[k] = 0.0
 
-    violation_g = _violation_vector(m)
-    overflow_violation = float(max(0.0, violation_g[0]))
-    empty_violation = float(max(0.0, violation_g[1]))
-    low_violation = float(max(0.0, violation_g[2]))
-    parallel_peak_violation = float(max(0.0, violation_g[3]))  # CHANGED (Step E)
-    parallel_peak_minutes = float(max(0.0, m.get("parallel_peak_minutes", 0.0)))
-    total_violation = float(overflow_violation)
+    g_constraints = _violation_vector(m)
+    overflow_violation = float(max(0.0, g_constraints[0]))
+    missing_batches_violation = float(max(0.0, g_constraints[1]))
+    min_level_a = float(m["min_level_reached"]["A"])
+    min_level_b = float(m["min_level_reached"]["B"])
+    zero_level_violation = float(max(0.0, EPS_LEVEL - min(min_level_a, min_level_b)))
+    total_violation = float(np.sum(np.maximum(0.0, g_constraints)))
 
     cost_components = {
-        "objective_total_cost": total_cost,
-        "obj1_total": total_cost,
+        "opt_mode": OPT_MODE,  # NEW/CHANGED
+        "objective_total_cost": f_scalar,
+        "energy_mode_total_cost": total_cost_energy,  # NEW/CHANGED
+        "obj1_total": f_scalar,
         "obj1_raw_total": raw_obj1_total,
         "obj1_mode": OBJ1_AGGREGATION_MODE,
         "obj1_normalized_sum": normalized_sum,
@@ -1434,11 +1479,15 @@ def evaluate_policy(policy_params):
         "pct_overflow_penalty": contribution_pct["overflow_penalty"],
         "pct_unpoured_penalty": contribution_pct["unpoured_penalty"],
         "violation_overflow": overflow_violation,
-        "violation_empty_min": empty_violation,
-        "violation_low_min": low_violation,
-        "parallel_peak_minutes": parallel_peak_minutes,
-        "violation_parallel_peak_min": float(parallel_peak_violation),
+        "violation_missing_batches": missing_batches_violation,  # NEW/CHANGED
+        "violation_zero_level": zero_level_violation,  # NEW/CHANGED
         "total_violation": total_violation,
+        "zero_minutes_total": zero_minutes_total,  # NEW/CHANGED
+        "eps_deficit_area": eps_deficit_area,  # NEW/CHANGED
+        "low_level_minutes_total": low_level_minutes_total,  # NEW/CHANGED
+        "service_obj_holding_term": SERVICE_W_HOLDING_MINUTES
+        * holding_minutes_total,  # NEW/CHANGED
+        "service_obj_reheat_term": SERVICE_W_REHEAT_KWH * reheat_kwh,  # NEW/CHANGED
         "total_if_kwh": m["total_if_kwh"],
         "melt_kwh": m["melt_kwh"],
         "reheat_kwh": m["reheat_kwh"],
@@ -1457,6 +1506,8 @@ def evaluate_policy(policy_params):
         "if_idle_minutes_total": m["if_idle_minutes_total"],
         "if_use_count_A": m["if_use_count_A"],
         "if_use_count_B": m["if_use_count_B"],
+        "poured_batches_count": m.get("poured_batches_count", 0),  # NEW/CHANGED
+        "missing_batches": m.get("missing_batches", 0),  # NEW/CHANGED
         "unpoured_batches_count": m["unpoured_batches_count"],
         "makespan_minutes": m["makespan_minutes"],
         "total_poured_kg": m["total_poured_kg"],  # CHANGED (Step A)
@@ -1471,8 +1522,8 @@ def evaluate_policy(policy_params):
         "solar_melt_minutes": m.get("solar_melt_minutes", 0.0),  # NEW/CHANGED
         "solar_cost_saving": m.get("solar_cost_saving", 0.0),  # NEW/CHANGED
         "start_delay_min": m.get("start_delay_min", 0.0),  # NEW/CHANGED
-        "min_level_A": m["min_level_reached"]["A"],
-        "min_level_B": m["min_level_reached"]["B"],
+        "min_level_A": min_level_a,
+        "min_level_B": min_level_b,
         "policy": sim["policy"],
         "schedule": sim["schedule"],
         "batch_timing": sim["batch_timing"],
@@ -1483,8 +1534,7 @@ def evaluate_policy(policy_params):
         "tou_effective_price": sim.get("tou_effective_price"),
         "total_plant_kw": sim["total_plant_kw"],
     }
-    g_constraints = np.array([overflow_violation], dtype=float)
-    return total_cost, g_constraints, cost_components
+    return f_scalar, np.asarray(g_constraints, dtype=float), cost_components
 
 
 class PolicyProblem(Problem):
@@ -1558,8 +1608,7 @@ class PolicyProblem(Problem):
                 dtype=float,
             )
             n_var = 21
-        # NEW/CHANGED: single-objective with hard constraints on overflow only.
-        n_constr = 1
+        n_constr = 2  # [overflow, missing_batches] for both modes
         super().__init__(n_var=n_var, n_obj=1, n_constr=n_constr, xl=xl, xu=xu)
 
     def _evaluate(self, X, out, *args, **kwargs):
@@ -1587,7 +1636,7 @@ class PolicyProblem(Problem):
             generation_cache[key] = (f_scalar, g_vals, d)
             F.append([f_scalar])
             details.append(d)
-            G.append([float(np.asarray(g_vals, dtype=float).ravel()[0])])
+            G.append(list(np.asarray(g_vals, dtype=float).ravel()))
 
         out["F"] = np.asarray(F, dtype=float)
         out["G"] = np.asarray(G, dtype=float)
@@ -1647,7 +1696,9 @@ def format_policy_breakdown(cost):
         return "No cost details available."
     lines = [
         "Cost Component Details:",
+        f"  OPT_MODE                  : {cost.get('opt_mode', 'energy')}",
         f"  Objective TotalCost       : {cost.get('objective_total_cost', cost.get('obj1_total', 0.0)):.2f}",
+        f"  Energy-Mode Cost Proxy    : {cost.get('energy_mode_total_cost', 0.0):.2f}",
         f"  Obj1 Raw Sum              : {cost.get('obj1_raw_total', 0.0):.2f}",
         f"  Obj1 Mode                 : {cost.get('obj1_mode', 'raw')}",
         f"  Obj1 Normalized Sum       : {cost.get('obj1_normalized_sum', 0.0):.4f}",
@@ -1667,6 +1718,8 @@ def format_policy_breakdown(cost):
         f"  Holding Minutes (total)   : {cost.get('holding_minutes_total', 0.0):.2f}",
         f"  IF Idle Minutes (system)  : {cost.get('if_idle_minutes_total', 0.0):.2f}",
         f"  IF Use Count A/B          : {cost.get('if_use_count_A', 0)} / {cost.get('if_use_count_B', 0)}",
+        f"  Poured Batches            : {cost.get('poured_batches_count', 0)} / {NUM_BATCHES}",
+        f"  Missing Batches           : {cost.get('missing_batches', 0)}",
         f"  Unpoured Batches          : {cost.get('unpoured_batches_count', 0)}",
         f"  Makespan (min)            : {cost.get('makespan_minutes', 0.0):.2f}",
         f"  Total Poured (kg)         : {cost.get('total_poured_kg', 0.0):.2f}",  # CHANGED (Step A)
@@ -1679,6 +1732,9 @@ def format_policy_breakdown(cost):
         f"  Solar Melt Minutes        : {cost.get('solar_melt_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Solar Cost Saving         : {cost.get('solar_cost_saving', 0.0):.2f}",  # NEW/CHANGED
         f"  Start Delay (min)         : {cost.get('start_delay_min', 0.0):.2f}",  # NEW/CHANGED
+        f"  Zero Minutes Total        : {cost.get('zero_minutes_total', 0.0):.2f}",  # NEW/CHANGED
+        f"  EPS Deficit Area          : {cost.get('eps_deficit_area', 0.0):.2f}",  # NEW/CHANGED
+        f"  Low-Level Minutes Total   : {cost.get('low_level_minutes_total', 0.0):.2f}",  # NEW/CHANGED
         f"  Min Level Reached A/B     : {cost.get('min_level_A', 0.0):.2f} / {cost.get('min_level_B', 0.0):.2f}",
         "  Obj1 Decomposition (raw / %raw):",
         f"    - Energy Cost           : {cost.get('comp_energy_cost', 0.0):.2f} / {cost.get('pct_energy_cost', 0.0):.2f}%",
@@ -1694,9 +1750,8 @@ def format_policy_breakdown(cost):
         f"    - JIT Delay Penalty     : {cost.get('comp_jit_delay_penalty', 0.0):.2f}",
         "  Constraint Violations:",
         f"    - Overflow (kg)         : {cost.get('violation_overflow', 0.0):.2f}",
-        f"    - Empty Minutes         : {cost.get('violation_empty_min', 0.0):.2f}",
-        f"    - Low-Level Minutes     : {cost.get('violation_low_min', 0.0):.2f}",
-        f"    - Parallel Peak Minutes : {cost.get('violation_parallel_peak_min', 0.0):.2f}",
+        f"    - Missing Batches       : {cost.get('violation_missing_batches', 0.0):.2f}",
+        f"    - Zero-Level Violation  : {cost.get('violation_zero_level', 0.0):.2f}",
         f"    - Total Violation       : {cost.get('total_violation', 0.0):.2f}",
     ]
     return "\n".join(lines)
@@ -1911,18 +1966,55 @@ def main():
     )
     print("Optimization finished.")
 
-    if result is None or result.X is None:
-        print("No valid best solution returned by GA.")
-        return
+    best_x = None
+    if result is not None and result.X is not None:
+        best_x = np.asarray(result.X, dtype=float).ravel()
+    else:
+        # NEW/CHANGED: fallback to least-infeasible individual from final population.
+        pop = None
+        if result is not None and getattr(result, "pop", None) is not None:
+            pop = result.pop
+        elif getattr(algorithm, "pop", None) is not None:
+            pop = algorithm.pop
 
-    best_x = np.asarray(result.X, dtype=float).ravel()
+        if pop is None:
+            print("No valid best solution returned by GA and no population available.")
+            return
+
+        pop_X = pop.get("X")
+        pop_F = pop.get("F")
+        pop_G = pop.get("G")
+        if pop_X is None or len(pop_X) == 0:
+            print("No valid best solution returned by GA and empty population.")
+            return
+
+        if pop_G is None:
+            cv = np.zeros(len(pop_X), dtype=float)
+        else:
+            g = np.asarray(pop_G, dtype=float)
+            if g.ndim == 1:
+                g = g.reshape(-1, 1)
+            cv = np.sum(np.maximum(0.0, g), axis=1)
+
+        fvals = (
+            np.asarray(pop_F, dtype=float).reshape(-1)
+            if pop_F is not None
+            else np.full(len(pop_X), np.inf, dtype=float)
+        )
+        # Argmin by CV first, then objective tie-break.
+        candidate_idxs = np.where(cv == np.min(cv))[0]
+        if len(candidate_idxs) > 1:
+            idx = int(candidate_idxs[np.argmin(fvals[candidate_idxs])])
+        else:
+            idx = int(candidate_idxs[0])
+        best_x = np.asarray(pop_X[idx], dtype=float).ravel()
+        print(f"Fallback selection: picked least-infeasible individual idx={idx}, CV={cv[idx]:.6f}")
+
     best_f, best_g, best_details = evaluate_policy(best_x)
     print("\nBest GA solution:")
     print("  Policy X:", np.round(best_x, 4))
     print(f"  Objective TotalCost: {best_f:.3f}")
-    print(
-        f"  Constraints [overflow]: {np.round(np.asarray(best_g, dtype=float), 6)}"
-    )
+    print(f"  Constraints: {np.round(np.asarray(best_g, dtype=float), 6)}")
     print(
         "  objective_total_cost:",
         round(best_details.get("objective_total_cost", best_f), 2),
@@ -1962,6 +2054,22 @@ def main():
         round(best_details.get("min_level_A", 0.0), 2),
         "/",
         round(best_details.get("min_level_B", 0.0), 2),
+    )
+    print(
+        "  KPI zero_minutes_total:",
+        round(best_details.get("zero_minutes_total", 0.0), 2),
+        "eps_deficit_area:",
+        round(best_details.get("eps_deficit_area", 0.0), 2),
+    )
+    print(
+        f"OPT_MODE={OPT_MODE} | poured_batches={int(best_details.get('poured_batches_count', 0))}/{NUM_BATCHES} | "
+        f"missing={int(best_details.get('missing_batches', 0))} | overflow={round(best_details.get('overflow_kg_total', 0.0), 3)} | "
+        f"min_level(A,B)={round(best_details.get('min_level_A', 0.0), 3)},{round(best_details.get('min_level_B', 0.0), 3)} | "
+        f"zero_minutes={round(best_details.get('zero_minutes_total', 0.0), 3)} | "
+        f"eps_deficit_area={round(best_details.get('eps_deficit_area', 0.0), 3)} | "
+        f"energy_cost={round(best_details.get('total_energy_cost', 0.0), 3)} | "
+        f"solar_saving={round(best_details.get('solar_cost_saving', 0.0), 3)} | "
+        f"peak={round(best_details.get('peak_kw', 0.0), 3)}"
     )
     print(format_policy_breakdown(best_details))
     plot_policy_result(best_details, title_prefix="Best GA Policy")
