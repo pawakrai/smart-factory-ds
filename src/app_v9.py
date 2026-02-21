@@ -101,6 +101,10 @@ SWITCH_PENALTY_PER_REPEAT = 8.0
 PREP_WAIT_COST_PER_MIN = 25.0
 
 SHIFT_START = 8 * 60
+# NEW/CHANGED: solar window + offset for effective grid energy pricing.
+SOLAR_START = 12 * 60  # 12:00
+SOLAR_END = 13 * 60  # 13:00
+SOLAR_OFFSET_KW = 500.0
 FURNACE_COLORS = {"A": "blue", "B": "green"}
 MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
 furnace_y = {0: 10, 1: 25}
@@ -152,7 +156,8 @@ OBJ1_EXCLUDE_SERVICE_PENALTIES_WHEN_CONSTRAINED = (
 MAX_OVERFLOW_KG_ALLOW = 1e-6
 MAX_EMPTY_MIN_ALLOW = 120.0
 MAX_LOW_LEVEL_MIN_ALLOW = 240.0
-MAX_SHORTFALL_KG_ALLOW = 1e-6  # CHANGED (Step B): allow near-zero daily shortfall only.
+ALLOW_SHORTFALL_KG = 350.0  # NEW/CHANGED: allowed end-of-day shortfall.
+MAX_SHORTFALL_KG_ALLOW = ALLOW_SHORTFALL_KG  # NEW/CHANGED: backward-compatible alias.
 HARD_FORBID_OVERFLOW = True
 SIMPLE_POLICY_MODE = (
     True  # NEW/CHANGED: use reduced 10-variable policy for smoother Pareto fronts.
@@ -237,6 +242,32 @@ def _hour_price(minute_idx):
     tod = int((SHIFT_START + int(minute_idx)) % 1440)
     hour = int(np.clip(tod // 60, 0, 23))
     return TOU_PRICE_BY_HOUR[hour]
+
+
+def _is_in_solar_window(minute_idx):
+    # NEW/CHANGED: solar window aligned to time-of-day.
+    tod = int((SHIFT_START + int(minute_idx)) % 1440)
+    if SOLAR_START <= SOLAR_END:
+        return SOLAR_START <= tod < SOLAR_END
+    return tod >= SOLAR_START or tod < SOLAR_END
+
+
+def _effective_if_grid_kw(minute_idx, if_kw):
+    # NEW/CHANGED: behind-the-meter solar offsets IF grid draw only.
+    if_kw = float(max(0.0, if_kw))
+    if _is_in_solar_window(minute_idx):
+        return float(max(0.0, if_kw - SOLAR_OFFSET_KW))
+    return float(if_kw)
+
+
+def _effective_if_price(minute_idx, if_kw):
+    # NEW/CHANGED: effective price seen by IF after solar offset.
+    raw_price = float(_hour_price(minute_idx))
+    if_kw = float(max(0.0, if_kw))
+    if if_kw <= 1e-9:
+        return raw_price
+    grid_if_kw = _effective_if_grid_kw(minute_idx, if_kw)
+    return float(raw_price * (grid_if_kw / if_kw))
 
 
 def _compute_batch_profile(power_kw, is_cold_start, if_furnace):
@@ -489,7 +520,7 @@ def _violation_vector(m):
     return np.array(
         [
             overflow_total - MAX_OVERFLOW_KG_ALLOW,
-            shortfall_total - MAX_SHORTFALL_KG_ALLOW,  # CHANGED (Step B)
+            shortfall_total - ALLOW_SHORTFALL_KG,  # NEW/CHANGED: configurable shortfall allowance.
             empty_total - MAX_EMPTY_MIN_ALLOW,
             low_total - MAX_LOW_LEVEL_MIN_ALLOW,
             parallel_peak_total - MAX_PARALLEL_PEAK_MIN_ALLOW,  # CHANGED (Step E)
@@ -541,7 +572,7 @@ class StagnationEarlyStopCallback(Callback):
 
 
 def _build_policy_state(
-    policy, mh_levels, baseline_kw_t, if_kw_now, queue_len, price_t
+    policy, mh_levels, baseline_kw_t, if_kw_now, queue_len, effective_price_t
 ):
     eta_a = mh_levels["A"] / max(MH_CONSUMPTION_RATE_KG_PER_MIN["A"], 1e-9)
     eta_b = mh_levels["B"] / max(MH_CONSUMPTION_RATE_KG_PER_MIN["B"], 1e-9)
@@ -562,11 +593,7 @@ def _build_policy_state(
     margin_kw = CONTRACT_DEMAND_KW - projected_no_new
     margin_ratio = float(np.clip(margin_kw / max(CONTRACT_DEMAND_KW, 1e-9), -1.0, 1.0))
     price_norm = float(
-        np.clip(
-            (price_t - np.min(TOU_PRICE_BY_HOUR)) / (np.ptp(TOU_PRICE_BY_HOUR) + 1e-9),
-            0.0,
-            1.0,
-        )
+        np.clip(effective_price_t / (float(np.max(TOU_PRICE_BY_HOUR)) + 1e-9), 0.0, 1.0)
     )
     return {
         "eta_min": eta_min,
@@ -638,7 +665,7 @@ def _select_if_power(
     # evaluate options with peak + TOU aware score
     best_p = 450.0
     best_score = float("inf")
-    price_t = _hour_price(minute_idx)
+    # NEW/CHANGED: use effective solar-adjusted IF price in power selection.
     soft_guard = CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
     wait_weight = 1.0 - policy["wait_vs_rush"]
     peak_weight = policy["peak_avoid_weight"]
@@ -658,7 +685,8 @@ def _select_if_power(
         projected_kw = baseline_kw_t + if_kw_now + p
         soft_peak = max(0.0, projected_kw - soft_guard)
         peak_score = peak_weight * (soft_peak**2) / 50.0
-        tou_score = wait_weight * policy["tou_weight"] * price_t * (p / 60.0)
+        eff_price_t = _effective_if_price(minute_idx, p)
+        tou_score = wait_weight * policy["tou_weight"] * eff_price_t * (p / 60.0)
         score = urgency_score + peak_score + tou_score
         if score < best_score:
             best_score = score
@@ -853,6 +881,10 @@ def simulate_policy_day(policy_params):
     total_plant_kw = np.zeros(SIM_DURATION_MIN, dtype=float)
     energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)
     reheat_energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)  # NEW/CHANGED
+    tou_raw_price_series = np.zeros(SIM_DURATION_MIN, dtype=float)  # NEW/CHANGED
+    tou_effective_price_series = np.zeros(
+        SIM_DURATION_MIN, dtype=float
+    )  # NEW/CHANGED
 
     mh_levels_series = {
         "A": np.zeros(SIM_DURATION_MIN, dtype=float),
@@ -1052,7 +1084,7 @@ def simulate_policy_day(policy_params):
                     baseline_kw[t],
                     if_kw_now,
                     len(ready_to_pour_queue),
-                    _hour_price(t),
+                    _effective_if_price(t, max(IF_POWER_OPTIONS)),
                 )
                 start_score = _start_score(policy, state)
                 min_gap_now = _dynamic_min_start_gap(policy, state)
@@ -1245,10 +1277,18 @@ def simulate_policy_day(policy_params):
                 downtime_remaining[f_id] -= 1
 
         total_plant_kw[t] = baseline_kw[t] + minute_if_kw
-        energy_cost_series[t] = (minute_if_kw / 60.0) * _hour_price(t)
-        reheat_energy_cost_series[t] = (minute_reheat_kw / 60.0) * _hour_price(
-            t
-        )  # NEW/CHANGED
+        raw_price_t = _hour_price(t)
+        grid_if_kw_t = _effective_if_grid_kw(t, minute_if_kw)
+        tou_raw_price_series[t] = raw_price_t
+        tou_effective_price_series[t] = _effective_if_price(t, minute_if_kw)
+        energy_cost_series[t] = (grid_if_kw_t / 60.0) * raw_price_t
+        if minute_if_kw > 1e-9:
+            grid_reheat_kw_t = grid_if_kw_t * (minute_reheat_kw / minute_if_kw)
+        else:
+            grid_reheat_kw_t = 0.0
+        reheat_energy_cost_series[t] = (
+            grid_reheat_kw_t / 60.0
+        ) * raw_price_t  # NEW/CHANGED
         active_if_count = sum(
             1 for f in available_if_furnaces if if_states[f]["active"]
         )
@@ -1336,6 +1376,8 @@ def simulate_policy_day(policy_params):
         "mh_levels": mh_levels_series,
         "baseline_kw": baseline_kw,
         "if_kw": if_kw_series,
+        "tou_raw_price": tou_raw_price_series,  # NEW/CHANGED
+        "tou_effective_price": tou_effective_price_series,  # NEW/CHANGED
         "total_plant_kw": total_plant_kw,
         "metrics": {
             "melt_kwh": total_melt_kwh,
@@ -1478,6 +1520,8 @@ def evaluate_policy(policy_params):
         "mh_levels": sim["mh_levels"],
         "baseline_kw": sim["baseline_kw"],
         "if_kw": sim["if_kw"],
+        "tou_raw_price": sim.get("tou_raw_price"),
+        "tou_effective_price": sim.get("tou_effective_price"),
         "total_plant_kw": sim["total_plant_kw"],
     }
     g_constraints = np.array([overflow_violation, shortfall_violation], dtype=float)
@@ -1745,8 +1789,10 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     baseline_kw = cost_details.get("baseline_kw")
     if_kw = cost_details.get("if_kw")
     total_kw = cost_details.get("total_plant_kw")
+    tou_raw = cost_details.get("tou_raw_price")
+    tou_effective = cost_details.get("tou_effective_price")
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(18, 11), sharex=True)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(18, 14), sharex=True)
 
     for item in schedule:
         b_id = item["batch_id"]
@@ -1832,9 +1878,43 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax3.grid(True, alpha=0.4)
     ax3.legend(loc="upper right")
 
+    if tou_raw is not None:
+        ax4.plot(
+            t_shifted,
+            tou_raw,
+            label="TOU Raw Price",
+            color="black",
+            linewidth=1.8,
+        )
+    if tou_effective is not None:
+        ax4.plot(
+            t_shifted,
+            tou_effective,
+            label="TOU Effective Price (after solar)",
+            color="purple",
+            linewidth=2.0,
+        )
+    ax4.set_ylabel("Price")
+    ax4.set_title("TOU Raw vs Effective")
+    ax4.grid(True, alpha=0.4)
+    ax4.legend(loc="upper right")
+
+    # NEW/CHANGED: highlight solar window on every subplot.
+    plot_start = SHIFT_START
+    plot_end = SHIFT_START + SIM_DURATION_MIN
+    for day in range(-1, 3):
+        s = day * 1440 + SOLAR_START
+        e = day * 1440 + SOLAR_END
+        if e <= plot_start or s >= plot_end:
+            continue
+        ss = max(s, plot_start)
+        ee = min(e, plot_end)
+        for ax in (ax1, ax2, ax3, ax4):
+            ax.axvspan(ss, ee, color="gold", alpha=0.18, linewidth=0)
+
     xticks = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN + 1, 60)
-    ax3.set_xticks(xticks)
-    ax3.set_xticklabels([f"{(x // 60) % 24:02d}:{x % 60:02d}" for x in xticks])
+    ax4.set_xticks(xticks)
+    ax4.set_xticklabels([f"{(x // 60) % 24:02d}:{x % 60:02d}" for x in xticks])
 
     plt.tight_layout()
     plt.show()
