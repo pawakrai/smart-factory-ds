@@ -158,10 +158,6 @@ OBJ1_EXCLUDE_SERVICE_PENALTIES_WHEN_CONSTRAINED = (
 MAX_OVERFLOW_KG_ALLOW = 1e-6
 MAX_EMPTY_MIN_ALLOW = 120.0
 MAX_LOW_LEVEL_MIN_ALLOW = 240.0
-ALLOWED_SHORTFALL_KG = 250.0  # NEW/CHANGED: allowed end-of-day shortfall.
-ALLOW_SHORTFALL_KG = ALLOWED_SHORTFALL_KG  # NEW/CHANGED: backward-compatible alias.
-MAX_DAILY_SHORTFALL_KG_ALLOW = ALLOWED_SHORTFALL_KG  # NEW/CHANGED: explicit alias.
-MAX_SHORTFALL_KG_ALLOW = ALLOWED_SHORTFALL_KG  # NEW/CHANGED: backward-compatible alias.
 HARD_FORBID_OVERFLOW = True
 SIMPLE_POLICY_MODE = (
     True  # NEW/CHANGED: use reduced 10-variable policy for smoother Pareto fronts.
@@ -174,7 +170,6 @@ JIT_DELAY_COST_PER_MIN = 6.0  # NEW/CHANGED: mild cost for excessive JIT deferra
 # Obj2: makespan (min)
 OBJ0_WEIGHTS = {
     "overflow_kg": 1000.0,
-    "shortfall_kg": 120.0,  # CHANGED (Step B): main production-feasibility violation weight.
     "empty_min": 3.0,
     "low_level_min": 1.0,
     "parallel_peak_min": 4.0,
@@ -523,7 +518,6 @@ def _violation_vector(m):
     empty_total = float(m["mh_empty_minutes"]["A"] + m["mh_empty_minutes"]["B"])
     low_total = float(m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"])
     overflow_total = float(m["overflow_kg_total"])
-    shortfall_total = float(m.get("shortfall_kg", 0.0))  # CHANGED (Step B)
     parallel_peak_total = float(m.get("parallel_peak_minutes", 0.0))  # CHANGED (Step E)
     # Guard against NaN/Inf/negative in any upstream metric.
     if not np.isfinite(empty_total) or empty_total < 0.0:
@@ -532,8 +526,6 @@ def _violation_vector(m):
         low_total = 0.0
     if not np.isfinite(overflow_total) or overflow_total < 0.0:
         overflow_total = 0.0
-    if not np.isfinite(shortfall_total) or shortfall_total < 0.0:  # CHANGED (Step B)
-        shortfall_total = 0.0
     if (
         not np.isfinite(parallel_peak_total) or parallel_peak_total < 0.0
     ):  # CHANGED (Step E)
@@ -541,8 +533,6 @@ def _violation_vector(m):
     return np.array(
         [
             overflow_total - MAX_OVERFLOW_KG_ALLOW,
-            shortfall_total
-            - ALLOWED_SHORTFALL_KG,  # NEW/CHANGED: configurable shortfall allowance.
             empty_total - MAX_EMPTY_MIN_ALLOW,
             low_total - MAX_LOW_LEVEL_MIN_ALLOW,
             parallel_peak_total - MAX_PARALLEL_PEAK_MIN_ALLOW,  # CHANGED (Step E)
@@ -803,13 +793,7 @@ def _pour_ready_eta_min(current_level, downtime_remaining):
 
 
 def quick_capacity_sanity_check():
-    """Coarse feasibility check before running GA/NSGA-II."""
-    daily_demand_kg = (
-        MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
-    ) * SIM_DURATION_MIN
-    initial_inventory_kg = MH_INITIAL_LEVEL_KG["A"] + MH_INITIAL_LEVEL_KG["B"]
-    required_from_if_kg = max(0.0, daily_demand_kg - initial_inventory_kg)
-
+    """Coarse feasibility check for finishing NUM_BATCHES within the day."""
     min_melt_duration = min(v["duration_min_hot"] for v in POWER_PROFILE.values())
     available_if = int(USE_FURNACE_A) + int(USE_FURNACE_B)
     parallel_if_slots = available_if if ALLOW_PARALLEL_IF else min(1, available_if)
@@ -817,78 +801,33 @@ def quick_capacity_sanity_check():
     batches_time_limit = int(
         (SIM_DURATION_MIN / max(min_melt_duration, 1e-9)) * parallel_if_slots
     )
-    supply_time_limit_kg = batches_time_limit * IF_BATCH_OUTPUT_KG
-
     # Receiver-side bottleneck: need 500 kg free capacity before each pour.
     total_consume_rate = (
         MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
     )
     minutes_to_free_one_batch = IF_BATCH_OUTPUT_KG / max(total_consume_rate, 1e-9)
     batches_receive_limit = int(SIM_DURATION_MIN / max(minutes_to_free_one_batch, 1e-9))
-    supply_receive_limit_kg = batches_receive_limit * IF_BATCH_OUTPUT_KG
-
-    max_batches_current_config = int(NUM_BATCHES)
-    supply_config_cap_kg = max_batches_current_config * IF_BATCH_OUTPUT_KG
-    effective_max_batches = min(
-        max_batches_current_config, batches_time_limit, batches_receive_limit
-    )
-    effective_max_supply_kg = effective_max_batches * IF_BATCH_OUTPUT_KG
-    effective_total_available_kg = initial_inventory_kg + effective_max_supply_kg
-    daily_shortfall_kg = max(0.0, daily_demand_kg - effective_total_available_kg)
-
-    min_batches_required = int(np.ceil(required_from_if_kg / IF_BATCH_OUTPUT_KG))
-    overtime_needed_min = max(
-        0.0, min_batches_required * min_melt_duration - SIM_DURATION_MIN
-    )
+    effective_batch_limit = min(batches_time_limit, batches_receive_limit)
+    is_feasible = bool(NUM_BATCHES <= effective_batch_limit)
 
     report = {
-        "daily_demand_kg": float(daily_demand_kg),
-        "initial_inventory_kg": float(initial_inventory_kg),
-        "required_from_if_kg": float(required_from_if_kg),
-        "config_num_batches": int(max_batches_current_config),
-        "config_supply_cap_kg": float(supply_config_cap_kg),
+        "target_num_batches": int(NUM_BATCHES),
         "time_limit_batches": int(batches_time_limit),
         "receive_limit_batches": int(batches_receive_limit),
-        "effective_max_batches": int(effective_max_batches),
-        "effective_max_supply_kg": float(effective_max_supply_kg),
-        "effective_total_available_kg": float(effective_total_available_kg),
-        "daily_shortfall_kg": float(daily_shortfall_kg),
-        "min_batches_required": int(min_batches_required),
-        "min_overtime_needed_min": float(overtime_needed_min),
-        "is_feasible_coarse": bool(daily_shortfall_kg <= 1e-9),
+        "effective_batch_limit": int(effective_batch_limit),
+        "is_feasible_coarse": is_feasible,
     }
     return report
 
 
 def print_capacity_sanity_report(report):
     print("\n=== Capacity Sanity Check (coarse) ===")
-    print("Demand/day (kg):", round(report["daily_demand_kg"], 2))
-    print("Initial inventory (kg):", round(report["initial_inventory_kg"], 2))
-    print("Required from IF (kg):", round(report["required_from_if_kg"], 2))
+    print("Target NUM_BATCHES:", report["target_num_batches"])
     print(
-        "Config batches/cap (kg):",
-        report["config_num_batches"],
-        "/",
-        round(report["config_supply_cap_kg"], 2),
-    )
-    print(
-        "Batch limits [time, receive, effective]:",
+        "Batch limits [time, receive, effective_limit]:",
         report["time_limit_batches"],
         report["receive_limit_batches"],
-        report["effective_max_batches"],
-    )
-    print("Effective IF supply (kg):", round(report["effective_max_supply_kg"], 2))
-    print(
-        "Effective total available (kg):",
-        round(report["effective_total_available_kg"], 2),
-    )
-    print("Daily shortfall (kg):", round(report["daily_shortfall_kg"], 2))
-    print(
-        "Min batches required / min overtime:",
-        report["min_batches_required"],
-        "batches /",
-        round(report["min_overtime_needed_min"], 1),
-        "min",
+        report["effective_batch_limit"],
     )
     print("Coarse feasibility:", "PASS" if report["is_feasible_coarse"] else "FAIL")
 
@@ -954,18 +893,7 @@ def simulate_policy_day(policy_params):
     non_alternation_count = 0  # NEW/CHANGED
     alternation_count = 0  # NEW/CHANGED
     last_started_furnace = None  # NEW/CHANGED
-    total_poured_kg_so_far = 0.0  # NEW/CHANGED
     jit_delay_minutes = 0.0  # NEW/CHANGED
-    daily_demand_kg = float(
-        (MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"])
-        * SIM_DURATION_MIN
-    )  # NEW/CHANGED
-    initial_inventory_kg = float(
-        MH_INITIAL_LEVEL_KG["A"] + MH_INITIAL_LEVEL_KG["B"]
-    )  # NEW/CHANGED
-    required_from_if_kg = float(
-        max(0.0, daily_demand_kg - initial_inventory_kg)
-    )  # NEW/CHANGED
     min_duration_per_batch = float(
         min(v["duration_min_hot"] for v in POWER_PROFILE.values())
     )  # NEW/CHANGED
@@ -1057,7 +985,6 @@ def simulate_policy_day(policy_params):
             batches[b_id]["overflow_kg"] = 0.0
             batches[b_id]["pour_min"] = t
             batches[b_id]["status"] = "poured"
-            total_poured_kg_so_far += float(poured_A + poured_B)  # NEW/CHANGED
 
             f_idx = batches[b_id]["if_furnace"]
             if_states[f_idx] = {"active": False, "status": "idle", "batch_id": None}
@@ -1075,18 +1002,14 @@ def simulate_policy_day(policy_params):
 
         # 4) policy start decision (score-based + dynamic spacing + demand-gating)
         if batch_id_counter < NUM_BATCHES:
-            expected_required_remaining_kg = max(
-                0.0, required_from_if_kg - total_poured_kg_so_far
-            )  # NEW/CHANGED
             remaining_time_min = float(SIM_DURATION_MIN - t)  # NEW/CHANGED
-            batch_needed = int(
-                np.ceil(expected_required_remaining_kg / IF_BATCH_OUTPUT_KG)
-            )  # NEW/CHANGED
+            remaining_batches = int(max(0, NUM_BATCHES - batch_id_counter))  # NEW/CHANGED
             force_buffer = min_duration_per_batch + (
                 PREP_LOAD_TIME_MIN * 0.5 if ENABLE_PREP_MODEL else 0.0
             )  # NEW/CHANGED
             force_mode = bool(
-                batch_needed > 0 and remaining_time_min < batch_needed * force_buffer
+                remaining_batches > 0
+                and remaining_time_min < remaining_batches * force_buffer
             )  # NEW/CHANGED
 
             any_if_active = any(if_states[f]["active"] for f in available_if_furnaces)
@@ -1119,7 +1042,7 @@ def simulate_policy_day(policy_params):
                     ) or force_mode  # NEW/CHANGED
                     if (not force_mode) and t < int(policy.get("start_delay_min", 0.0)):
                         start_allowed = False  # NEW/CHANGED
-                    if any_holding_active and (not ALLOW_PARALLEL_IF):
+                    if any_holding_active and (not ALLOW_PARALLEL_IF) and (not force_mode):
                         start_allowed = False
                     if start_allowed:
                         idle_ready = [
@@ -1315,6 +1238,26 @@ def simulate_policy_day(policy_params):
         if active_if_count >= 2 and total_plant_kw[t] > (0.95 * CONTRACT_DEMAND_KW):
             parallel_peak_minutes += 1.0
 
+    # NEW/CHANGED: ensure missing non-started batches are explicitly represented.
+    # Without this, GA can "skip starting" some batches and avoid overflow accounting.
+    if batch_id_counter < NUM_BATCHES:
+        for b_id in range(batch_id_counter + 1, NUM_BATCHES + 1):
+            if b_id in batches:
+                continue
+            batches[b_id] = {
+                "batch_id": b_id,
+                "if_furnace": -1,
+                "start_min": SIM_DURATION_MIN,
+                "melt_finish_min": SIM_DURATION_MIN,
+                "pour_min": None,
+                "power_kw": 0.0,
+                "is_cold_start": False,
+                "status": "unpoured",
+                "poured_A_kg": 0.0,
+                "poured_B_kg": 0.0,
+                "overflow_kg": IF_BATCH_OUTPUT_KG,
+            }
+
     # finalize unpoured batches
     for b_id, b in batches.items():
         if b["pour_min"] is None:
@@ -1351,8 +1294,6 @@ def simulate_policy_day(policy_params):
             if b.get("status") == "poured"
         )
     )
-    # CHANGED (Step B): compute required IF contribution and resulting daily shortfall.
-    shortfall_kg = float(max(0.0, required_from_if_kg - total_poured_kg))
     alternation_ratio = float(
         alternation_count / max(1, alternation_count + non_alternation_count)
     )  # NEW/CHANGED
@@ -1416,9 +1357,6 @@ def simulate_policy_day(policy_params):
             "unpoured_batches_count": len(unpoured_batches),
             "makespan_minutes": makespan_minutes,
             "total_poured_kg": total_poured_kg,  # CHANGED (Step A)
-            "daily_demand_kg": daily_demand_kg,  # CHANGED (Step B)
-            "required_from_if_kg": required_from_if_kg,  # CHANGED (Step B)
-            "shortfall_kg": shortfall_kg,  # CHANGED (Step B)
             "prep_wait_minutes": float(prep_wait_minutes),  # NEW/CHANGED
             "non_alternation_count": float(non_alternation_count),  # NEW/CHANGED
             "alternation_ratio": alternation_ratio,  # NEW/CHANGED
@@ -1463,12 +1401,11 @@ def evaluate_policy(policy_params):
 
     violation_g = _violation_vector(m)
     overflow_violation = float(max(0.0, violation_g[0]))
-    shortfall_violation = float(max(0.0, violation_g[1]))  # CHANGED (Step B)
-    empty_violation = float(max(0.0, violation_g[2]))
-    low_violation = float(max(0.0, violation_g[3]))
-    parallel_peak_violation = float(max(0.0, violation_g[4]))  # CHANGED (Step E)
+    empty_violation = float(max(0.0, violation_g[1]))
+    low_violation = float(max(0.0, violation_g[2]))
+    parallel_peak_violation = float(max(0.0, violation_g[3]))  # CHANGED (Step E)
     parallel_peak_minutes = float(max(0.0, m.get("parallel_peak_minutes", 0.0)))
-    total_violation = float(overflow_violation + shortfall_violation)
+    total_violation = float(overflow_violation)
 
     cost_components = {
         "objective_total_cost": total_cost,
@@ -1497,7 +1434,6 @@ def evaluate_policy(policy_params):
         "pct_overflow_penalty": contribution_pct["overflow_penalty"],
         "pct_unpoured_penalty": contribution_pct["unpoured_penalty"],
         "violation_overflow": overflow_violation,
-        "violation_shortfall_kg": shortfall_violation,  # CHANGED (Step B)
         "violation_empty_min": empty_violation,
         "violation_low_min": low_violation,
         "parallel_peak_minutes": parallel_peak_minutes,
@@ -1524,10 +1460,6 @@ def evaluate_policy(policy_params):
         "unpoured_batches_count": m["unpoured_batches_count"],
         "makespan_minutes": m["makespan_minutes"],
         "total_poured_kg": m["total_poured_kg"],  # CHANGED (Step A)
-        "daily_demand_kg": m["daily_demand_kg"],  # CHANGED (Step B)
-        "required_from_if_kg": m["required_from_if_kg"],  # CHANGED (Step B)
-        "shortfall_kg": m["shortfall_kg"],  # CHANGED (Step B)
-        "shortfall_allow_kg": float(ALLOWED_SHORTFALL_KG),  # NEW/CHANGED
         "prep_wait_minutes": m.get("prep_wait_minutes", 0.0),  # NEW/CHANGED
         "non_alternation_count": m.get("non_alternation_count", 0.0),  # NEW/CHANGED
         "alternation_ratio": m.get("alternation_ratio", 0.0),  # NEW/CHANGED
@@ -1551,7 +1483,7 @@ def evaluate_policy(policy_params):
         "tou_effective_price": sim.get("tou_effective_price"),
         "total_plant_kw": sim["total_plant_kw"],
     }
-    g_constraints = np.array([overflow_violation, shortfall_violation], dtype=float)
+    g_constraints = np.array([overflow_violation], dtype=float)
     return total_cost, g_constraints, cost_components
 
 
@@ -1626,8 +1558,8 @@ class PolicyProblem(Problem):
                 dtype=float,
             )
             n_var = 21
-        # NEW/CHANGED: single-objective with hard constraints on overflow + shortfall.
-        n_constr = 2
+        # NEW/CHANGED: single-objective with hard constraints on overflow only.
+        n_constr = 1
         super().__init__(n_var=n_var, n_obj=1, n_constr=n_constr, xl=xl, xu=xu)
 
     def _evaluate(self, X, out, *args, **kwargs):
@@ -1655,7 +1587,7 @@ class PolicyProblem(Problem):
             generation_cache[key] = (f_scalar, g_vals, d)
             F.append([f_scalar])
             details.append(d)
-            G.append(list(np.asarray(g_vals, dtype=float).ravel()[:2]))
+            G.append([float(np.asarray(g_vals, dtype=float).ravel()[0])])
 
         out["F"] = np.asarray(F, dtype=float)
         out["G"] = np.asarray(G, dtype=float)
@@ -1677,26 +1609,12 @@ class PolicyProblem(Problem):
             avg_alt_ratio = float(
                 np.mean([d.get("alternation_ratio", 0.0) for d in details])
             )  # NEW/CHANGED
-            shortfalls = np.asarray(
-                [d.get("shortfall_kg", 0.0) for d in details], dtype=float
-            )  # CHANGED (Step F)
-            shortfalls = np.where(
-                np.isfinite(shortfalls), shortfalls, 0.0
-            )  # CHANGED (Step F)
-            avg_shortfall = (
-                float(np.mean(shortfalls)) if len(shortfalls) > 0 else 0.0
-            )  # CHANGED (Step F)
-            min_shortfall = (
-                float(np.min(shortfalls)) if len(shortfalls) > 0 else 0.0
-            )  # CHANGED (Step F)
-            max_shortfall = (
-                float(np.max(shortfalls)) if len(shortfalls) > 0 else 0.0
-            )  # CHANGED (Step F)
-            shortfall_ok_pct = (
-                float(np.mean(shortfalls <= MAX_SHORTFALL_KG_ALLOW) * 100.0)
-                if len(shortfalls) > 0
-                else 0.0
-            )  # CHANGED (Step F)
+            avg_unpoured = float(
+                np.mean([d.get("unpoured_batches_count", 0.0) for d in details])
+            )
+            avg_overflow = float(
+                np.mean([d.get("overflow_kg_total", 0.0) for d in details])
+            )
             unique_policy = len(set(key_list))
             unique_x = np.unique(np.round(np.asarray(X, dtype=float), 4), axis=0).shape[
                 0
@@ -1709,25 +1627,16 @@ class PolicyProblem(Problem):
                 round(avg_peak, 3),
             )
             print(
-                "DEBUG avg poured / avg shortfall:",
+                "DEBUG avg poured / avg unpoured:",
                 round(avg_poured, 3),
-                round(avg_shortfall, 3),
+                round(avg_unpoured, 3),
             )  # NEW/CHANGED
             print(
                 "DEBUG avg prep_wait / avg alternation_ratio:",
                 round(avg_prep_wait, 3),
                 round(avg_alt_ratio, 3),
             )  # NEW/CHANGED
-            print(  # CHANGED (Step F)
-                "DEBUG shortfall avg/min/max:",
-                round(avg_shortfall, 3),
-                round(min_shortfall, 3),
-                round(max_shortfall, 3),
-            )
-            print(  # CHANGED (Step F)
-                "DEBUG shortfall<=allow (%):",
-                round(shortfall_ok_pct, 2),
-            )
+            print("DEBUG avg overflow kg:", round(avg_overflow, 3))
             print(
                 "DEBUG unique policy keys:", unique_policy, "unique X(4dp):", unique_x
             )
@@ -1761,9 +1670,6 @@ def format_policy_breakdown(cost):
         f"  Unpoured Batches          : {cost.get('unpoured_batches_count', 0)}",
         f"  Makespan (min)            : {cost.get('makespan_minutes', 0.0):.2f}",
         f"  Total Poured (kg)         : {cost.get('total_poured_kg', 0.0):.2f}",  # CHANGED (Step A)
-        f"  Required From IF (kg)     : {cost.get('required_from_if_kg', 0.0):.2f}",  # CHANGED (Step B)
-        f"  Daily Shortfall (kg)      : {cost.get('shortfall_kg', 0.0):.2f}",  # CHANGED (Step B)
-        f"  Shortfall Allow (kg)      : {cost.get('shortfall_allow_kg', ALLOWED_SHORTFALL_KG):.2f}",  # NEW/CHANGED
         f"  Prep Wait Minutes         : {cost.get('prep_wait_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Non-Alternation Count     : {cost.get('non_alternation_count', 0.0):.2f}",  # NEW/CHANGED
         f"  Alternation Ratio         : {cost.get('alternation_ratio', 0.0):.3f}",  # NEW/CHANGED
@@ -1788,7 +1694,6 @@ def format_policy_breakdown(cost):
         f"    - JIT Delay Penalty     : {cost.get('comp_jit_delay_penalty', 0.0):.2f}",
         "  Constraint Violations:",
         f"    - Overflow (kg)         : {cost.get('violation_overflow', 0.0):.2f}",
-        f"    - Shortfall Violation   : {cost.get('violation_shortfall_kg', 0.0):.2f}",  # NEW/CHANGED
         f"    - Empty Minutes         : {cost.get('violation_empty_min', 0.0):.2f}",
         f"    - Low-Level Minutes     : {cost.get('violation_low_min', 0.0):.2f}",
         f"    - Parallel Peak Minutes : {cost.get('violation_parallel_peak_min', 0.0):.2f}",
@@ -1969,6 +1874,11 @@ def main():
     np.random.seed(42)
     sanity = quick_capacity_sanity_check()
     print_capacity_sanity_report(sanity)
+    if not sanity["is_feasible_coarse"]:
+        raise ValueError(
+            "NUM_BATCHES exceeds coarse throughput limits. "
+            "Try reducing NUM_BATCHES, enabling ALLOW_PARALLEL_IF, or increasing receive/melt capacity."
+        )
 
     problem = PolicyProblem()
     sampling = FloatRandomSampling()
@@ -2011,7 +1921,7 @@ def main():
     print("  Policy X:", np.round(best_x, 4))
     print(f"  Objective TotalCost: {best_f:.3f}")
     print(
-        f"  Constraints [overflow, shortfall]: {np.round(np.asarray(best_g, dtype=float), 6)}"
+        f"  Constraints [overflow]: {np.round(np.asarray(best_g, dtype=float), 6)}"
     )
     print(
         "  objective_total_cost:",
@@ -2028,10 +1938,10 @@ def main():
     print(
         "  total_poured_kg:",
         round(best_details.get("total_poured_kg", 0.0), 2),
-        "required_from_if_kg:",
-        round(best_details.get("required_from_if_kg", 0.0), 2),
-        "shortfall_kg:",
-        round(best_details.get("shortfall_kg", 0.0), 6),
+        "unpoured_batches_count:",
+        int(best_details.get("unpoured_batches_count", 0)),
+        "overflow_kg_total:",
+        round(best_details.get("overflow_kg_total", 0.0), 2),
     )
     print(
         "  peak_kw:",
