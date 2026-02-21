@@ -41,7 +41,7 @@ COLD_START_EXTRA_ENERGY_KWH = 30.0
 
 MH_MAX_CAPACITY_KG = {"A": 400.0, "B": 250.0}
 MH_INITIAL_LEVEL_KG = {"A": 400.0, "B": 230.0}
-MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.50, "B": 2.00}
+MH_CONSUMPTION_RATE_KG_PER_MIN = {"A": 2.80, "B": 2.80}
 MH_EMPTY_THRESHOLD_KG = 0.0
 MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
@@ -105,6 +105,8 @@ SHIFT_START = 8 * 60
 SOLAR_START = 12 * 60  # 12:00
 SOLAR_END = 13 * 60  # 13:00
 SOLAR_OFFSET_KW = 500.0
+# NEW/CHANGED: effective TOU discount during solar window.
+SOLAR_EFFECTIVE_PRICE_FACTOR = 0.35
 FURNACE_COLORS = {"A": "blue", "B": "green"}
 MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
 furnace_y = {0: 10, 1: 25}
@@ -156,8 +158,10 @@ OBJ1_EXCLUDE_SERVICE_PENALTIES_WHEN_CONSTRAINED = (
 MAX_OVERFLOW_KG_ALLOW = 1e-6
 MAX_EMPTY_MIN_ALLOW = 120.0
 MAX_LOW_LEVEL_MIN_ALLOW = 240.0
-ALLOW_SHORTFALL_KG = 350.0  # NEW/CHANGED: allowed end-of-day shortfall.
-MAX_SHORTFALL_KG_ALLOW = ALLOW_SHORTFALL_KG  # NEW/CHANGED: backward-compatible alias.
+ALLOWED_SHORTFALL_KG = 250.0  # NEW/CHANGED: allowed end-of-day shortfall.
+ALLOW_SHORTFALL_KG = ALLOWED_SHORTFALL_KG  # NEW/CHANGED: backward-compatible alias.
+MAX_DAILY_SHORTFALL_KG_ALLOW = ALLOWED_SHORTFALL_KG  # NEW/CHANGED: explicit alias.
+MAX_SHORTFALL_KG_ALLOW = ALLOWED_SHORTFALL_KG  # NEW/CHANGED: backward-compatible alias.
 HARD_FORBID_OVERFLOW = True
 SIMPLE_POLICY_MODE = (
     True  # NEW/CHANGED: use reduced 10-variable policy for smoother Pareto fronts.
@@ -198,6 +202,7 @@ POLICY_KEY_STEPS = {
     "force_urgency_threshold": 0.01,
     "power_aggressiveness": 0.01,
     "jit_slack_min": 1.0,  # NEW/CHANGED
+    "start_delay_min": 5.0,  # NEW/CHANGED
     # Legacy/full-mode keys retained for compatibility.
     "trigger_a_frac": 0.01,
     "trigger_b_frac": 0.01,
@@ -244,6 +249,20 @@ def _hour_price(minute_idx):
     return TOU_PRICE_BY_HOUR[hour]
 
 
+def _build_tou_price_series(duration_min=SIM_DURATION_MIN):
+    # NEW/CHANGED: raw/effective TOU series aligned to SHIFT_START.
+    raw = np.zeros(duration_min, dtype=float)
+    effective = np.zeros(duration_min, dtype=float)
+    for t in range(duration_min):
+        p = float(_hour_price(t))
+        raw[t] = p
+        if _is_in_solar_window(t):
+            effective[t] = p * SOLAR_EFFECTIVE_PRICE_FACTOR
+        else:
+            effective[t] = p
+    return raw, effective
+
+
 def _is_in_solar_window(minute_idx):
     # NEW/CHANGED: solar window aligned to time-of-day.
     tod = int((SHIFT_START + int(minute_idx)) % 1440)
@@ -260,14 +279,12 @@ def _effective_if_grid_kw(minute_idx, if_kw):
     return float(if_kw)
 
 
-def _effective_if_price(minute_idx, if_kw):
-    # NEW/CHANGED: effective price seen by IF after solar offset.
+def _effective_if_price(minute_idx, if_kw=None):
+    # NEW/CHANGED: effective TOU seen by IF (solar-window discounted price).
     raw_price = float(_hour_price(minute_idx))
-    if_kw = float(max(0.0, if_kw))
-    if if_kw <= 1e-9:
-        return raw_price
-    grid_if_kw = _effective_if_grid_kw(minute_idx, if_kw)
-    return float(raw_price * (grid_if_kw / if_kw))
+    if _is_in_solar_window(minute_idx):
+        return float(raw_price * SOLAR_EFFECTIVE_PRICE_FACTOR)
+    return raw_price
 
 
 def _compute_batch_profile(power_kw, is_cold_start, if_furnace):
@@ -289,7 +306,7 @@ def _compute_batch_profile(power_kw, is_cold_start, if_furnace):
 
 
 def _decode_policy_vector(x):
-    # NEW/CHANGED: simple interpretable policy mode (11 vars) for smoother trade-offs.
+    # NEW/CHANGED: simple interpretable policy mode (12 vars) for smoother trade-offs.
     if SIMPLE_POLICY_MODE:
         x = np.asarray(x, dtype=float)
         lookahead_min = int(np.clip(round(np.clip(x[2], 0.0, 1.0) * 180.0), 0, 180))
@@ -307,6 +324,7 @@ def _decode_policy_vector(x):
             "force_urgency_threshold": float(np.clip(x[8], 0.70, 0.98)),
             "power_aggressiveness": float(np.clip(x[9], 0.0, 1.0)),
             "jit_slack_min": float(np.clip(x[10], 0.0, 1.0) * 60.0),  # NEW/CHANGED
+            "start_delay_min": float(np.clip(x[11], 0.0, 1.0) * 240.0),  # NEW/CHANGED
             # Keep these for compatibility with existing helper logic.
             "wait_vs_rush": float(np.clip(x[9], 0.0, 1.0)),
             "start_score_bias": 0.0,
@@ -403,6 +421,9 @@ def _policy_cache_key(x):
             ),
             _quantize_to_step(
                 p["jit_slack_min"], POLICY_KEY_STEPS["jit_slack_min"]
+            ),  # NEW/CHANGED
+            _quantize_to_step(
+                p.get("start_delay_min", 0.0), POLICY_KEY_STEPS["start_delay_min"]
             ),  # NEW/CHANGED
         )
     return (
@@ -520,7 +541,8 @@ def _violation_vector(m):
     return np.array(
         [
             overflow_total - MAX_OVERFLOW_KG_ALLOW,
-            shortfall_total - ALLOW_SHORTFALL_KG,  # NEW/CHANGED: configurable shortfall allowance.
+            shortfall_total
+            - ALLOWED_SHORTFALL_KG,  # NEW/CHANGED: configurable shortfall allowance.
             empty_total - MAX_EMPTY_MIN_ALLOW,
             low_total - MAX_LOW_LEVEL_MIN_ALLOW,
             parallel_peak_total - MAX_PARALLEL_PEAK_MIN_ALLOW,  # CHANGED (Step E)
@@ -874,6 +896,9 @@ def print_capacity_sanity_report(report):
 def simulate_policy_day(policy_params):
     policy = _decode_policy_vector(policy_params)
     baseline_kw = _build_baseline_load_kw(SIM_DURATION_MIN)
+    tou_raw_price_series, tou_effective_price_series = _build_tou_price_series(
+        SIM_DURATION_MIN
+    )  # NEW/CHANGED
 
     if_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
     melt_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
@@ -881,10 +906,8 @@ def simulate_policy_day(policy_params):
     total_plant_kw = np.zeros(SIM_DURATION_MIN, dtype=float)
     energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)
     reheat_energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)  # NEW/CHANGED
-    tou_raw_price_series = np.zeros(SIM_DURATION_MIN, dtype=float)  # NEW/CHANGED
-    tou_effective_price_series = np.zeros(
-        SIM_DURATION_MIN, dtype=float
-    )  # NEW/CHANGED
+    solar_melt_minutes = 0.0  # NEW/CHANGED
+    solar_cost_saving = 0.0  # NEW/CHANGED
 
     mh_levels_series = {
         "A": np.zeros(SIM_DURATION_MIN, dtype=float),
@@ -1084,7 +1107,7 @@ def simulate_policy_day(policy_params):
                     baseline_kw[t],
                     if_kw_now,
                     len(ready_to_pour_queue),
-                    _effective_if_price(t, max(IF_POWER_OPTIONS)),
+                    tou_effective_price_series[t],
                 )
                 start_score = _start_score(policy, state)
                 min_gap_now = _dynamic_min_start_gap(policy, state)
@@ -1094,6 +1117,8 @@ def simulate_policy_day(policy_params):
                     start_allowed = (
                         start_score >= 0.0 and gap_ok
                     ) or force_mode  # NEW/CHANGED
+                    if (not force_mode) and t < int(policy.get("start_delay_min", 0.0)):
+                        start_allowed = False  # NEW/CHANGED
                     if any_holding_active and (not ALLOW_PARALLEL_IF):
                         start_allowed = False
                     if start_allowed:
@@ -1277,18 +1302,13 @@ def simulate_policy_day(policy_params):
                 downtime_remaining[f_id] -= 1
 
         total_plant_kw[t] = baseline_kw[t] + minute_if_kw
-        raw_price_t = _hour_price(t)
-        grid_if_kw_t = _effective_if_grid_kw(t, minute_if_kw)
-        tou_raw_price_series[t] = raw_price_t
-        tou_effective_price_series[t] = _effective_if_price(t, minute_if_kw)
-        energy_cost_series[t] = (grid_if_kw_t / 60.0) * raw_price_t
-        if minute_if_kw > 1e-9:
-            grid_reheat_kw_t = grid_if_kw_t * (minute_reheat_kw / minute_if_kw)
-        else:
-            grid_reheat_kw_t = 0.0
-        reheat_energy_cost_series[t] = (
-            grid_reheat_kw_t / 60.0
-        ) * raw_price_t  # NEW/CHANGED
+        raw_price_t = tou_raw_price_series[t]
+        eff_price_t = tou_effective_price_series[t]
+        energy_cost_series[t] = (minute_if_kw / 60.0) * eff_price_t
+        reheat_energy_cost_series[t] = (minute_reheat_kw / 60.0) * eff_price_t
+        solar_cost_saving += (minute_if_kw / 60.0) * max(0.0, raw_price_t - eff_price_t)
+        if minute_melt_kw > 1e-9 and _is_in_solar_window(t):
+            solar_melt_minutes += 1.0
         active_if_count = sum(
             1 for f in available_if_furnaces if if_states[f]["active"]
         )
@@ -1407,6 +1427,9 @@ def simulate_policy_day(policy_params):
                 start_blocked_by_prep_count
             ),  # NEW/CHANGED
             "jit_delay_minutes": float(jit_delay_minutes),  # NEW/CHANGED
+            "solar_melt_minutes": float(solar_melt_minutes),  # NEW/CHANGED
+            "solar_cost_saving": float(solar_cost_saving),  # NEW/CHANGED
+            "start_delay_min": float(policy.get("start_delay_min", 0.0)),  # NEW/CHANGED
             "min_level_reached": min_level_reached,
             "if_use_count_A": furnace_use_count[0],
             "if_use_count_B": furnace_use_count[1],
@@ -1504,6 +1527,7 @@ def evaluate_policy(policy_params):
         "daily_demand_kg": m["daily_demand_kg"],  # CHANGED (Step B)
         "required_from_if_kg": m["required_from_if_kg"],  # CHANGED (Step B)
         "shortfall_kg": m["shortfall_kg"],  # CHANGED (Step B)
+        "shortfall_allow_kg": float(ALLOWED_SHORTFALL_KG),  # NEW/CHANGED
         "prep_wait_minutes": m.get("prep_wait_minutes", 0.0),  # NEW/CHANGED
         "non_alternation_count": m.get("non_alternation_count", 0.0),  # NEW/CHANGED
         "alternation_ratio": m.get("alternation_ratio", 0.0),  # NEW/CHANGED
@@ -1512,6 +1536,9 @@ def evaluate_policy(policy_params):
             "start_blocked_by_prep_count", 0.0
         ),  # NEW/CHANGED
         "jit_delay_minutes": m.get("jit_delay_minutes", 0.0),  # NEW/CHANGED
+        "solar_melt_minutes": m.get("solar_melt_minutes", 0.0),  # NEW/CHANGED
+        "solar_cost_saving": m.get("solar_cost_saving", 0.0),  # NEW/CHANGED
+        "start_delay_min": m.get("start_delay_min", 0.0),  # NEW/CHANGED
         "min_level_A": m["min_level_reached"]["A"],
         "min_level_B": m["min_level_reached"]["B"],
         "policy": sim["policy"],
@@ -1531,16 +1558,16 @@ def evaluate_policy(policy_params):
 class PolicyProblem(Problem):
     def __init__(self):
         if SIMPLE_POLICY_MODE:
-            # NEW/CHANGED: compact 11-variable policy for smoother NSGA-II trade-offs.
+            # NEW/CHANGED: compact 12-variable policy (added start_delay_min).
             xl = np.array(
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.70, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.70, 0.0, 0.0, 0.0],
                 dtype=float,
             )
             xu = np.array(
-                [1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 0.98, 1.0, 1.0],
+                [1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 0.98, 1.0, 1.0, 1.0],
                 dtype=float,
             )
-            n_var = 11
+            n_var = 12
         else:
             # [trigA_frac, trigB_frac, lookahead_norm, critA_frac, critB_frac, mid_frac,
             #  headroom_norm, peak_weight, furnace_bias, wait_vs_rush,
@@ -1736,12 +1763,16 @@ def format_policy_breakdown(cost):
         f"  Total Poured (kg)         : {cost.get('total_poured_kg', 0.0):.2f}",  # CHANGED (Step A)
         f"  Required From IF (kg)     : {cost.get('required_from_if_kg', 0.0):.2f}",  # CHANGED (Step B)
         f"  Daily Shortfall (kg)      : {cost.get('shortfall_kg', 0.0):.2f}",  # CHANGED (Step B)
+        f"  Shortfall Allow (kg)      : {cost.get('shortfall_allow_kg', ALLOWED_SHORTFALL_KG):.2f}",  # NEW/CHANGED
         f"  Prep Wait Minutes         : {cost.get('prep_wait_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Non-Alternation Count     : {cost.get('non_alternation_count', 0.0):.2f}",  # NEW/CHANGED
         f"  Alternation Ratio         : {cost.get('alternation_ratio', 0.0):.3f}",  # NEW/CHANGED
         f"  Forced Start Count        : {cost.get('forced_start_count', 0.0):.2f}",  # NEW/CHANGED
         f"  Start Blocked By Prep     : {cost.get('start_blocked_by_prep_count', 0.0):.2f}",  # NEW/CHANGED
         f"  JIT Delay Minutes         : {cost.get('jit_delay_minutes', 0.0):.2f}",  # NEW/CHANGED
+        f"  Solar Melt Minutes        : {cost.get('solar_melt_minutes', 0.0):.2f}",  # NEW/CHANGED
+        f"  Solar Cost Saving         : {cost.get('solar_cost_saving', 0.0):.2f}",  # NEW/CHANGED
+        f"  Start Delay (min)         : {cost.get('start_delay_min', 0.0):.2f}",  # NEW/CHANGED
         f"  Min Level Reached A/B     : {cost.get('min_level_A', 0.0):.2f} / {cost.get('min_level_B', 0.0):.2f}",
         "  Obj1 Decomposition (raw / %raw):",
         f"    - Energy Cost           : {cost.get('comp_energy_cost', 0.0):.2f} / {cost.get('pct_energy_cost', 0.0):.2f}%",
@@ -1757,7 +1788,7 @@ def format_policy_breakdown(cost):
         f"    - JIT Delay Penalty     : {cost.get('comp_jit_delay_penalty', 0.0):.2f}",
         "  Constraint Violations:",
         f"    - Overflow (kg)         : {cost.get('violation_overflow', 0.0):.2f}",
-        f"    - Shortfall (kg)        : {cost.get('violation_shortfall_kg', 0.0):.2f}",  # CHANGED (Step B)
+        f"    - Shortfall Violation   : {cost.get('violation_shortfall_kg', 0.0):.2f}",  # NEW/CHANGED
         f"    - Empty Minutes         : {cost.get('violation_empty_min', 0.0):.2f}",
         f"    - Low-Level Minutes     : {cost.get('violation_low_min', 0.0):.2f}",
         f"    - Parallel Peak Minutes : {cost.get('violation_parallel_peak_min', 0.0):.2f}",
@@ -1894,6 +1925,20 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             color="purple",
             linewidth=2.0,
         )
+    if if_kw is not None and tou_effective is not None:
+        y0 = float(np.min(tou_effective))
+        y1 = y0 + max(0.05, 0.08 * float(np.ptp(tou_effective) + 1e-9))
+        active_mask = np.asarray(if_kw) > 1e-9
+        ax4.fill_between(
+            t_shifted,
+            y0,
+            y1,
+            where=active_mask,
+            color="steelblue",
+            alpha=0.22,
+            step="pre",
+            label="IF active window",
+        )
     ax4.set_ylabel("Price")
     ax4.set_title("TOU Raw vs Effective")
     ax4.grid(True, alpha=0.4)
@@ -1969,8 +2014,12 @@ def main():
         f"  Constraints [overflow, shortfall]: {np.round(np.asarray(best_g, dtype=float), 6)}"
     )
     print(
-        "  total_energy_cost:",
+        "  objective_total_cost:",
+        round(best_details.get("objective_total_cost", best_f), 2),
+        "total_energy_cost:",
         round(best_details.get("total_energy_cost", 0.0), 2),
+        "solar_cost_saving:",
+        round(best_details.get("solar_cost_saving", 0.0), 2),
         "reheat_energy_cost:",
         round(best_details.get("reheat_energy_cost", 0.0), 2),
         "holding_minutes_total:",
@@ -1990,13 +2039,27 @@ def main():
         "demand_penalty:",
         round(best_details.get("demand_penalty", 0.0), 2),
     )
+    print(
+        "  KPI empty_min(A/B):",
+        round(best_details.get("mh_empty_minutes_A", 0.0), 2),
+        "/",
+        round(best_details.get("mh_empty_minutes_B", 0.0), 2),
+        "low_min(A/B):",
+        round(best_details.get("mh_low_level_minutes_A", 0.0), 2),
+        "/",
+        round(best_details.get("mh_low_level_minutes_B", 0.0), 2),
+        "min_level(A/B):",
+        round(best_details.get("min_level_A", 0.0), 2),
+        "/",
+        round(best_details.get("min_level_B", 0.0), 2),
+    )
     print(format_policy_breakdown(best_details))
     plot_policy_result(best_details, title_prefix="Best GA Policy")
 
 
 # NEW/CHANGED: ================== CONFIG SUMMARY ==================
 # SIMPLE_POLICY_MODE:
-#   True  -> compact 11-variable policy (recommended for smoother Pareto front)
+#   True  -> compact 12-variable policy (includes start_delay_min)
 #   False -> legacy/full policy variable set
 #
 # ENABLE_PREP_MODEL:
