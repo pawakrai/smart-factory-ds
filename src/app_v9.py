@@ -1040,11 +1040,16 @@ def simulate_policy_day(policy_params, controller=None):
                     controller_state = {
                         "t": t,
                         "policy_state": state,
-                        "current_level": {"A": current_level["A"], "B": current_level["B"]},
+                        "current_level": {
+                            "A": current_level["A"],
+                            "B": current_level["B"],
+                        },
                         "baseline_kw": float(baseline_kw[t]),
                         "if_kw_now": float(if_kw_now),
                         "tou_effective_price": float(tou_effective_price_series[t]),
-                        "remaining_batches": int(max(0, NUM_BATCHES - batch_id_counter)),
+                        "remaining_batches": int(
+                            max(0, NUM_BATCHES - batch_id_counter)
+                        ),
                         "ready_queue_len": int(len(ready_to_pour_queue)),
                         "idle_furnaces": list(idle_all),
                         "available_if_furnaces": list(available_if_furnaces),
@@ -1064,13 +1069,17 @@ def simulate_policy_day(policy_params, controller=None):
                             "delay_reason": f"controller_error:{type(exc).__name__}",
                         }
                     if controller_decision.get("force_mode_override") is not None:
-                        force_mode = bool(controller_decision.get("force_mode_override"))
+                        force_mode = bool(
+                            controller_decision.get("force_mode_override")
+                        )
                 if (not any_if_active) or can_parallel_now:
                     if controller is None:
                         start_allowed = (
                             start_score >= 0.0 and gap_ok
                         ) or force_mode  # NEW/CHANGED
-                        if (not force_mode) and t < int(policy.get("start_delay_min", 0.0)):
+                        if (not force_mode) and t < int(
+                            policy.get("start_delay_min", 0.0)
+                        ):
                             start_allowed = False  # NEW/CHANGED
                         if (
                             any_holding_active
@@ -1079,7 +1088,9 @@ def simulate_policy_day(policy_params, controller=None):
                         ):
                             start_allowed = False
                     else:
-                        start_allowed = bool(controller_decision.get("start_allowed", False))
+                        start_allowed = bool(
+                            controller_decision.get("start_allowed", False)
+                        )
                         if (
                             any_holding_active
                             and (not ALLOW_PARALLEL_IF)
@@ -1159,7 +1170,8 @@ def simulate_policy_day(policy_params, controller=None):
                             ):
                                 req_p = float(controller_decision.get("selected_power"))
                                 selected_power = min(
-                                    IF_POWER_OPTIONS, key=lambda v: abs(float(v) - req_p)
+                                    IF_POWER_OPTIONS,
+                                    key=lambda v: abs(float(v) - req_p),
                                 )
                             if selected_power is None:
                                 selected_power = _select_if_power(
@@ -1179,10 +1191,17 @@ def simulate_policy_day(policy_params, controller=None):
                             )["duration_min"]
                             hold_risk = max(0.0, pour_ready_eta_min - est_duration)
                             jit_slack = float(policy.get("jit_slack_min", 0.0))
-                            if OPT_MODE == "service":
+                            bypass_jit_gate = bool(
+                                controller_decision.get("bypass_jit_gate", False)
+                            )
+                            if (not bypass_jit_gate) and OPT_MODE == "service":
                                 # NEW/CHANGED: stricter JIT in service mode to reduce holding/reheat.
                                 jit_slack = min(jit_slack, 5.0)
-                            if (not force_mode) and hold_risk > jit_slack:
+                            if (
+                                (not bypass_jit_gate)
+                                and (not force_mode)
+                                and hold_risk > jit_slack
+                            ):
                                 jit_delay_minutes += 1.0
                                 delay_reason_counts["jit_gate"] = (
                                     delay_reason_counts.get("jit_gate", 0) + 1
@@ -1197,7 +1216,14 @@ def simulate_policy_day(policy_params, controller=None):
                             shortage_override = force_mode and state[
                                 "depletion_urgency"
                             ] >= policy.get("force_urgency_threshold", 0.92)
-                            if projected_total <= hard_guard or shortage_override:
+                            bypass_demand_guard = bool(
+                                controller_decision.get("bypass_demand_guard", False)
+                            )
+                            if (
+                                bypass_demand_guard
+                                or projected_total <= hard_guard
+                                or shortage_override
+                            ):
                                 profile = _compute_batch_profile(
                                     selected_power, is_cold_start, chosen_if
                                 )
@@ -1246,8 +1272,12 @@ def simulate_policy_day(policy_params, controller=None):
                                     delay_reason_counts.get("demand_guard", 0) + 1
                                 )
                     else:
-                        reason = controller_decision.get("delay_reason", "controller_not_start")
-                        delay_reason_counts[reason] = delay_reason_counts.get(reason, 0) + 1
+                        reason = controller_decision.get(
+                            "delay_reason", "controller_not_start"
+                        )
+                        delay_reason_counts[reason] = (
+                            delay_reason_counts.get(reason, 0) + 1
+                        )
 
         # 5) IF load minute
         minute_if_kw = 0.0
@@ -2089,7 +2119,9 @@ def main():
         else:
             idx = int(candidate_idxs[0])
         best_x = np.asarray(pop_X[idx], dtype=float).ravel()
-        print(f"Fallback selection: picked least-infeasible individual idx={idx}, CV={cv[idx]:.6f}")
+        print(
+            f"Fallback selection: picked least-infeasible individual idx={idx}, CV={cv[idx]:.6f}"
+        )
 
     best_f, best_g, best_details = evaluate_policy(best_x)
     print("\nBest GA solution:")

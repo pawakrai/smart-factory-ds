@@ -196,7 +196,10 @@ def main(seed=42):
 
     base_x = _default_policy_vector()
     rb_controller = make_rule_based_controller()
+    original_mode = sim.OPT_MODE
 
+    # Keep baselines comparable and unaffected by service-specific JIT clamp.
+    sim.OPT_MODE = "energy"
     res_cont = _details_from_sim(
         sim.simulate_policy_day(base_x, controller=continuous_melting_controller),
         name="continuous_baseline",
@@ -209,6 +212,7 @@ def main(seed=42):
     )
     res_ga_energy = _run_ga_mode("energy", seed=seed)
     res_ga_service = _run_ga_mode("service", seed=seed)
+    sim.OPT_MODE = original_mode
 
     all_results = [res_cont, res_rule, res_ga_energy, res_ga_service]
     rows = _comparison_rows(all_results)
