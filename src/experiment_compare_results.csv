@@ -1,0 +1,5 @@
+policy,opt_mode,objective_total_cost,energy_cost,reheat_kwh,reheat_cost,holding_min,poured_batches,missing_batches,overflow_kg,zero_minutes,eps_deficit_area,min_level_A,min_level_B,peak_kw,solar_saving
+continuous_baseline,baseline,nan,0.0,0.0,0.0,0.0,0,12,6000.0,0.0,0.0,400.0,230.0,0.0,0.0
+rule_based,baseline,nan,23122.208,1211.25,2453.375,153.0,10,2,1000.0,212.0,307.0,0.0,0.0,883.228,1080.625
+ga_energy,energy,22180.5,22180.5,0.0,0.0,0.0,12,0,0.0,164.0,216.0,0.0,0.0,908.16,1023.75
+ga_service,service,7708689.023,22833.188,0.0,0.0,0.0,12,0,0.0,77.0,77.0,133.0,0.0,858.228,699.563

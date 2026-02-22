@@ -820,8 +820,14 @@ def print_capacity_sanity_report(report):
     print("Coarse feasibility:", "PASS" if report["is_feasible_coarse"] else "FAIL")
 
 
-def simulate_policy_day(policy_params):
-    policy = _decode_policy_vector(policy_params)
+def simulate_policy_day(policy_params, controller=None):
+    if isinstance(policy_params, dict):
+        policy = dict(policy_params)
+    elif policy_params is None:
+        n = 12 if SIMPLE_POLICY_MODE else 21
+        policy = _decode_policy_vector(np.zeros(n, dtype=float))
+    else:
+        policy = _decode_policy_vector(policy_params)
     baseline_kw = _build_baseline_load_kw(SIM_DURATION_MIN)
     tou_raw_price_series, tou_effective_price_series = _build_tou_price_series(
         SIM_DURATION_MIN
@@ -884,6 +890,7 @@ def simulate_policy_day(policy_params):
     alternation_count = 0  # NEW/CHANGED
     last_started_furnace = None  # NEW/CHANGED
     jit_delay_minutes = 0.0  # NEW/CHANGED
+    delay_reason_counts = {}  # NEW/CHANGED
     min_duration_per_batch = float(
         min(v["duration_min_hot"] for v in POWER_PROFILE.values())
     )  # NEW/CHANGED
@@ -1028,18 +1035,58 @@ def simulate_policy_day(policy_params):
                 min_gap_now = _dynamic_min_start_gap(policy, state)
                 gap_ok = (t - last_start_min) >= min_gap_now
                 can_parallel_now = _parallel_allowed(policy, state, start_score)
+                controller_decision = {}
+                if controller is not None:
+                    controller_state = {
+                        "t": t,
+                        "policy_state": state,
+                        "current_level": {"A": current_level["A"], "B": current_level["B"]},
+                        "baseline_kw": float(baseline_kw[t]),
+                        "if_kw_now": float(if_kw_now),
+                        "tou_effective_price": float(tou_effective_price_series[t]),
+                        "remaining_batches": int(max(0, NUM_BATCHES - batch_id_counter)),
+                        "ready_queue_len": int(len(ready_to_pour_queue)),
+                        "idle_furnaces": list(idle_all),
+                        "available_if_furnaces": list(available_if_furnaces),
+                        "any_if_active": bool(any_if_active),
+                        "any_holding_active": bool(any_holding_active),
+                        "last_started_furnace": last_started_furnace,
+                        "force_mode": bool(force_mode),
+                        "gap_ok": bool(gap_ok),
+                        "sim_duration_min": int(SIM_DURATION_MIN),
+                        "num_batches": int(NUM_BATCHES),
+                    }
+                    try:
+                        controller_decision = controller(controller_state) or {}
+                    except Exception as exc:
+                        controller_decision = {
+                            "start_allowed": False,
+                            "delay_reason": f"controller_error:{type(exc).__name__}",
+                        }
+                    if controller_decision.get("force_mode_override") is not None:
+                        force_mode = bool(controller_decision.get("force_mode_override"))
                 if (not any_if_active) or can_parallel_now:
-                    start_allowed = (
-                        start_score >= 0.0 and gap_ok
-                    ) or force_mode  # NEW/CHANGED
-                    if (not force_mode) and t < int(policy.get("start_delay_min", 0.0)):
-                        start_allowed = False  # NEW/CHANGED
-                    if (
-                        any_holding_active
-                        and (not ALLOW_PARALLEL_IF)
-                        and (not force_mode)
-                    ):
-                        start_allowed = False
+                    if controller is None:
+                        start_allowed = (
+                            start_score >= 0.0 and gap_ok
+                        ) or force_mode  # NEW/CHANGED
+                        if (not force_mode) and t < int(policy.get("start_delay_min", 0.0)):
+                            start_allowed = False  # NEW/CHANGED
+                        if (
+                            any_holding_active
+                            and (not ALLOW_PARALLEL_IF)
+                            and (not force_mode)
+                        ):
+                            start_allowed = False
+                    else:
+                        start_allowed = bool(controller_decision.get("start_allowed", False))
+                        if (
+                            any_holding_active
+                            and (not ALLOW_PARALLEL_IF)
+                            and (not force_mode)
+                        ):
+                            start_allowed = False
+                            controller_decision["delay_reason"] = "holding_guard"
                     if start_allowed:
                         idle_ready = [
                             f
@@ -1052,6 +1099,9 @@ def simulate_policy_day(policy_params):
                                 prep_wait_minutes += float(
                                     max(0, min(prep_remaining[f] for f in idle_all))
                                 )  # NEW/CHANGED
+                            delay_reason_counts["prep_not_ready"] = (
+                                delay_reason_counts.get("prep_not_ready", 0) + 1
+                            )
                             continue
 
                         if (
@@ -1069,15 +1119,21 @@ def simulate_policy_day(policy_params):
                                     f for f in idle_ready if f not in alt_idle
                                 ]  # NEW/CHANGED
 
-                        chosen_if = _select_if_furnace(
-                            policy,
-                            idle_ready,
-                            current_level,
-                            t,
-                            last_if_release_time,
-                            furnace_use_count,
-                            last_started_furnace=last_started_furnace,
-                        )
+                        chosen_if = None
+                        if controller is not None:
+                            req_if = controller_decision.get("chosen_if")
+                            if req_if in idle_ready:
+                                chosen_if = int(req_if)
+                        if chosen_if is None:
+                            chosen_if = _select_if_furnace(
+                                policy,
+                                idle_ready,
+                                current_level,
+                                t,
+                                last_if_release_time,
+                                furnace_use_count,
+                                last_started_furnace=last_started_furnace,
+                            )
 
                         blocked_by_prep = (
                             ENABLE_PREP_MODEL and prep_remaining.get(chosen_if, 0) > 0
@@ -1097,14 +1153,23 @@ def simulate_policy_day(policy_params):
                                 gap is None or gap >= COLD_START_GAP_THRESHOLD_MIN
                             )
 
-                            selected_power = _select_if_power(
-                                policy,
-                                current_level,
-                                baseline_kw[t],
-                                if_kw_now,
-                                t,
-                                force_mode=force_mode,
-                            )
+                            selected_power = None
+                            if controller is not None and (
+                                controller_decision.get("selected_power") is not None
+                            ):
+                                req_p = float(controller_decision.get("selected_power"))
+                                selected_power = min(
+                                    IF_POWER_OPTIONS, key=lambda v: abs(float(v) - req_p)
+                                )
+                            if selected_power is None:
+                                selected_power = _select_if_power(
+                                    policy,
+                                    current_level,
+                                    baseline_kw[t],
+                                    if_kw_now,
+                                    t,
+                                    force_mode=force_mode,
+                                )
                             # NEW/CHANGED: strict JIT gate from pour-ready ETA.
                             pour_ready_eta_min = _pour_ready_eta_min(
                                 current_level, downtime_remaining
@@ -1119,6 +1184,9 @@ def simulate_policy_day(policy_params):
                                 jit_slack = min(jit_slack, 5.0)
                             if (not force_mode) and hold_risk > jit_slack:
                                 jit_delay_minutes += 1.0
+                                delay_reason_counts["jit_gate"] = (
+                                    delay_reason_counts.get("jit_gate", 0) + 1
+                                )
                                 continue
                             projected_total = (
                                 baseline_kw[t] + if_kw_now + selected_power
@@ -1173,6 +1241,13 @@ def simulate_policy_day(policy_params):
                                     prep_remaining[other_f] = max(
                                         0, prep_remaining.get(other_f, 0)
                                     )
+                            else:
+                                delay_reason_counts["demand_guard"] = (
+                                    delay_reason_counts.get("demand_guard", 0) + 1
+                                )
+                    else:
+                        reason = controller_decision.get("delay_reason", "controller_not_start")
+                        delay_reason_counts[reason] = delay_reason_counts.get(reason, 0) + 1
 
         # 5) IF load minute
         minute_if_kw = 0.0
@@ -1390,6 +1465,12 @@ def simulate_policy_day(policy_params):
             "if_use_count_B": furnace_use_count[1],
             "if_idle_minutes_total": total_if_idle_minutes,
             "parallel_peak_minutes": float(parallel_peak_minutes),
+            "controller_name": (
+                getattr(controller, "__name__", str(controller))
+                if controller is not None
+                else "ga_policy"
+            ),
+            "delay_reason_counts": dict(delay_reason_counts),
         },
     }
 
