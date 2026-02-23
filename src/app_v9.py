@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import csv
+import os
 
 from pymoo.core.problem import Problem
 from pymoo.core.duplicate import ElementwiseDuplicateElimination
@@ -15,7 +17,10 @@ from pymoo.algorithms.soo.nonconvex.ga import GA
 # =============== CONFIG ==================
 HOURS_A_DAY = 24 * 60
 SIM_DURATION_MIN = HOURS_A_DAY
-NUM_BATCHES = 12
+NUM_BATCHES = 5
+NUM_BATCHES_TARGET_MONTHLY_AVG = 5
+# Set to int to override one-day simulation batch target.
+NUM_BATCHES_RUN_OVERRIDE = 12
 # NEW/CHANGED: optimization mode switch ("energy" or "service").
 OPT_MODE = "service"
 EPS_LEVEL = 1.0
@@ -26,8 +31,25 @@ SERVICE_W_ZERO_MINUTES = 1e5
 SERVICE_W_EPS_DEFICIT_AREA = 1e2
 SERVICE_W_LOW_LEVEL_MINUTES = 1.0
 SERVICE_W_HOLDING_MINUTES = 1e4
-SERVICE_W_REHEAT_KWH = 1e5
+SERVICE_W_REHEAT_KWH = 1e3
 SERVICE_W_ENERGY_TIEBREAKER = 1e-6
+
+# Energy-mode behavior tuning (price-first scheduling)
+ENERGY_MODE_START_W_DEP = 0.9
+ENERGY_MODE_START_W_TRIGGER = 0.3
+ENERGY_MODE_START_W_QUEUE = 0.2
+ENERGY_MODE_START_W_PEAK = 1.2
+ENERGY_MODE_START_W_TOU = 1.0
+ENERGY_MODE_START_W_INV_FLOOR = 0.5
+ENERGY_MODE_INV_FLOOR_FRAC = 0.45
+ENERGY_PRICE_LOOKAHEAD_MIN = 60
+ENERGY_MODE_START_W_URGENCY_PER_HOUR = 0.8
+ENERGY_MODE_START_W_POST_SOLAR_URGENCY = 0.6
+ENERGY_MAKESPAN_COST_PER_MIN = 0.6
+ENERGY_IDLE_GAP_COST_PER_MIN = 1.5
+ENERGY_IDLE_GAP_SUPERLINEAR_COEFF = 0.15
+ENERGY_CHEAP_MELT_CREDIT_PER_MIN = 5.0
+ENERGY_MODE_MIN_JIT_SLACK_MIN = 25.0
 
 USE_FURNACE_A = True
 USE_FURNACE_B = True
@@ -59,40 +81,22 @@ MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
 LOW_LEVEL_NONLINEAR_FACTOR = 3.0
 
-# TOU price ($/kWh equivalent unit)
-TOU_PRICE_BY_HOUR = np.array(
-    [
-        1.8,  # 00:00
-        1.8,  # 01:00
-        1.8,  # 02:00
-        1.8,  # 03:00
-        1.8,  # 04:00
-        1.8,  # 05:00
-        1.9,  # 06:00
-        2.0,  # 07:00
-        2.1,  # 08:00
-        3.2,  # 09:00
-        3.3,  # 10:00
-        3.4,  # 11:00
-        3.5,  # 12:00
-        3.6,  # 13:00
-        3.7,  # 14:00
-        3.8,  # 15:00
-        3.9,  # 16:00
-        4.1,  # 17:00
-        4.3,  # 18:00
-        4.2,  # 19:00
-        4.0,  # 20:00
-        3.6,  # 21:00
-        2.0,  # 22:00
-        1.9,  # 23:00
-    ],
-    dtype=float,
-)
+# TH tariff defaults: TOU 4.2.2 (22-33kV) + Ft (THB units, excl. VAT)
+TARIFF_NAME = "TOU_22-33kV_4.2.2"
+TOU_ONPEAK_BAHT_PER_KWH_BASE = 4.1839
+TOU_OFFPEAK_BAHT_PER_KWH_BASE = 2.6037
+FT_BAHT_PER_KWH = 0.0972
+TOU_ONPEAK_BAHT_PER_KWH = TOU_ONPEAK_BAHT_PER_KWH_BASE + FT_BAHT_PER_KWH
+TOU_OFFPEAK_BAHT_PER_KWH = TOU_OFFPEAK_BAHT_PER_KWH_BASE + FT_BAHT_PER_KWH
+DEMAND_CHARGE_BAHT_PER_KW_MONTH = 132.93
+SERVICE_FEE_BAHT_PER_MONTH = 312.24
+DEMAND_INTERVAL_MIN = 15
+BILLING_DAYS_PER_MONTH = 30
+ASSUME_WEEKDAY = True
+INCLUDE_SERVICE_FEE_IN_ENERGY_OBJECTIVE = False
 
-CONTRACT_DEMAND_KW = 1200.0
-DEMAND_CHARGE_RATE_PER_KW = 1800.0
-DEMAND_SOFT_ZONE_RATIO = 0.90
+# Increased to reflect realistic plant contract and allow higher baseline window.
+CONTRACT_DEMAND_KW = 1600.0
 
 # Service penalties (raw units before normalization). Tuned so raw components are
 # closer in order of magnitude and do not completely dominate energy cost.
@@ -228,23 +232,56 @@ EARLY_STOP_PATIENCE_GENS = 20
 EARLY_STOP_DELTA_OBJ0 = 1.0
 EARLY_STOP_DELTA_OBJ1 = 50.0
 EARLY_STOP_DELTA_OBJ2 = 0.5
+DEBUG_DUMP_MH_TRACE = True
+DEBUG_MH_TRACE_STEP_MIN = 1
+
+
+def _current_num_batches():
+    if NUM_BATCHES_RUN_OVERRIDE is None:
+        return int(NUM_BATCHES)
+    return int(NUM_BATCHES_RUN_OVERRIDE)
 
 
 def _build_baseline_load_kw(duration_min=SIM_DURATION_MIN):
     # NEW/CHANGED: align baseline time-of-day with SHIFT_START (t=0 means SHIFT_START).
     t = np.arange(duration_min, dtype=float)
-    tod = (SHIFT_START + t) % 1440.0
-    baseline = 310.0 + 70.0 * np.sin(2.0 * np.pi * (tod / 1440.0 - 0.15))
-    baseline += 45.0 * np.exp(-((tod - 13 * 60.0) ** 2) / (2.0 * (140.0**2)))
-    baseline += 30.0 * np.exp(-((tod - 20 * 60.0) ** 2) / (2.0 * (120.0**2)))
+    tod = (SHIFT_START + t).astype(int) % 1440
+    baseline = np.zeros(duration_min, dtype=float)
+
+    # Step profile by operation windows (kW):
+    # 00:00-07:00=450, 07:00-12:00=800, 12:00-13:00=600,
+    # 13:00-17:00=850, 17:00-22:00=750, 22:00-24:00=450
+    baseline[(tod >= 0) & (tod < 7 * 60)] = 450.0
+    baseline[(tod >= 7 * 60) & (tod < 12 * 60)] = 800.0
+    baseline[(tod >= 12 * 60) & (tod < 13 * 60)] = 600.0
+    baseline[(tod >= 13 * 60) & (tod < 17 * 60)] = 850.0
+    baseline[(tod >= 17 * 60) & (tod < 22 * 60)] = 750.0
+    baseline[(tod >= 22 * 60) & (tod < 24 * 60)] = 450.0
+
+    # Small deterministic variability (+/-2.5%) to avoid perfectly flat lines.
+    noise_pct = 0.025
+    if DETERMINISTIC_SIMULATION:
+        rng = np.random.default_rng(42)
+        noise = rng.uniform(-noise_pct, noise_pct, size=duration_min)
+    else:
+        noise = np.random.uniform(-noise_pct, noise_pct, size=duration_min)
+    baseline *= 1.0 + noise
     return np.clip(baseline, 220.0, None)
 
 
-def _hour_price(minute_idx):
-    # NEW/CHANGED: align TOU hour with SHIFT_START.
+def is_onpeak(tod_min, assume_weekday=True):
+    """TOU on-peak window: 09:00-22:00 on weekdays."""
+    hour = int((int(tod_min) % 1440) // 60)
+    weekday_ok = bool(assume_weekday)
+    return bool(weekday_ok and (9 <= hour < 22))
+
+
+def get_tou_price(minute_idx, assume_weekday=ASSUME_WEEKDAY):
+    """Minute-level TOU price aligned with SHIFT_START (THB/kWh)."""
     tod = int((SHIFT_START + int(minute_idx)) % 1440)
-    hour = int(np.clip(tod // 60, 0, 23))
-    return TOU_PRICE_BY_HOUR[hour]
+    if is_onpeak(tod, assume_weekday=assume_weekday):
+        return float(TOU_ONPEAK_BAHT_PER_KWH)
+    return float(TOU_OFFPEAK_BAHT_PER_KWH)
 
 
 def _build_tou_price_series(duration_min=SIM_DURATION_MIN):
@@ -252,7 +289,7 @@ def _build_tou_price_series(duration_min=SIM_DURATION_MIN):
     raw = np.zeros(duration_min, dtype=float)
     effective = np.zeros(duration_min, dtype=float)
     for t in range(duration_min):
-        p = float(_hour_price(t))
+        p = float(get_tou_price(t))
         raw[t] = p
         if _is_in_solar_window(t):
             effective[t] = p * SOLAR_EFFECTIVE_PRICE_FACTOR
@@ -279,10 +316,39 @@ def _effective_if_grid_kw(minute_idx, if_kw):
 
 def _effective_if_price(minute_idx, if_kw=None):
     # NEW/CHANGED: effective TOU seen by IF (solar-window discounted price).
-    raw_price = float(_hour_price(minute_idx))
+    raw_price = float(get_tou_price(minute_idx))
     if _is_in_solar_window(minute_idx):
         return float(raw_price * SOLAR_EFFECTIVE_PRICE_FACTOR)
     return raw_price
+
+
+def compute_md_15min_kw(total_plant_kw, interval=DEMAND_INTERVAL_MIN):
+    """Maximum 15-min average demand (kW) from minute-resolution load."""
+    x = np.asarray(total_plant_kw, dtype=float).ravel()
+    if len(x) == 0:
+        return 0.0
+    window = max(1, int(interval))
+    if len(x) < window:
+        return float(np.mean(x))
+    kernel = np.ones(window, dtype=float) / float(window)
+    rolling = np.convolve(x, kernel, mode="valid")
+    return float(np.max(rolling))
+
+
+def compute_if_cost_share_day(if_kw_series, baseline_kw_series, tou_price_series):
+    """Sanity check: IF cost share of total (IF + baseline) daily energy cost."""
+    if_kw = np.asarray(if_kw_series, dtype=float).ravel()
+    base_kw = np.asarray(baseline_kw_series, dtype=float).ravel()
+    price = np.asarray(tou_price_series, dtype=float).ravel()
+    n = min(len(if_kw), len(base_kw), len(price))
+    if n <= 0:
+        return 0.0, 0.0, 0.0
+
+    if_cost = float(np.sum((if_kw[:n] / 60.0) * price[:n]))
+    base_cost = float(np.sum((base_kw[:n] / 60.0) * price[:n]))
+    denom = max(1e-9, if_cost + base_cost)
+    share = float(if_cost / denom)
+    return if_cost, base_cost, share
 
 
 def _compute_batch_profile(power_kw, is_cold_start, if_furnace):
@@ -314,15 +380,15 @@ def _decode_policy_vector(x):
             "L_trigger_A": float(np.clip(x[0], 0.0, 1.0) * MH_MAX_CAPACITY_KG["A"]),
             "L_trigger_B": float(np.clip(x[1], 0.0, 1.0) * MH_MAX_CAPACITY_KG["B"]),
             "lookahead_min": lookahead_min,
-            "demand_headroom_kw": float(np.clip(x[3], 0.0, 1.0) * 500.0),
+            "demand_headroom_kw": float(np.clip(x[3], 0.0, 1.0) * 100.0),
             "tou_weight": float(np.clip(x[4], 0.0, 2.0)),
             "peak_avoid_weight": float(np.clip(x[5], 0.0, 1.0)),
-            "min_start_gap_min": float(np.clip(x[6], 0.0, 1.0) * 120.0),
+            "min_start_gap_min": float(np.clip(x[6], 0.0, 1.0) * 20.0),
             "alternation_bias": float(np.clip(x[7], -1.0, 1.0)),
             "force_urgency_threshold": float(np.clip(x[8], 0.70, 0.98)),
             "power_aggressiveness": float(np.clip(x[9], 0.0, 1.0)),
             "jit_slack_min": float(np.clip(x[10], 0.0, 1.0) * 60.0),  # NEW/CHANGED
-            "start_delay_min": float(np.clip(x[11], 0.0, 1.0) * 240.0),  # NEW/CHANGED
+            "start_delay_min": float(np.clip(x[11], 0.0, 1.0) * 60.0),  # NEW/CHANGED
             # Keep these for compatibility with existing helper logic.
             "wait_vs_rush": float(np.clip(x[9], 0.0, 1.0)),
             "start_score_bias": 0.0,
@@ -506,14 +572,31 @@ def _aggregate_obj1(components):
 
 
 def compute_total_cost(m, comp):
-    # NEW/CHANGED: single-objective scalar cost for GA.
+    # Energy mode objective: focus on electricity bill components.
+    service_fee_day_equiv = (
+        float(m.get("service_fee_day_equiv", 0.0))
+        if INCLUDE_SERVICE_FEE_IN_ENERGY_OBJECTIVE
+        else 0.0
+    )
+    makespan_term = ENERGY_MAKESPAN_COST_PER_MIN * float(
+        m.get("makespan_minutes", SIM_DURATION_MIN)
+    )
+    idle_min = float(m.get("if_idle_minutes_total", 0.0))
+    idle_super = float(m.get("if_idle_gap_superlinear_minutes", idle_min))
+    idle_gap_term = (
+        ENERGY_IDLE_GAP_COST_PER_MIN * idle_min
+        + ENERGY_IDLE_GAP_SUPERLINEAR_COEFF * idle_super
+    )
+    cheap_melt_credit = ENERGY_CHEAP_MELT_CREDIT_PER_MIN * float(
+        m.get("cheap_melt_minutes", 0.0)
+    )
     return float(
-        m["total_energy_cost"]
-        + m["demand_penalty"]
-        + comp.get("prep_wait_penalty", 0.0)
-        + comp.get("switch_penalty", 0.0)
-        + comp.get("jit_delay_penalty", 0.0)
-        + comp.get("holding_penalty", 0.0) * 0.25
+        m.get("total_energy_cost_day", m.get("total_energy_cost", 0.0))
+        + m.get("demand_charge_day_equiv", m.get("demand_penalty", 0.0))
+        + service_fee_day_equiv
+        + makespan_term
+        + idle_gap_term
+        - cheap_melt_credit
     )
 
 
@@ -524,7 +607,8 @@ def _violation_vector(m):
     overflow_violation = float(overflow_total - MAX_OVERFLOW_KG_ALLOW)
 
     poured_batches = int(m.get("poured_batches_count", 0))
-    missing_batches = float(max(0, NUM_BATCHES - poured_batches))
+    target_batches = int(m.get("target_num_batches", _current_num_batches()))
+    missing_batches = float(max(0, target_batches - poured_batches))
     # Constraints are the same for both modes.
     return np.array([overflow_violation, missing_batches], dtype=float)
 
@@ -572,7 +656,15 @@ class StagnationEarlyStopCallback(Callback):
 
 
 def _build_policy_state(
-    policy, mh_levels, baseline_kw_t, if_kw_now, queue_len, effective_price_t
+    policy,
+    mh_levels,
+    baseline_kw_t,
+    if_kw_now,
+    queue_len,
+    effective_price_ref_t,
+    remaining_batches,
+    remaining_time_min,
+    minute_idx,
 ):
     eta_a = mh_levels["A"] / max(MH_CONSUMPTION_RATE_KG_PER_MIN["A"], 1e-9)
     eta_b = mh_levels["B"] / max(MH_CONSUMPTION_RATE_KG_PER_MIN["B"], 1e-9)
@@ -593,8 +685,23 @@ def _build_policy_state(
     margin_kw = CONTRACT_DEMAND_KW - projected_no_new
     margin_ratio = float(np.clip(margin_kw / max(CONTRACT_DEMAND_KW, 1e-9), -1.0, 1.0))
     price_norm = float(
-        np.clip(effective_price_t / (float(np.max(TOU_PRICE_BY_HOUR)) + 1e-9), 0.0, 1.0)
+        np.clip(
+            effective_price_ref_t
+            / (max(TOU_ONPEAK_BAHT_PER_KWH, TOU_OFFPEAK_BAHT_PER_KWH) + 1e-9),
+            0.0,
+            1.0,
+        )
     )
+    urgency = float(max(0.0, remaining_batches) / max(1.0, remaining_time_min))
+    urgency_per_hour = float(
+        np.clip(
+            (max(0.0, remaining_batches) * 60.0) / max(1.0, remaining_time_min),
+            0.0,
+            4.0,
+        )
+    )
+    tod = int((SHIFT_START + int(minute_idx)) % 1440)
+    post_solar = float(tod >= SOLAR_END)
     return {
         "eta_min": eta_min,
         "depletion_urgency": depletion_urgency,
@@ -604,18 +711,48 @@ def _build_policy_state(
         "margin_kw": margin_kw,
         "margin_ratio": margin_ratio,
         "price_norm": price_norm,
+        "urgency": urgency,
+        "urgency_per_hour": urgency_per_hour,
+        "post_solar": post_solar,
     }
 
 
 def _start_score(policy, state):
     if SIMPLE_POLICY_MODE:
-        # NEW/CHANGED: simpler and smoother score for NSGA-II search.
+        # Simpler score; energy mode uses stronger TOU bias.
         score = 0.0
-        score += 2.2 * state["depletion_urgency"]
-        score += 1.0 * state["trigger_hit"]
-        score += 0.7 * state["queue_pressure"]
-        score -= policy["peak_avoid_weight"] * 2.0 * max(0.0, -state["margin_ratio"])
-        score -= policy["tou_weight"] * state["price_norm"]
+        if OPT_MODE == "energy":
+            score += ENERGY_MODE_START_W_DEP * state["depletion_urgency"]
+            score += ENERGY_MODE_START_W_TRIGGER * state["trigger_hit"]
+            score += ENERGY_MODE_START_W_QUEUE * state["queue_pressure"]
+            score += 3.0 * state.get("urgency", 0.0)
+            score += ENERGY_MODE_START_W_URGENCY_PER_HOUR * state.get(
+                "urgency_per_hour", 0.0
+            )
+            score += (
+                ENERGY_MODE_START_W_POST_SOLAR_URGENCY
+                * state.get("post_solar", 0.0)
+                * state.get("urgency_per_hour", 0.0)
+            )
+            score += ENERGY_MODE_START_W_INV_FLOOR * max(
+                0.0, ENERGY_MODE_INV_FLOOR_FRAC - state["avg_level_frac"]
+            )
+            score -= (
+                policy["peak_avoid_weight"]
+                * ENERGY_MODE_START_W_PEAK
+                * max(0.0, -state["margin_ratio"])
+            )
+            score -= (
+                policy["tou_weight"] * ENERGY_MODE_START_W_TOU * state["price_norm"]
+            )
+        else:
+            score += 2.2 * state["depletion_urgency"]
+            score += 1.0 * state["trigger_hit"]
+            score += 0.7 * state["queue_pressure"]
+            score -= (
+                policy["peak_avoid_weight"] * 2.0 * max(0.0, -state["margin_ratio"])
+            )
+            score -= policy["tou_weight"] * state["price_norm"]
         return float(score)
 
     shortage_term = (1.0 - state["avg_level_frac"]) * policy["wait_vs_rush"]
@@ -763,25 +900,46 @@ def _total_idle_minutes_from_intervals(intervals):
     return idle
 
 
+def _idle_gap_superlinear_minutes_from_intervals(intervals):
+    """Penalize long idle gaps more than short gaps (thermal/cold-start proxy)."""
+    if not intervals:
+        return 0.0
+    items = sorted(intervals, key=lambda w: w[0])
+    merged = [[items[0][0], items[0][1]]]
+    for s, e in items[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    penalty_minutes = 0.0
+    for i in range(1, len(merged)):
+        gap = max(0.0, merged[i][0] - merged[i - 1][1])
+        # Superlinear weighting for longer idle stretches.
+        penalty_minutes += gap * (1.0 + gap / 60.0)
+    return float(penalty_minutes)
+
+
 def _pour_ready_eta_min(current_level, downtime_remaining):
-    # NEW/CHANGED: helper for JIT gating.
-    cap_free_now = 0.0
-    if downtime_remaining["A"] <= 0:
-        cap_free_now += max(0.0, MH_MAX_CAPACITY_KG["A"] - current_level["A"])
-    if downtime_remaining["B"] <= 0:
-        cap_free_now += max(0.0, MH_MAX_CAPACITY_KG["B"] - current_level["B"])
-    need_cap = max(0.0, IF_BATCH_OUTPUT_KG - cap_free_now)
-    total_cons = max(
-        1e-9,
-        MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"],
+    # free capacity (physical space) should NOT become 0 just because of downtime
+    cap_free_now = (MH_MAX_CAPACITY_KG["A"] - current_level["A"]) + (
+        MH_MAX_CAPACITY_KG["B"] - current_level["B"]
     )
-    time_to_free = need_cap / total_cons
+
+    need_cap = max(0.0, IF_BATCH_OUTPUT_KG - cap_free_now)
+
+    total_cons = (
+        MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
+    )
+    time_to_free = need_cap / max(total_cons, 1e-9)
+
+    # downtime just means "cannot pour until this many minutes pass"
     dt_downtime = float(max(downtime_remaining["A"], downtime_remaining["B"]))
     return float(max(time_to_free, dt_downtime))
 
 
 def quick_capacity_sanity_check():
     """Coarse feasibility check for finishing NUM_BATCHES within the day."""
+    target_batches = _current_num_batches()
     min_melt_duration = min(v["duration_min_hot"] for v in POWER_PROFILE.values())
     available_if = int(USE_FURNACE_A) + int(USE_FURNACE_B)
     parallel_if_slots = available_if if ALLOW_PARALLEL_IF else min(1, available_if)
@@ -796,10 +954,10 @@ def quick_capacity_sanity_check():
     minutes_to_free_one_batch = IF_BATCH_OUTPUT_KG / max(total_consume_rate, 1e-9)
     batches_receive_limit = int(SIM_DURATION_MIN / max(minutes_to_free_one_batch, 1e-9))
     effective_batch_limit = min(batches_time_limit, batches_receive_limit)
-    is_feasible = bool(NUM_BATCHES <= effective_batch_limit)
+    is_feasible = bool(target_batches <= effective_batch_limit)
 
     report = {
-        "target_num_batches": int(NUM_BATCHES),
+        "target_num_batches": int(target_batches),
         "time_limit_batches": int(batches_time_limit),
         "receive_limit_batches": int(batches_receive_limit),
         "effective_batch_limit": int(effective_batch_limit),
@@ -821,6 +979,7 @@ def print_capacity_sanity_report(report):
 
 
 def simulate_policy_day(policy_params, controller=None):
+    target_num_batches = _current_num_batches()
     if isinstance(policy_params, dict):
         policy = dict(policy_params)
     elif policy_params is None:
@@ -840,6 +999,7 @@ def simulate_policy_day(policy_params, controller=None):
     energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)
     reheat_energy_cost_series = np.zeros(SIM_DURATION_MIN, dtype=float)  # NEW/CHANGED
     solar_melt_minutes = 0.0  # NEW/CHANGED
+    cheap_melt_minutes = 0.0
     solar_cost_saving = 0.0  # NEW/CHANGED
 
     mh_levels_series = {
@@ -894,6 +1054,90 @@ def simulate_policy_day(policy_params, controller=None):
     min_duration_per_batch = float(
         min(v["duration_min_hot"] for v in POWER_PROFILE.values())
     )  # NEW/CHANGED
+
+    def _advance_minute_dynamics(t):
+        nonlocal mh_low_level_penalty
+        nonlocal zero_minutes_total
+        nonlocal eps_deficit_area
+        nonlocal solar_cost_saving
+        nonlocal solar_melt_minutes
+        nonlocal cheap_melt_minutes
+        nonlocal parallel_peak_minutes
+
+        # 5) IF load minute
+        minute_if_kw = 0.0
+        minute_melt_kw = 0.0
+        minute_reheat_kw = 0.0
+        for f_idx in available_if_furnaces:
+            st = if_states[f_idx]
+            if not st["active"]:
+                continue
+            b = batches[st["batch_id"]]
+            p_kw = b["power_kw"]
+            if st["status"] == "melting":
+                minute_melt_kw += p_kw
+                minute_if_kw += p_kw
+            elif st["status"] == "holding":
+                minute_reheat_kw += p_kw
+                minute_if_kw += p_kw
+        if_kw_series[t] = minute_if_kw
+        melt_kw_series[t] = minute_melt_kw
+        reheat_kw_series[t] = minute_reheat_kw
+
+        if minute_if_kw > 0:
+            if_active_intervals.append((t, t + 1))
+
+        # 6) M&H consumption + continuity penalties
+        for f_id in ["A", "B"]:
+            if current_level[f_id] > MH_EMPTY_THRESHOLD_KG:
+                current_level[f_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[f_id]
+                current_level[f_id] = max(current_level[f_id], 0.0)
+
+            min_level_reached[f_id] = min(min_level_reached[f_id], current_level[f_id])
+
+            if current_level[f_id] <= MH_EMPTY_THRESHOLD_KG:
+                mh_empty_minutes[f_id] += 1
+            elif current_level[f_id] < MH_MIN_OPERATIONAL_LEVEL_KG[f_id]:
+                mh_low_level_minutes[f_id] += 1
+                deficit = MH_MIN_OPERATIONAL_LEVEL_KG[f_id] - current_level[f_id]
+                deficit_ratio = deficit / max(MH_MIN_OPERATIONAL_LEVEL_KG[f_id], 1e-9)
+                mh_low_level_penalty += MH_LOW_LEVEL_PENALTY_RATE * (
+                    1.0 + LOW_LEVEL_NONLINEAR_FACTOR * (deficit_ratio**2)
+                )
+
+            current_level[f_id] = np.clip(
+                current_level[f_id], 0.0, MH_MAX_CAPACITY_KG[f_id]
+            )
+            mh_levels_series[f_id][t] = current_level[f_id]
+
+            if downtime_remaining[f_id] > 0:
+                downtime_remaining[f_id] -= 1
+
+        # service metrics after per-minute consumption update
+        if (
+            current_level["A"] <= MH_EMPTY_THRESHOLD_KG
+            or current_level["B"] <= MH_EMPTY_THRESHOLD_KG
+        ):
+            zero_minutes_total += 1.0
+        eps_deficit_area += max(0.0, EPS_LEVEL - current_level["A"]) + max(
+            0.0, EPS_LEVEL - current_level["B"]
+        )
+
+        total_plant_kw[t] = baseline_kw[t] + minute_if_kw
+        raw_price_t = tou_raw_price_series[t]
+        eff_price_t = tou_effective_price_series[t]
+        energy_cost_series[t] = (minute_if_kw / 60.0) * eff_price_t
+        reheat_energy_cost_series[t] = (minute_reheat_kw / 60.0) * eff_price_t
+        solar_cost_saving += (minute_if_kw / 60.0) * max(0.0, raw_price_t - eff_price_t)
+        if minute_melt_kw > 1e-9 and _is_in_solar_window(t):
+            solar_melt_minutes += 1.0
+        if minute_melt_kw > 1e-9 and eff_price_t <= (TOU_OFFPEAK_BAHT_PER_KWH + 1e-9):
+            cheap_melt_minutes += 1.0
+        active_if_count = sum(
+            1 for f in available_if_furnaces if if_states[f]["active"]
+        )
+        if active_if_count >= 2 and total_plant_kw[t] > (0.95 * CONTRACT_DEMAND_KW):
+            parallel_peak_minutes += 1.0
 
     for t in range(SIM_DURATION_MIN):
         # 1) progress melting -> holding
@@ -998,10 +1242,10 @@ def simulate_policy_day(policy_params, controller=None):
         total_if_holding_minutes += len(ready_to_pour_queue)
 
         # 4) policy start decision (score-based + dynamic spacing + demand-gating)
-        if batch_id_counter < NUM_BATCHES:
+        if batch_id_counter < target_num_batches:
             remaining_time_min = float(SIM_DURATION_MIN - t)  # NEW/CHANGED
             remaining_batches = int(
-                max(0, NUM_BATCHES - batch_id_counter)
+                max(0, target_num_batches - batch_id_counter)
             )  # NEW/CHANGED
             force_buffer = min_duration_per_batch + (
                 PREP_LOAD_TIME_MIN * 0.5 if ENABLE_PREP_MODEL else 0.0
@@ -1023,13 +1267,22 @@ def simulate_policy_day(policy_params, controller=None):
                     st = if_states[f]
                     if st["active"]:
                         if_kw_now += batches[st["batch_id"]]["power_kw"]
+                t_end = min(
+                    SIM_DURATION_MIN, t + max(1, int(ENERGY_PRICE_LOOKAHEAD_MIN))
+                )
+                effective_price_ref = float(
+                    np.mean(tou_effective_price_series[t:t_end])
+                )
                 state = _build_policy_state(
                     policy,
                     current_level,
                     baseline_kw[t],
                     if_kw_now,
                     len(ready_to_pour_queue),
-                    tou_effective_price_series[t],
+                    effective_price_ref,
+                    remaining_batches,
+                    remaining_time_min,
+                    t,
                 )
                 start_score = _start_score(policy, state)
                 min_gap_now = _dynamic_min_start_gap(policy, state)
@@ -1048,7 +1301,7 @@ def simulate_policy_day(policy_params, controller=None):
                         "if_kw_now": float(if_kw_now),
                         "tou_effective_price": float(tou_effective_price_series[t]),
                         "remaining_batches": int(
-                            max(0, NUM_BATCHES - batch_id_counter)
+                            max(0, target_num_batches - batch_id_counter)
                         ),
                         "ready_queue_len": int(len(ready_to_pour_queue)),
                         "idle_furnaces": list(idle_all),
@@ -1059,7 +1312,7 @@ def simulate_policy_day(policy_params, controller=None):
                         "force_mode": bool(force_mode),
                         "gap_ok": bool(gap_ok),
                         "sim_duration_min": int(SIM_DURATION_MIN),
-                        "num_batches": int(NUM_BATCHES),
+                        "num_batches": int(target_num_batches),
                     }
                     try:
                         controller_decision = controller(controller_state) or {}
@@ -1074,19 +1327,22 @@ def simulate_policy_day(policy_params, controller=None):
                         )
                 if (not any_if_active) or can_parallel_now:
                     if controller is None:
-                        start_allowed = (
-                            start_score >= 0.0 and gap_ok
-                        ) or force_mode  # NEW/CHANGED
-                        if (not force_mode) and t < int(
-                            policy.get("start_delay_min", 0.0)
-                        ):
-                            start_allowed = False  # NEW/CHANGED
-                        if (
-                            any_holding_active
-                            and (not ALLOW_PARALLEL_IF)
-                            and (not force_mode)
-                        ):
-                            start_allowed = False
+                        # Keep one primary reason per minute to avoid noisy overlap.
+                        block_reason = None
+                        if not force_mode:
+                            if t < int(policy.get("start_delay_min", 0.0)):
+                                block_reason = "start_delay_block"
+                            elif any_holding_active and (not ALLOW_PARALLEL_IF):
+                                block_reason = "holding_guard"
+                            elif not gap_ok:
+                                block_reason = "gap_block"
+                            elif start_score < 0.0:
+                                block_reason = "tou_negative"
+                        start_allowed = force_mode or (block_reason is None)
+                        if block_reason is not None:
+                            delay_reason_counts[block_reason] = (
+                                delay_reason_counts.get(block_reason, 0) + 1
+                            )
                     else:
                         start_allowed = bool(
                             controller_decision.get("start_allowed", False)
@@ -1113,6 +1369,7 @@ def simulate_policy_day(policy_params, controller=None):
                             delay_reason_counts["prep_not_ready"] = (
                                 delay_reason_counts.get("prep_not_ready", 0) + 1
                             )
+                            _advance_minute_dynamics(t)
                             continue
 
                         if (
@@ -1194,28 +1451,63 @@ def simulate_policy_day(policy_params, controller=None):
                             bypass_jit_gate = bool(
                                 controller_decision.get("bypass_jit_gate", False)
                             )
+                            service_replenish_urgent = bool(
+                                OPT_MODE == "service"
+                                and (
+                                    state.get("depletion_urgency", 0.0) >= 0.75
+                                    or current_level["A"]
+                                    <= MH_MIN_OPERATIONAL_LEVEL_KG["A"]
+                                    or current_level["B"]
+                                    <= MH_MIN_OPERATIONAL_LEVEL_KG["B"]
+                                )
+                            )
                             if (not bypass_jit_gate) and OPT_MODE == "service":
                                 # NEW/CHANGED: stricter JIT in service mode to reduce holding/reheat.
                                 jit_slack = min(jit_slack, 5.0)
+                            elif (not bypass_jit_gate) and OPT_MODE == "energy":
+                                # Energy mode: allow wider JIT slack so schedules can shift toward
+                                # cheap windows without being over-blocked by minute-level JIT gate.
+                                jit_slack = max(
+                                    jit_slack, ENERGY_MODE_MIN_JIT_SLACK_MIN
+                                )
                             if (
                                 (not bypass_jit_gate)
                                 and (not force_mode)
+                                and (not service_replenish_urgent)
                                 and hold_risk > jit_slack
                             ):
                                 jit_delay_minutes += 1.0
                                 delay_reason_counts["jit_gate"] = (
                                     delay_reason_counts.get("jit_gate", 0) + 1
                                 )
+                                _advance_minute_dynamics(t)
                                 continue
                             projected_total = (
                                 baseline_kw[t] + if_kw_now + selected_power
                             )
+                            if projected_total > CONTRACT_DEMAND_KW + 1e-9:
+                                # Hard contract-demand ceiling (no exceed).
+                                delay_reason_counts["demand_guard"] = (
+                                    delay_reason_counts.get("demand_guard", 0) + 1
+                                )
+                                _advance_minute_dynamics(t)
+                                continue
                             hard_guard = (
                                 CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
                             )
                             shortage_override = force_mode and state[
                                 "depletion_urgency"
                             ] >= policy.get("force_urgency_threshold", 0.92)
+                            service_urgency_override = bool(
+                                OPT_MODE == "service"
+                                and (
+                                    state.get("depletion_urgency", 0.0) >= 0.75
+                                    or current_level["A"]
+                                    <= MH_MIN_OPERATIONAL_LEVEL_KG["A"]
+                                    or current_level["B"]
+                                    <= MH_MIN_OPERATIONAL_LEVEL_KG["B"]
+                                )
+                            )
                             bypass_demand_guard = bool(
                                 controller_decision.get("bypass_demand_guard", False)
                             )
@@ -1223,6 +1515,7 @@ def simulate_policy_day(policy_params, controller=None):
                                 bypass_demand_guard
                                 or projected_total <= hard_guard
                                 or shortage_override
+                                or service_urgency_override
                             ):
                                 profile = _compute_batch_profile(
                                     selected_power, is_cold_start, chosen_if
@@ -1272,90 +1565,26 @@ def simulate_policy_day(policy_params, controller=None):
                                     delay_reason_counts.get("demand_guard", 0) + 1
                                 )
                     else:
-                        reason = controller_decision.get(
-                            "delay_reason", "controller_not_start"
-                        )
+                        if controller is None:
+                            reason = "policy_not_start"
+                        else:
+                            reason = controller_decision.get(
+                                "delay_reason", "controller_not_start"
+                            )
                         delay_reason_counts[reason] = (
                             delay_reason_counts.get(reason, 0) + 1
                         )
+                else:
+                    delay_reason_counts["active_if_no_parallel"] = (
+                        delay_reason_counts.get("active_if_no_parallel", 0) + 1
+                    )
 
-        # 5) IF load minute
-        minute_if_kw = 0.0
-        minute_melt_kw = 0.0
-        minute_reheat_kw = 0.0
-        for f_idx in available_if_furnaces:
-            st = if_states[f_idx]
-            if not st["active"]:
-                continue
-            b = batches[st["batch_id"]]
-            p_kw = b["power_kw"]
-            if st["status"] == "melting":
-                minute_melt_kw += p_kw
-                minute_if_kw += p_kw
-            elif st["status"] == "holding":
-                minute_reheat_kw += p_kw
-                minute_if_kw += p_kw
-        if_kw_series[t] = minute_if_kw
-        melt_kw_series[t] = minute_melt_kw
-        reheat_kw_series[t] = minute_reheat_kw
-
-        if minute_if_kw > 0:
-            if_active_intervals.append((t, t + 1))
-
-        # 6) M&H consumption + continuity penalties
-        for f_id in ["A", "B"]:
-            if current_level[f_id] > MH_EMPTY_THRESHOLD_KG:
-                current_level[f_id] -= MH_CONSUMPTION_RATE_KG_PER_MIN[f_id]
-                current_level[f_id] = max(current_level[f_id], 0.0)
-
-            min_level_reached[f_id] = min(min_level_reached[f_id], current_level[f_id])
-
-            if current_level[f_id] <= MH_EMPTY_THRESHOLD_KG:
-                mh_empty_minutes[f_id] += 1
-            elif current_level[f_id] < MH_MIN_OPERATIONAL_LEVEL_KG[f_id]:
-                mh_low_level_minutes[f_id] += 1
-                deficit = MH_MIN_OPERATIONAL_LEVEL_KG[f_id] - current_level[f_id]
-                deficit_ratio = deficit / max(MH_MIN_OPERATIONAL_LEVEL_KG[f_id], 1e-9)
-                mh_low_level_penalty += MH_LOW_LEVEL_PENALTY_RATE * (
-                    1.0 + LOW_LEVEL_NONLINEAR_FACTOR * (deficit_ratio**2)
-                )
-
-            current_level[f_id] = np.clip(
-                current_level[f_id], 0.0, MH_MAX_CAPACITY_KG[f_id]
-            )
-            mh_levels_series[f_id][t] = current_level[f_id]
-
-            if downtime_remaining[f_id] > 0:
-                downtime_remaining[f_id] -= 1
-
-        # NEW/CHANGED: service metrics after per-minute consumption update.
-        if (
-            current_level["A"] <= MH_EMPTY_THRESHOLD_KG
-            or current_level["B"] <= MH_EMPTY_THRESHOLD_KG
-        ):
-            zero_minutes_total += 1.0
-        eps_deficit_area += max(0.0, EPS_LEVEL - current_level["A"]) + max(
-            0.0, EPS_LEVEL - current_level["B"]
-        )
-
-        total_plant_kw[t] = baseline_kw[t] + minute_if_kw
-        raw_price_t = tou_raw_price_series[t]
-        eff_price_t = tou_effective_price_series[t]
-        energy_cost_series[t] = (minute_if_kw / 60.0) * eff_price_t
-        reheat_energy_cost_series[t] = (minute_reheat_kw / 60.0) * eff_price_t
-        solar_cost_saving += (minute_if_kw / 60.0) * max(0.0, raw_price_t - eff_price_t)
-        if minute_melt_kw > 1e-9 and _is_in_solar_window(t):
-            solar_melt_minutes += 1.0
-        active_if_count = sum(
-            1 for f in available_if_furnaces if if_states[f]["active"]
-        )
-        if active_if_count >= 2 and total_plant_kw[t] > (0.95 * CONTRACT_DEMAND_KW):
-            parallel_peak_minutes += 1.0
+        _advance_minute_dynamics(t)
 
     # NEW/CHANGED: ensure missing non-started batches are explicitly represented.
     # Without this, GA can "skip starting" some batches and avoid overflow accounting.
-    if batch_id_counter < NUM_BATCHES:
-        for b_id in range(batch_id_counter + 1, NUM_BATCHES + 1):
+    if batch_id_counter < target_num_batches:
+        for b_id in range(batch_id_counter + 1, target_num_batches + 1):
             if b_id in batches:
                 continue
             batches[b_id] = {
@@ -1386,19 +1615,24 @@ def simulate_policy_day(policy_params, controller=None):
     total_melt_kwh = float(np.sum(melt_kw_series) / 60.0)
     total_reheat_kwh = float(np.sum(reheat_kw_series) / 60.0)
     total_if_kwh = float(np.sum(if_kw_series) / 60.0)
-    total_energy_cost = float(np.sum(energy_cost_series))
+    total_energy_cost_day = float(np.sum(energy_cost_series))
     reheat_energy_cost = float(np.sum(reheat_energy_cost_series))  # NEW/CHANGED
 
     peak_kw = float(np.max(total_plant_kw)) if len(total_plant_kw) else 0.0
-    demand_excess = max(0.0, peak_kw - CONTRACT_DEMAND_KW)
-    soft_zone = max(0.0, peak_kw - CONTRACT_DEMAND_KW * DEMAND_SOFT_ZONE_RATIO)
-    demand_penalty = (
-        DEMAND_CHARGE_RATE_PER_KW * demand_excess
-        + 0.25
-        * DEMAND_CHARGE_RATE_PER_KW
-        * (soft_zone**2)
-        / max(CONTRACT_DEMAND_KW, 1.0)
+    md_15_kw = float(compute_md_15min_kw(total_plant_kw, interval=DEMAND_INTERVAL_MIN))
+    baseline_md15_kw = float(
+        compute_md_15min_kw(baseline_kw, interval=DEMAND_INTERVAL_MIN)
     )
+    demand_penalty_kw = float(max(0.0, md_15_kw - baseline_md15_kw))
+    demand_charge_month = float(demand_penalty_kw * DEMAND_CHARGE_BAHT_PER_KW_MONTH)
+    demand_charge_day_equiv = float(
+        demand_charge_month / max(1.0, BILLING_DAYS_PER_MONTH)
+    )
+    service_fee_day_equiv = float(
+        SERVICE_FEE_BAHT_PER_MONTH / max(1.0, BILLING_DAYS_PER_MONTH)
+    )
+    demand_excess = max(0.0, md_15_kw - CONTRACT_DEMAND_KW)
+    demand_penalty = demand_charge_day_equiv  # backward-compatible alias
 
     # CHANGED (Step B): compute poured kg from actual poured mass per batch.
     total_poured_kg = float(
@@ -1411,7 +1645,9 @@ def simulate_policy_day(policy_params, controller=None):
     poured_batches_count = int(
         sum(1 for b in batches.values() if b.get("status") == "poured")
     )  # NEW/CHANGED
-    missing_batches = int(max(0, NUM_BATCHES - poured_batches_count))  # NEW/CHANGED
+    missing_batches = int(
+        max(0, target_num_batches - poured_batches_count)
+    )  # NEW/CHANGED
     alternation_ratio = float(
         alternation_count / max(1, alternation_count + non_alternation_count)
     )  # NEW/CHANGED
@@ -1439,6 +1675,19 @@ def simulate_policy_day(policy_params, controller=None):
         )
 
     total_if_idle_minutes = _total_idle_minutes_from_intervals(if_active_intervals)
+    if_idle_gap_superlinear_minutes = _idle_gap_superlinear_minutes_from_intervals(
+        if_active_intervals
+    )
+    # Sanity: IF share of daily energy cost against baseline energy cost.
+    effective_if_grid_kw_series = np.array(
+        [_effective_if_grid_kw(ti, if_kw_series[ti]) for ti in range(SIM_DURATION_MIN)],
+        dtype=float,
+    )
+    energy_cost_if_day, energy_cost_baseline_day, share_if_cost = (
+        compute_if_cost_share_day(
+            effective_if_grid_kw_series, baseline_kw, tou_effective_price_series
+        )
+    )
 
     return {
         "policy": policy,
@@ -1463,10 +1712,20 @@ def simulate_policy_day(policy_params, controller=None):
             "reheat_kwh": total_reheat_kwh,
             "reheat_energy_cost": reheat_energy_cost,  # NEW/CHANGED
             "total_if_kwh": total_if_kwh,
-            "total_energy_cost": total_energy_cost,
+            "total_energy_cost": total_energy_cost_day,  # backward-compatible alias
+            "total_energy_cost_day": total_energy_cost_day,
             "peak_kw": peak_kw,
+            "md_15_kw": md_15_kw,
+            "baseline_md15_kw": baseline_md15_kw,
+            "demand_penalty_kw": demand_penalty_kw,
+            "demand_charge_month": demand_charge_month,
+            "demand_charge_day_equiv": demand_charge_day_equiv,
+            "service_fee_day_equiv": service_fee_day_equiv,
             "demand_excess_kw": demand_excess,
-            "demand_penalty": demand_penalty,
+            "demand_penalty": demand_penalty,  # backward-compatible alias
+            "energy_cost_if_day": energy_cost_if_day,
+            "energy_cost_baseline_day": energy_cost_baseline_day,
+            "share_if_cost": share_if_cost,
             "mh_empty_minutes": mh_empty_minutes,
             "mh_low_level_minutes": mh_low_level_minutes,
             "mh_low_level_penalty": mh_low_level_penalty,
@@ -1476,6 +1735,7 @@ def simulate_policy_day(policy_params, controller=None):
             "holding_minutes_total": float(total_if_holding_minutes),
             "unpoured_batches_count": len(unpoured_batches),
             "poured_batches_count": poured_batches_count,  # NEW/CHANGED
+            "target_num_batches": int(target_num_batches),
             "missing_batches": missing_batches,  # NEW/CHANGED
             "makespan_minutes": makespan_minutes,
             "total_poured_kg": total_poured_kg,  # CHANGED (Step A)
@@ -1488,12 +1748,14 @@ def simulate_policy_day(policy_params, controller=None):
             ),  # NEW/CHANGED
             "jit_delay_minutes": float(jit_delay_minutes),  # NEW/CHANGED
             "solar_melt_minutes": float(solar_melt_minutes),  # NEW/CHANGED
+            "cheap_melt_minutes": float(cheap_melt_minutes),
             "solar_cost_saving": float(solar_cost_saving),  # NEW/CHANGED
             "start_delay_min": float(policy.get("start_delay_min", 0.0)),  # NEW/CHANGED
             "min_level_reached": min_level_reached,
             "if_use_count_A": furnace_use_count[0],
             "if_use_count_B": furnace_use_count[1],
             "if_idle_minutes_total": total_if_idle_minutes,
+            "if_idle_gap_superlinear_minutes": if_idle_gap_superlinear_minutes,
             "parallel_peak_minutes": float(parallel_peak_minutes),
             "controller_name": (
                 getattr(controller, "__name__", str(controller))
@@ -1603,8 +1865,20 @@ def evaluate_policy(policy_params):
         "melt_kwh": m["melt_kwh"],
         "reheat_kwh": m["reheat_kwh"],
         "reheat_energy_cost": m.get("reheat_energy_cost", 0.0),  # NEW/CHANGED
-        "total_energy_cost": m["total_energy_cost"],
+        "total_energy_cost": m["total_energy_cost"],  # backward-compatible alias
+        "total_energy_cost_day": m.get("total_energy_cost_day", m["total_energy_cost"]),
         "peak_kw": m["peak_kw"],
+        "md_15_kw": m.get("md_15_kw", 0.0),
+        "baseline_md15_kw": m.get("baseline_md15_kw", 0.0),
+        "demand_penalty_kw": m.get("demand_penalty_kw", 0.0),
+        "demand_charge_month": m.get("demand_charge_month", 0.0),
+        "demand_charge_day_equiv": m.get(
+            "demand_charge_day_equiv", m.get("demand_penalty", 0.0)
+        ),
+        "service_fee_day_equiv": m.get("service_fee_day_equiv", 0.0),
+        "energy_cost_if_day": m.get("energy_cost_if_day", 0.0),
+        "energy_cost_baseline_day": m.get("energy_cost_baseline_day", 0.0),
+        "share_if_cost": m.get("share_if_cost", 0.0),
         "demand_excess_kw": m["demand_excess_kw"],
         "demand_penalty": m["demand_penalty"],
         "mh_empty_minutes_A": m["mh_empty_minutes"]["A"],
@@ -1615,9 +1889,13 @@ def evaluate_policy(policy_params):
         "overflow_kg_total": m["overflow_kg_total"],
         "holding_minutes_total": m["holding_minutes_total"],
         "if_idle_minutes_total": m["if_idle_minutes_total"],
+        "if_idle_gap_superlinear_minutes": m.get(
+            "if_idle_gap_superlinear_minutes", 0.0
+        ),
         "if_use_count_A": m["if_use_count_A"],
         "if_use_count_B": m["if_use_count_B"],
         "poured_batches_count": m.get("poured_batches_count", 0),  # NEW/CHANGED
+        "target_num_batches": m.get("target_num_batches", _current_num_batches()),
         "missing_batches": m.get("missing_batches", 0),  # NEW/CHANGED
         "unpoured_batches_count": m["unpoured_batches_count"],
         "makespan_minutes": m["makespan_minutes"],
@@ -1631,6 +1909,7 @@ def evaluate_policy(policy_params):
         ),  # NEW/CHANGED
         "jit_delay_minutes": m.get("jit_delay_minutes", 0.0),  # NEW/CHANGED
         "solar_melt_minutes": m.get("solar_melt_minutes", 0.0),  # NEW/CHANGED
+        "cheap_melt_minutes": m.get("cheap_melt_minutes", 0.0),
         "solar_cost_saving": m.get("solar_cost_saving", 0.0),  # NEW/CHANGED
         "start_delay_min": m.get("start_delay_min", 0.0),  # NEW/CHANGED
         "min_level_A": min_level_a,
@@ -1644,6 +1923,21 @@ def evaluate_policy(policy_params):
         "tou_raw_price": sim.get("tou_raw_price"),
         "tou_effective_price": sim.get("tou_effective_price"),
         "total_plant_kw": sim["total_plant_kw"],
+        "delay_reason_counts": m.get("delay_reason_counts", {}),
+        "obj_term_makespan": ENERGY_MAKESPAN_COST_PER_MIN
+        * float(m.get("makespan_minutes", SIM_DURATION_MIN)),
+        "obj_term_idle_gap": (
+            ENERGY_IDLE_GAP_COST_PER_MIN * float(m.get("if_idle_minutes_total", 0.0))
+            + ENERGY_IDLE_GAP_SUPERLINEAR_COEFF
+            * float(
+                m.get(
+                    "if_idle_gap_superlinear_minutes",
+                    m.get("if_idle_minutes_total", 0.0),
+                )
+            )
+        ),
+        "obj_term_cheap_melt_credit": ENERGY_CHEAP_MELT_CREDIT_PER_MIN
+        * float(m.get("cheap_melt_minutes", 0.0)),
     }
     return f_scalar, np.asarray(g_constraints, dtype=float), cost_components
 
@@ -1817,19 +2111,29 @@ def format_policy_breakdown(cost):
         f"  IF Total kWh              : {cost.get('total_if_kwh', 0.0):.2f}",
         f"    - Melt kWh              : {cost.get('melt_kwh', 0.0):.2f}",
         f"    - Reheat kWh            : {cost.get('reheat_kwh', 0.0):.2f}",
-        f"  Energy Cost (TOU)         : {cost.get('total_energy_cost', 0.0):.2f}",
+        f"  Energy Cost/Day (TOU)     : {cost.get('total_energy_cost_day', cost.get('total_energy_cost', 0.0)):.2f}",
         f"  Reheat Energy Cost        : {cost.get('reheat_energy_cost', 0.0):.2f}",  # NEW/CHANGED
-        f"  Peak kW                   : {cost.get('peak_kw', 0.0):.2f}",
+        f"  Peak kW (1-min instant)   : {cost.get('peak_kw', 0.0):.2f}",
+        f"  MD 15-min kW (billing)    : {cost.get('md_15_kw', 0.0):.2f}",
+        f"  Baseline MD 15-min kW     : {cost.get('baseline_md15_kw', 0.0):.2f}",
+        f"  Incremental Demand kW     : {cost.get('demand_penalty_kw', 0.0):.2f}",
+        f"  Demand Charge/Month       : {cost.get('demand_charge_month', 0.0):.2f}",
+        f"  Demand Charge/Day equiv   : {cost.get('demand_charge_day_equiv', cost.get('demand_penalty', 0.0)):.2f}",
+        f"  Service Fee/Day equiv     : {cost.get('service_fee_day_equiv', 0.0):.2f}",
+        f"  IF Energy Cost/Day        : {cost.get('energy_cost_if_day', 0.0):.2f}",
+        f"  Baseline Energy Cost/Day  : {cost.get('energy_cost_baseline_day', 0.0):.2f}",
+        f"  IF Cost Share (target 0.20): {cost.get('share_if_cost', 0.0):.3f}",
         f"  Demand Excess kW          : {cost.get('demand_excess_kw', 0.0):.2f}",
-        f"  Demand Penalty            : {cost.get('demand_penalty', 0.0):.2f}",
+        f"  Demand Cost Alias         : {cost.get('demand_penalty', 0.0):.2f}",
         f"  MH Empty Minutes A/B      : {cost.get('mh_empty_minutes_A', 0.0):.2f} / {cost.get('mh_empty_minutes_B', 0.0):.2f}",
         f"  MH Low-Level Minutes A/B  : {cost.get('mh_low_level_minutes_A', 0.0):.2f} / {cost.get('mh_low_level_minutes_B', 0.0):.2f}",
         f"  MH Low-Level Penalty      : {cost.get('mh_low_level_penalty', 0.0):.2f}",
         f"  Overflow kg (total)       : {cost.get('overflow_kg_total', 0.0):.2f}",
         f"  Holding Minutes (total)   : {cost.get('holding_minutes_total', 0.0):.2f}",
         f"  IF Idle Minutes (system)  : {cost.get('if_idle_minutes_total', 0.0):.2f}",
+        f"  IF Idle Gap Superlinear   : {cost.get('if_idle_gap_superlinear_minutes', 0.0):.2f}",
         f"  IF Use Count A/B          : {cost.get('if_use_count_A', 0)} / {cost.get('if_use_count_B', 0)}",
-        f"  Poured Batches            : {cost.get('poured_batches_count', 0)} / {NUM_BATCHES}",
+        f"  Poured Batches            : {cost.get('poured_batches_count', 0)} / {cost.get('target_num_batches', _current_num_batches())}",
         f"  Missing Batches           : {cost.get('missing_batches', 0)}",
         f"  Unpoured Batches          : {cost.get('unpoured_batches_count', 0)}",
         f"  Makespan (min)            : {cost.get('makespan_minutes', 0.0):.2f}",
@@ -1841,7 +2145,11 @@ def format_policy_breakdown(cost):
         f"  Start Blocked By Prep     : {cost.get('start_blocked_by_prep_count', 0.0):.2f}",  # NEW/CHANGED
         f"  JIT Delay Minutes         : {cost.get('jit_delay_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Solar Melt Minutes        : {cost.get('solar_melt_minutes', 0.0):.2f}",  # NEW/CHANGED
+        f"  Cheap Melt Minutes        : {cost.get('cheap_melt_minutes', 0.0):.2f}",
         f"  Solar Cost Saving         : {cost.get('solar_cost_saving', 0.0):.2f}",  # NEW/CHANGED
+        f"  Obj Term Makespan         : {cost.get('obj_term_makespan', 0.0):.2f}",
+        f"  Obj Term Idle Gap         : {cost.get('obj_term_idle_gap', 0.0):.2f}",
+        f"  Obj Term Cheap Credit     : -{cost.get('obj_term_cheap_melt_credit', 0.0):.2f}",
         f"  Start Delay (min)         : {cost.get('start_delay_min', 0.0):.2f}",  # NEW/CHANGED
         f"  Zero Minutes Total        : {cost.get('zero_minutes_total', 0.0):.2f}",  # NEW/CHANGED
         f"  EPS Deficit Area          : {cost.get('eps_deficit_area', 0.0):.2f}",  # NEW/CHANGED
@@ -1866,6 +2174,31 @@ def format_policy_breakdown(cost):
         f"    - Total Violation       : {cost.get('total_violation', 0.0):.2f}",
     ]
     return "\n".join(lines)
+
+
+def print_delay_reason_summary(cost_details, top_k=5):
+    counts = dict(cost_details.get("delay_reason_counts", {}) or {})
+    if not counts:
+        print("Delay reasons (top): none")
+        return
+
+    tracked = [
+        "active_if_no_parallel",
+        "gap_block",
+        "tou_negative",
+        "holding_guard",
+        "start_delay_block",
+        "demand_guard",
+        "jit_gate",
+        "prep_not_ready",
+        "policy_not_start",
+        "controller_not_start",
+    ]
+    for key in tracked:
+        counts.setdefault(key, 0)
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+    txt = ", ".join([f"{k}={int(v)}" for k, v in ranked])
+    print(f"Delay reasons top {top_k}: {txt}")
 
 
 class ViolationFirstProblem(Problem):
@@ -1939,9 +2272,16 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     t_shifted = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN)
     if mh_levels is not None:
         for mh in ["A", "B"]:
-            ax2.plot(
-                t_shifted,
-                mh_levels[mh],
+            # Align discrete minute series with an explicit initial point at SHIFT_START.
+            t_shifted_mh = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN + 1)
+            mh_series = np.asarray(mh_levels[mh], dtype=float).ravel()
+            mh_plot = np.concatenate(
+                ([float(MH_INITIAL_LEVEL_KG[mh])], mh_series[:SIM_DURATION_MIN])
+            )
+            ax2.step(
+                t_shifted_mh,
+                mh_plot,
+                where="post",
                 linewidth=2,
                 color=MH_FURNACE_COLORS[mh],
                 label=f"M&H {mh}",
@@ -1973,6 +2313,27 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             color="magenta",
             zorder=5,
             label=f"Peak {total_kw[peak_idx]:.1f} kW",
+        )
+        md_15_line = float(cost_details.get("md_15_kw", 0.0))
+        ax3.axhline(
+            md_15_line,
+            color="purple",
+            linestyle=":",
+            linewidth=1.6,
+            label=f"MD15 {md_15_line:.1f} kW",
+        )
+        md_15 = float(cost_details.get("md_15_kw", 0.0))
+        dc_month = float(cost_details.get("demand_charge_month", 0.0))
+        dc_day = float(cost_details.get("demand_charge_day_equiv", 0.0))
+        ax3.text(
+            0.01,
+            0.98,
+            f"MD15={md_15:.1f} kW | DC month={dc_month:.1f} THB | DC day~{dc_day:.1f} THB",
+            transform=ax3.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7),
         )
     ax3.set_ylabel("kW")
     ax3.set_xlabel("Time (HH:MM)")
@@ -2036,14 +2397,84 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     plt.show()
 
 
+def dump_mh_trace(cost_details, out_csv_path, step_min=1):
+    """Dump minute-level MH values used for plotting to CSV."""
+    mh_levels = cost_details.get("mh_levels")
+    if mh_levels is None:
+        print("MH trace dump skipped: no mh_levels found.")
+        return
+
+    mh_a = np.asarray(mh_levels.get("A", []), dtype=float).ravel()
+    mh_b = np.asarray(mh_levels.get("B", []), dtype=float).ravel()
+    if len(mh_a) == 0 or len(mh_b) == 0:
+        print("MH trace dump skipped: empty MH series.")
+        return
+
+    baseline_kw = np.asarray(
+        cost_details.get("baseline_kw", np.zeros_like(mh_a)), dtype=float
+    )
+    if_kw = np.asarray(cost_details.get("if_kw", np.zeros_like(mh_a)), dtype=float)
+    total_kw = np.asarray(
+        cost_details.get("total_plant_kw", baseline_kw + if_kw), dtype=float
+    )
+
+    n = int(min(len(mh_a), len(mh_b), len(baseline_kw), len(if_kw), len(total_kw)))
+    step = max(1, int(step_min))
+
+    with open(out_csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "minute",
+                "time_of_day",
+                "mh_A_kg",
+                "mh_B_kg",
+                "baseline_kw",
+                "if_kw",
+                "total_plant_kw",
+            ]
+        )
+        for t in range(0, n, step):
+            tod = int((SHIFT_START + t) % 1440)
+            writer.writerow(
+                [
+                    t,
+                    f"{tod // 60:02d}:{tod % 60:02d}",
+                    float(mh_a[t]),
+                    float(mh_b[t]),
+                    float(baseline_kw[t]),
+                    float(if_kw[t]),
+                    float(total_kw[t]),
+                ]
+            )
+
+    print(f"Saved MH trace CSV: {out_csv_path}")
+
+    # Extra debug window around pour events to inspect sudden drops/jumps.
+    schedule = cost_details.get("schedule", [])
+    pour_events = sorted(
+        [int(x.get("pour_min", -1)) for x in schedule if x.get("status") == "poured"]
+    )
+    if len(pour_events) > 0:
+        print("MH around pour events (minute, A, B):")
+        for i, pm in enumerate(pour_events, start=1):
+            left = max(0, pm - 3)
+            right = min(n - 1, pm + 3)
+            window = ", ".join(
+                [f"{tt}:{mh_a[tt]:.1f}/{mh_b[tt]:.1f}" for tt in range(left, right + 1)]
+            )
+            print(f"  pour#{i} at t={pm}: {window}")
+
+
 def main():
     np.random.seed(42)
     sanity = quick_capacity_sanity_check()
     print_capacity_sanity_report(sanity)
     if not sanity["is_feasible_coarse"]:
         raise ValueError(
-            "NUM_BATCHES exceeds coarse throughput limits. "
-            "Try reducing NUM_BATCHES, enabling ALLOW_PARALLEL_IF, or increasing receive/melt capacity."
+            f"Target batches ({_current_num_batches()}) exceed coarse throughput limits. "
+            "Try reducing target batches (NUM_BATCHES/NUM_BATCHES_RUN_OVERRIDE), "
+            "enabling ALLOW_PARALLEL_IF, or increasing receive/melt capacity."
         )
 
     problem = PolicyProblem()
@@ -2131,14 +2562,41 @@ def main():
     print(
         "  objective_total_cost:",
         round(best_details.get("objective_total_cost", best_f), 2),
-        "total_energy_cost:",
-        round(best_details.get("total_energy_cost", 0.0), 2),
+        "total_energy_cost_day:",
+        round(
+            best_details.get(
+                "total_energy_cost_day", best_details.get("total_energy_cost", 0.0)
+            ),
+            2,
+        ),
+        "md_15_kw:",
+        round(best_details.get("md_15_kw", 0.0), 2),
+        "demand_charge_month:",
+        round(best_details.get("demand_charge_month", 0.0), 2),
+        "demand_charge_day_equiv:",
+        round(
+            best_details.get(
+                "demand_charge_day_equiv", best_details.get("demand_penalty", 0.0)
+            ),
+            2,
+        ),
         "solar_cost_saving:",
         round(best_details.get("solar_cost_saving", 0.0), 2),
         "reheat_energy_cost:",
         round(best_details.get("reheat_energy_cost", 0.0), 2),
         "holding_minutes_total:",
         round(best_details.get("holding_minutes_total", 0.0), 2),
+        "if_share_cost:",
+        round(best_details.get("share_if_cost", 0.0), 4),
+    )
+    print(
+        "  IF share sanity:",
+        round(best_details.get("share_if_cost", 0.0), 4),
+        "(target ~0.20)",
+        "if_cost_day:",
+        round(best_details.get("energy_cost_if_day", 0.0), 2),
+        "baseline_cost_day:",
+        round(best_details.get("energy_cost_baseline_day", 0.0), 2),
     )
     print(
         "  total_poured_kg:",
@@ -2151,9 +2609,21 @@ def main():
     print(
         "  peak_kw:",
         round(best_details.get("peak_kw", 0.0), 2),
-        "demand_penalty:",
-        round(best_details.get("demand_penalty", 0.0), 2),
+        "md_15_kw:",
+        round(best_details.get("md_15_kw", 0.0), 2),
+        "baseline_md15_kw:",
+        round(best_details.get("baseline_md15_kw", 0.0), 2),
+        "demand_penalty_kw:",
+        round(best_details.get("demand_penalty_kw", 0.0), 2),
+        "demand_charge_day_equiv:",
+        round(
+            best_details.get(
+                "demand_charge_day_equiv", best_details.get("demand_penalty", 0.0)
+            ),
+            2,
+        ),
     )
+    print_delay_reason_summary(best_details, top_k=5)
     print(
         "  KPI empty_min(A/B):",
         round(best_details.get("mh_empty_minutes_A", 0.0), 2),
@@ -2175,16 +2645,24 @@ def main():
         round(best_details.get("eps_deficit_area", 0.0), 2),
     )
     print(
-        f"OPT_MODE={OPT_MODE} | poured_batches={int(best_details.get('poured_batches_count', 0))}/{NUM_BATCHES} | "
+        f"OPT_MODE={OPT_MODE} | poured_batches={int(best_details.get('poured_batches_count', 0))}/{int(best_details.get('target_num_batches', _current_num_batches()))} | "
         f"missing={int(best_details.get('missing_batches', 0))} | overflow={round(best_details.get('overflow_kg_total', 0.0), 3)} | "
         f"min_level(A,B)={round(best_details.get('min_level_A', 0.0), 3)},{round(best_details.get('min_level_B', 0.0), 3)} | "
         f"zero_minutes={round(best_details.get('zero_minutes_total', 0.0), 3)} | "
         f"eps_deficit_area={round(best_details.get('eps_deficit_area', 0.0), 3)} | "
-        f"energy_cost={round(best_details.get('total_energy_cost', 0.0), 3)} | "
+        f"energy_day={round(best_details.get('total_energy_cost_day', best_details.get('total_energy_cost', 0.0)), 3)} | "
+        f"md15={round(best_details.get('md_15_kw', 0.0), 3)} | "
+        f"demand_day={round(best_details.get('demand_charge_day_equiv', best_details.get('demand_penalty', 0.0)), 3)} | "
+        f"if_share={round(best_details.get('share_if_cost', 0.0), 3)} | "
         f"solar_saving={round(best_details.get('solar_cost_saving', 0.0), 3)} | "
         f"peak={round(best_details.get('peak_kw', 0.0), 3)}"
     )
     print(format_policy_breakdown(best_details))
+    if DEBUG_DUMP_MH_TRACE:
+        trace_path = os.path.join(os.path.dirname(__file__), "mh_trace_debug.csv")
+        dump_mh_trace(
+            best_details, out_csv_path=trace_path, step_min=DEBUG_MH_TRACE_STEP_MIN
+        )
     plot_policy_result(best_details, title_prefix="Best GA Policy")
 
 
