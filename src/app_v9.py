@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 import os
+from numpy.random import default_rng
 
 from pymoo.core.problem import Problem
 from pymoo.core.duplicate import ElementwiseDuplicateElimination
@@ -22,7 +23,7 @@ NUM_BATCHES_TARGET_MONTHLY_AVG = 5
 # Set to int to override one-day simulation batch target.
 NUM_BATCHES_RUN_OVERRIDE = 12
 # NEW/CHANGED: optimization mode switch ("energy" or "service").
-OPT_MODE = "service"
+OPT_MODE = "energy"
 EPS_LEVEL = 1.0
 # NEW/CHANGED: service-mode scalarization weights (lexicographic-like priorities).
 SERVICE_W_MISSING_BATCHES = 1e9
@@ -92,11 +93,40 @@ DEMAND_CHARGE_BAHT_PER_KW_MONTH = 132.93
 SERVICE_FEE_BAHT_PER_MONTH = 312.24
 DEMAND_INTERVAL_MIN = 15
 BILLING_DAYS_PER_MONTH = 30
+# If set, treat as "monthly baseline billing" MD15 kW (fixed).
+# If None, baseline billing MD15 defaults to the day's baseline_md15_kw.
+BASELINE_BILLING_MD15_KW_OVERRIDE = None
+
+# Baseline Spike Injector: simulate abnormal high-load windows on baseline only.
+ENABLE_BASELINE_SPIKES = True
+BASELINE_SPIKE_SEED = 42
+# Fixed spike events aligned to time-of-day (HH:MM), can wrap midnight.
+# Example dict: {"start_tod":"09:00","end_tod":"10:00","extra_kw":500.0,"prob":1.0}
+BASELINE_SPIKE_EVENTS = [
+    {"start_tod": "09:30", "end_tod": "10:30", "extra_kw": 400.0, "prob": 1.0},
+]
+BASELINE_RANDOM_SPIKES = {
+    "enabled": False,
+    "num_events_min": 0,
+    "num_events_max": 0,
+    "tod_window_start": "00:00",
+    "tod_window_end": "00:00",  # start==end means "full day"
+    "duration_min_min": 15,
+    "duration_min_max": 60,
+    "extra_kw_min": 200.0,
+    "extra_kw_max": 800.0,
+    "prob": 1.0,
+}
 ASSUME_WEEKDAY = True
 INCLUDE_SERVICE_FEE_IN_ENERGY_OBJECTIVE = False
 
 # Increased to reflect realistic plant contract and allow higher baseline window.
 CONTRACT_DEMAND_KW = 1600.0
+
+# Optional: additional guard against exceeding monthly billing MD15 baseline
+# (useful when baseline has abnormal spikes). Disabled by default.
+USE_BILLING_DEMAND_GUARD = False
+BILLING_DEMAND_GUARD_HEADROOM_KW = 0.0
 
 # Service penalties (raw units before normalization). Tuned so raw components are
 # closer in order of magnitude and do not completely dominate energy cost.
@@ -267,6 +297,115 @@ def _build_baseline_load_kw(duration_min=SIM_DURATION_MIN):
         noise = np.random.uniform(-noise_pct, noise_pct, size=duration_min)
     baseline *= 1.0 + noise
     return np.clip(baseline, 220.0, None)
+
+
+def _hhmm_to_min(hhmm):
+    """Convert 'HH:MM' to minutes of day (0-1439)."""
+    s = str(hhmm).strip()
+    parts = s.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid HH:MM time string: {hhmm!r}")
+    hh = int(parts[0])
+    mm = int(parts[1])
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise ValueError(f"Invalid HH:MM time string: {hhmm!r}")
+    return int(hh * 60 + mm)
+
+
+def _tod_to_sim_idx(tod_min):
+    """Map minutes-of-day (0-1439) to simulation index where t=0 is SHIFT_START."""
+    tod = int(tod_min) % 1440
+    return int((tod - int(SHIFT_START)) % 1440)
+
+
+def inject_baseline_spikes(baseline_kw, rng):
+    """
+    Inject baseline-only spikes.
+    Returns (baseline_kw_new, spike_mask, spike_extra_kw_series).
+    """
+    x = np.asarray(baseline_kw, dtype=float).ravel()
+    n = int(len(x))
+    spike_mask = np.zeros(n, dtype=bool)
+    spike_extra = np.zeros(n, dtype=float)
+    if n == 0 or not ENABLE_BASELINE_SPIKES:
+        return x, spike_mask, spike_extra
+
+    def _apply_event(start_tod_min, end_tod_min, extra_kw):
+        extra_kw = float(extra_kw)
+        if abs(extra_kw) <= 0.0:
+            return
+        start_idx = int(_tod_to_sim_idx(start_tod_min) % max(1, n))
+        end_idx = int(_tod_to_sim_idx(end_tod_min) % max(1, n))
+
+        # If equal, interpret as full-day window (common "wrap" shorthand).
+        if start_idx == end_idx:
+            spike_mask[:] = True
+            spike_extra[:] += extra_kw
+            return
+        if start_idx < end_idx:
+            spike_mask[start_idx:end_idx] = True
+            spike_extra[start_idx:end_idx] += extra_kw
+        else:
+            spike_mask[start_idx:] = True
+            spike_extra[start_idx:] += extra_kw
+            spike_mask[:end_idx] = True
+            spike_extra[:end_idx] += extra_kw
+
+    # Fixed/override events
+    for ev in list(BASELINE_SPIKE_EVENTS or []):
+        if not isinstance(ev, dict):
+            continue
+        prob = float(ev.get("prob", 1.0))
+        if prob < 1.0 and float(rng.random()) > prob:
+            continue
+        start_tod = ev.get("start_tod", None)
+        end_tod = ev.get("end_tod", None)
+        if start_tod is None or end_tod is None:
+            continue
+        _apply_event(
+            _hhmm_to_min(start_tod),
+            _hhmm_to_min(end_tod),
+            float(ev.get("extra_kw", 0.0)),
+        )
+
+    # Random events
+    cfg = dict(BASELINE_RANDOM_SPIKES or {})
+    if bool(cfg.get("enabled", False)):
+        num_min = int(cfg.get("num_events_min", 0))
+        num_max = int(cfg.get("num_events_max", num_min))
+        if num_max < num_min:
+            num_max = num_min
+
+        window_start = _hhmm_to_min(cfg.get("tod_window_start", "00:00"))
+        window_end = _hhmm_to_min(cfg.get("tod_window_end", "00:00"))
+        dur_min = max(1, int(cfg.get("duration_min_min", 15)))
+        dur_max = max(dur_min, int(cfg.get("duration_min_max", dur_min)))
+        extra_min = float(cfg.get("extra_kw_min", 200.0))
+        extra_max = float(cfg.get("extra_kw_max", extra_min))
+        prob = float(cfg.get("prob", 1.0))
+
+        def _sample_tod_in_window():
+            if window_start == window_end:
+                return int(rng.integers(0, 1440))
+            if window_start < window_end:
+                return int(rng.integers(window_start, window_end))
+            span = (1440 - window_start) + window_end
+            z = int(rng.integers(0, span))
+            if z < (1440 - window_start):
+                return int(window_start + z)
+            return int(z - (1440 - window_start))
+
+        n_events = int(rng.integers(num_min, num_max + 1))
+        for _ in range(n_events):
+            if prob < 1.0 and float(rng.random()) > prob:
+                continue
+            start_tod_min = _sample_tod_in_window()
+            duration = int(rng.integers(dur_min, dur_max + 1))
+            end_tod_min = int((start_tod_min + duration) % 1440)
+            extra_kw = float(rng.uniform(extra_min, extra_max))
+            _apply_event(start_tod_min, end_tod_min, extra_kw)
+
+    return (x + spike_extra), spike_mask, spike_extra
 
 
 def is_onpeak(tod_min, assume_weekday=True):
@@ -988,6 +1127,25 @@ def simulate_policy_day(policy_params, controller=None):
     else:
         policy = _decode_policy_vector(policy_params)
     baseline_kw = _build_baseline_load_kw(SIM_DURATION_MIN)
+    baseline_spike_mask = np.zeros(SIM_DURATION_MIN, dtype=bool)
+    baseline_spike_extra_kw_series = np.zeros(SIM_DURATION_MIN, dtype=float)
+    if ENABLE_BASELINE_SPIKES:
+        spike_rng = (
+            default_rng(int(BASELINE_SPIKE_SEED))
+            if DETERMINISTIC_SIMULATION
+            else default_rng()
+        )
+        baseline_kw, baseline_spike_mask, baseline_spike_extra_kw_series = (
+            inject_baseline_spikes(baseline_kw, spike_rng)
+        )
+    baseline_md15_kw = float(
+        compute_md_15min_kw(baseline_kw, interval=DEMAND_INTERVAL_MIN)
+    )
+    baseline_billing_md15_kw = (
+        float(baseline_md15_kw)
+        if BASELINE_BILLING_MD15_KW_OVERRIDE is None
+        else float(BASELINE_BILLING_MD15_KW_OVERRIDE)
+    )
     tou_raw_price_series, tou_effective_price_series = _build_tou_price_series(
         SIM_DURATION_MIN
     )  # NEW/CHANGED
@@ -1492,6 +1650,19 @@ def simulate_policy_day(policy_params, controller=None):
                                 )
                                 _advance_minute_dynamics(t)
                                 continue
+                            if USE_BILLING_DEMAND_GUARD:
+                                billing_guard = baseline_billing_md15_kw - float(
+                                    BILLING_DEMAND_GUARD_HEADROOM_KW
+                                )
+                                if projected_total > billing_guard + 1e-9:
+                                    delay_reason_counts["billing_demand_guard"] = (
+                                        delay_reason_counts.get(
+                                            "billing_demand_guard", 0
+                                        )
+                                        + 1
+                                    )
+                                    _advance_minute_dynamics(t)
+                                    continue
                             hard_guard = (
                                 CONTRACT_DEMAND_KW - policy["demand_headroom_kw"]
                             )
@@ -1620,10 +1791,7 @@ def simulate_policy_day(policy_params, controller=None):
 
     peak_kw = float(np.max(total_plant_kw)) if len(total_plant_kw) else 0.0
     md_15_kw = float(compute_md_15min_kw(total_plant_kw, interval=DEMAND_INTERVAL_MIN))
-    baseline_md15_kw = float(
-        compute_md_15min_kw(baseline_kw, interval=DEMAND_INTERVAL_MIN)
-    )
-    demand_penalty_kw = float(max(0.0, md_15_kw - baseline_md15_kw))
+    demand_penalty_kw = float(max(0.0, md_15_kw - baseline_billing_md15_kw))
     demand_charge_month = float(demand_penalty_kw * DEMAND_CHARGE_BAHT_PER_KW_MONTH)
     demand_charge_day_equiv = float(
         demand_charge_month / max(1.0, BILLING_DAYS_PER_MONTH)
@@ -1703,6 +1871,8 @@ def simulate_policy_day(policy_params, controller=None):
         },
         "mh_levels": mh_levels_series,
         "baseline_kw": baseline_kw,
+        "baseline_spike_mask": baseline_spike_mask,
+        "baseline_spike_extra_kw_series": baseline_spike_extra_kw_series,
         "if_kw": if_kw_series,
         "tou_raw_price": tou_raw_price_series,  # NEW/CHANGED
         "tou_effective_price": tou_effective_price_series,  # NEW/CHANGED
@@ -1717,6 +1887,7 @@ def simulate_policy_day(policy_params, controller=None):
             "peak_kw": peak_kw,
             "md_15_kw": md_15_kw,
             "baseline_md15_kw": baseline_md15_kw,
+            "baseline_billing_md15_kw": baseline_billing_md15_kw,
             "demand_penalty_kw": demand_penalty_kw,
             "demand_charge_month": demand_charge_month,
             "demand_charge_day_equiv": demand_charge_day_equiv,
@@ -1919,6 +2090,8 @@ def evaluate_policy(policy_params):
         "batch_timing": sim["batch_timing"],
         "mh_levels": sim["mh_levels"],
         "baseline_kw": sim["baseline_kw"],
+        "baseline_spike_mask": sim.get("baseline_spike_mask"),
+        "baseline_spike_extra_kw_series": sim.get("baseline_spike_extra_kw_series"),
         "if_kw": sim["if_kw"],
         "tou_raw_price": sim.get("tou_raw_price"),
         "tou_effective_price": sim.get("tou_effective_price"),
@@ -2189,6 +2362,7 @@ def print_delay_reason_summary(cost_details, top_k=5):
         "holding_guard",
         "start_delay_block",
         "demand_guard",
+        "billing_demand_guard",
         "jit_gate",
         "prep_not_ready",
         "policy_not_start",
@@ -2222,6 +2396,8 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     schedule = cost_details.get("schedule", [])
     mh_levels = cost_details.get("mh_levels")
     baseline_kw = cost_details.get("baseline_kw")
+    baseline_spike_mask = cost_details.get("baseline_spike_mask")
+    baseline_spike_extra = cost_details.get("baseline_spike_extra_kw_series")
     if_kw = cost_details.get("if_kw")
     total_kw = cost_details.get("total_plant_kw")
     tou_raw = cost_details.get("tou_raw_price")
@@ -2298,6 +2474,24 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax2.legend(loc="upper right")
 
     if baseline_kw is not None and if_kw is not None and total_kw is not None:
+        # Optional: visualize baseline spike injection without affecting IF series.
+        if baseline_spike_extra is not None:
+            try:
+                baseline_nominal = np.asarray(baseline_kw, dtype=float) - np.asarray(
+                    baseline_spike_extra, dtype=float
+                )
+                ax3.plot(
+                    t_shifted,
+                    baseline_nominal,
+                    label="Baseline kW (no spikes)",
+                    color="gray",
+                    linewidth=1.0,
+                    linestyle="--",
+                    alpha=0.75,
+                )
+            except Exception:
+                pass
+
         ax3.plot(
             t_shifted, baseline_kw, label="Baseline kW", color="gray", linewidth=1.5
         )
@@ -2322,6 +2516,26 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             linewidth=1.6,
             label=f"MD15 {md_15_line:.1f} kW",
         )
+
+        if baseline_spike_mask is not None:
+            try:
+                mask = np.asarray(baseline_spike_mask, dtype=bool).ravel()
+                if len(mask) == len(t_shifted) and bool(np.any(mask)):
+                    y0, y1 = ax3.get_ylim()
+                    ax3.fill_between(
+                        t_shifted,
+                        y0,
+                        y1,
+                        where=mask,
+                        color="orange",
+                        alpha=0.08,
+                        step="pre",
+                        label="Baseline spike window",
+                    )
+                    ax3.set_ylim(y0, y1)
+            except Exception:
+                pass
+
         md_15 = float(cost_details.get("md_15_kw", 0.0))
         dc_month = float(cost_details.get("demand_charge_month", 0.0))
         dc_day = float(cost_details.get("demand_charge_day_equiv", 0.0))
@@ -2413,12 +2627,30 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
     baseline_kw = np.asarray(
         cost_details.get("baseline_kw", np.zeros_like(mh_a)), dtype=float
     )
+    baseline_spike_mask = np.asarray(
+        cost_details.get("baseline_spike_mask", np.zeros_like(mh_a, dtype=bool)),
+        dtype=bool,
+    )
+    baseline_spike_extra_kw_series = np.asarray(
+        cost_details.get("baseline_spike_extra_kw_series", np.zeros_like(mh_a)),
+        dtype=float,
+    )
     if_kw = np.asarray(cost_details.get("if_kw", np.zeros_like(mh_a)), dtype=float)
     total_kw = np.asarray(
         cost_details.get("total_plant_kw", baseline_kw + if_kw), dtype=float
     )
 
-    n = int(min(len(mh_a), len(mh_b), len(baseline_kw), len(if_kw), len(total_kw)))
+    n = int(
+        min(
+            len(mh_a),
+            len(mh_b),
+            len(baseline_kw),
+            len(baseline_spike_mask),
+            len(baseline_spike_extra_kw_series),
+            len(if_kw),
+            len(total_kw),
+        )
+    )
     step = max(1, int(step_min))
 
     with open(out_csv_path, "w", newline="", encoding="utf-8") as f:
@@ -2430,6 +2662,8 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
                 "mh_A_kg",
                 "mh_B_kg",
                 "baseline_kw",
+                "baseline_spike_flag",
+                "baseline_spike_extra_kw",
                 "if_kw",
                 "total_plant_kw",
             ]
@@ -2443,6 +2677,8 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
                     float(mh_a[t]),
                     float(mh_b[t]),
                     float(baseline_kw[t]),
+                    int(bool(baseline_spike_mask[t])),
+                    float(baseline_spike_extra_kw_series[t]),
                     float(if_kw[t]),
                     float(total_kw[t]),
                 ]
