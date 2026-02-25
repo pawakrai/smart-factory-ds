@@ -52,6 +52,19 @@ ENERGY_IDLE_GAP_SUPERLINEAR_COEFF = 0.15
 ENERGY_CHEAP_MELT_CREDIT_PER_MIN = 5.0
 ENERGY_MODE_MIN_JIT_SLACK_MIN = 25.0
 
+# Energy-mode objective re-weighting (applies only when OPT_MODE == "energy").
+ENERGY_COST_WEIGHT_ENERGY_MODE = 6.0
+EMPTY_PENALTY_SCALE_ENERGY_MODE = 0.3
+LOW_MIN_PENALTY_SCALE_ENERGY_MODE = 0.3
+LOW_SHAPE_PENALTY_SCALE_ENERGY_MODE = 0.1
+
+# Explicit "high TOU melt" penalty (objective-only; does not change energy accounting).
+ENERGY_MODE_TOU_HIGH_Q = 0.70
+ENERGY_MODE_TOU_REF_Q = 0.30
+ENERGY_MODE_TOU_HIGH_THB_PER_KWH_OVERRIDE = None
+ENERGY_MODE_TOU_REF_THB_PER_KWH_OVERRIDE = None
+ENERGY_MODE_HIGH_TOU_GAP_WEIGHT = 500.0
+
 USE_FURNACE_A = True
 USE_FURNACE_B = True
 ALLOW_PARALLEL_IF = False
@@ -103,7 +116,8 @@ BASELINE_SPIKE_SEED = 42
 # Fixed spike events aligned to time-of-day (HH:MM), can wrap midnight.
 # Example dict: {"start_tod":"09:00","end_tod":"10:00","extra_kw":500.0,"prob":1.0}
 BASELINE_SPIKE_EVENTS = [
-    {"start_tod": "09:30", "end_tod": "10:30", "extra_kw": 400.0, "prob": 1.0},
+    {"start_tod": "10:30", "end_tod": "11:00", "extra_kw": 400.0, "prob": 1.0},
+    {"start_tod": "15:00", "end_tod": "15:30", "extra_kw": 400.0, "prob": 1.0},
 ]
 BASELINE_RANDOM_SPIKES = {
     "enabled": False,
@@ -174,6 +188,7 @@ OBJ1_COMPONENT_REFS = {
     "empty_penalty": 200000.0,
     "low_level_min_penalty": 80000.0,
     "low_level_shape_penalty": 250000.0,
+    "high_tou_penalty": 60000.0,
     "overflow_penalty": 120000.0,
     "unpoured_penalty": 300000.0,
     "prep_wait_penalty": 50000.0,  # NEW/CHANGED
@@ -187,6 +202,7 @@ OBJ1_COMPONENT_WEIGHTS = {
     "empty_penalty": 1.10,
     "low_level_min_penalty": 0.80,
     "low_level_shape_penalty": 0.90,
+    "high_tou_penalty": 1.00,
     "overflow_penalty": 1.20,
     "unpoured_penalty": 1.30,
     "prep_wait_penalty": 0.50,  # NEW/CHANGED
@@ -264,6 +280,7 @@ EARLY_STOP_DELTA_OBJ1 = 50.0
 EARLY_STOP_DELTA_OBJ2 = 0.5
 DEBUG_DUMP_MH_TRACE = True
 DEBUG_MH_TRACE_STEP_MIN = 1
+USE_VISUAL_IF_PROFILE = True
 
 
 def _current_num_batches():
@@ -408,6 +425,94 @@ def inject_baseline_spikes(baseline_kw, rng):
     return (x + spike_extra), spike_mask, spike_extra
 
 
+def build_visual_if_profile(
+    duration_min,
+    target_kwh,
+    kw_max=500.0,
+    template=None,
+    dip_at_min=30,
+    dip_len_min=1,
+):
+    """
+    Returns per-minute kW for visualization only.
+    Must integrate to target_kwh over duration_min minutes.
+    """
+    n = int(max(0, int(duration_min)))
+    target_kwh = float(target_kwh)
+    kw_max = float(kw_max)
+    if n <= 0 or target_kwh <= 0.0 or kw_max <= 0.0:
+        return [0.0] * n
+
+    # Breakpoint template: list of (start_min, kW).
+    if template is None:
+        template = [(0, 50.0), (5, 150.0), (10, 250.0), (15, 350.0), (30, 450.0)]
+    bp = []
+    for a, b in list(template):
+        try:
+            bp.append((int(a), float(b)))
+        except Exception:
+            continue
+    if not bp:
+        bp = [(0, min(kw_max, 450.0))]
+    bp = sorted(bp, key=lambda x: x[0])
+
+    series = np.zeros(n, dtype=float)
+    for i, (start, kw) in enumerate(bp):
+        if start >= n:
+            break
+        end = bp[i + 1][0] if (i + 1) < len(bp) else n
+        end = int(min(n, max(start, end)))
+        if end > start:
+            series[start:end] = kw
+
+    # Optional brief dip to zero for realism.
+    if dip_at_min is not None:
+        da = int(dip_at_min)
+        dl = int(max(0, dip_len_min))
+        if 0 <= da < n and dl > 0:
+            series[da : min(n, da + dl)] = 0.0
+
+    # Scale to match target energy.
+    current_kwh = float(np.sum(series) / 60.0)
+    if current_kwh <= 1e-12:
+        base = min(kw_max, 450.0)
+        series[:] = base
+        current_kwh = float(np.sum(series) / 60.0)
+    scale = target_kwh / max(1e-12, current_kwh)
+    series *= scale
+
+    # Clip to bounds.
+    series = np.clip(series, 0.0, kw_max)
+
+    # Compensate any energy mismatch by adjusting the plateau segment.
+    # Target tolerance: ±0.5% energy.
+    def _energy_kwh(x):
+        return float(np.sum(x) / 60.0)
+
+    desired = target_kwh
+    tol = 0.005 * max(1e-9, desired)
+    # Plateau = indices at (or near) the max value in the unscaled template
+    # (typically the last segment). Fallback to last 1/3 of window.
+    plateau_idx = np.where(series > 0.0)[0]
+    if len(plateau_idx) > 0:
+        # Prefer tail region for adjustments.
+        plateau_idx = plateau_idx[int(0.66 * len(plateau_idx)) :]
+    else:
+        plateau_idx = np.arange(max(0, n - max(1, n // 3)), n, dtype=int)
+
+    for _ in range(6):
+        cur = _energy_kwh(series)
+        err = desired - cur
+        if abs(err) <= tol:
+            break
+        if len(plateau_idx) <= 0:
+            break
+        delta_kw = (err * 60.0) / float(len(plateau_idx))
+        series[plateau_idx] = np.clip(series[plateau_idx] + delta_kw, 0.0, kw_max)
+
+    return [float(v) for v in series]
+
+
 def is_onpeak(tod_min, assume_weekday=True):
     """TOU on-peak window: 09:00-22:00 on weekdays."""
     hour = int((int(tod_min) % 1440) // 60)
@@ -459,6 +564,21 @@ def _effective_if_price(minute_idx, if_kw=None):
     if _is_in_solar_window(minute_idx):
         return float(raw_price * SOLAR_EFFECTIVE_PRICE_FACTOR)
     return raw_price
+
+
+def _future_demand_ok(t, horizon_min, baseline_kw, if_kw_now, add_kw, limit_kw):
+    n = len(baseline_kw)
+    end = int(min(n, int(t) + max(1, int(horizon_min))))
+    if end <= int(t):
+        return True, 0.0
+    worst = float(
+        np.max(
+            np.asarray(baseline_kw[int(t) : end], dtype=float)
+            + float(if_kw_now)
+            + float(add_kw)
+        )
+    )
+    return (worst <= float(limit_kw) + 1e-9), worst
 
 
 def compute_md_15min_kw(total_plant_kw, interval=DEMAND_INTERVAL_MIN):
@@ -697,6 +817,30 @@ def _compute_obj1_components(m):
     return comp
 
 
+def _apply_energy_mode_reweighting(comp, m):
+    """Apply energy-mode-only multipliers for reporting/aggregation."""
+    out = dict(comp or {})
+
+    out["energy_cost"] = float(out.get("energy_cost", 0.0)) * float(
+        ENERGY_COST_WEIGHT_ENERGY_MODE
+    )
+    out["empty_penalty"] = float(out.get("empty_penalty", 0.0)) * float(
+        EMPTY_PENALTY_SCALE_ENERGY_MODE
+    )
+    out["low_level_min_penalty"] = float(out.get("low_level_min_penalty", 0.0)) * float(
+        LOW_MIN_PENALTY_SCALE_ENERGY_MODE
+    )
+    out["low_level_shape_penalty"] = float(
+        out.get("low_level_shape_penalty", 0.0)
+    ) * float(LOW_SHAPE_PENALTY_SCALE_ENERGY_MODE)
+
+    # Objective-only: high TOU melt penalty (gap-weighted).
+    out["high_tou_penalty"] = float(ENERGY_MODE_HIGH_TOU_GAP_WEIGHT) * float(
+        m.get("high_tou_gap_sum", 0.0)
+    )
+    return out
+
+
 def _aggregate_obj1(components):
     if OBJ1_AGGREGATION_MODE == "raw":
         return float(sum(components.values()))
@@ -712,6 +856,12 @@ def _aggregate_obj1(components):
 
 def compute_total_cost(m, comp):
     # Energy mode objective: focus on electricity bill components.
+    energy_cost_day = float(
+        m.get("total_energy_cost_day", m.get("total_energy_cost", 0.0))
+    )
+    energy_cost_weight = (
+        float(ENERGY_COST_WEIGHT_ENERGY_MODE) if OPT_MODE == "energy" else 1.0
+    )
     service_fee_day_equiv = (
         float(m.get("service_fee_day_equiv", 0.0))
         if INCLUDE_SERVICE_FEE_IN_ENERGY_OBJECTIVE
@@ -729,12 +879,18 @@ def compute_total_cost(m, comp):
     cheap_melt_credit = ENERGY_CHEAP_MELT_CREDIT_PER_MIN * float(
         m.get("cheap_melt_minutes", 0.0)
     )
+    high_tou_penalty = (
+        float(ENERGY_MODE_HIGH_TOU_GAP_WEIGHT) * float(m.get("high_tou_gap_sum", 0.0))
+        if OPT_MODE == "energy"
+        else 0.0
+    )
     return float(
-        m.get("total_energy_cost_day", m.get("total_energy_cost", 0.0))
+        (energy_cost_weight * energy_cost_day)
         + m.get("demand_charge_day_equiv", m.get("demand_penalty", 0.0))
         + service_fee_day_equiv
         + makespan_term
         + idle_gap_term
+        + high_tou_penalty
         - cheap_melt_credit
     )
 
@@ -1693,6 +1849,30 @@ def simulate_policy_day(policy_params, controller=None):
                                 )
                                 duration = int(round(profile["duration_min"]))
                                 duration = max(1, duration)
+                                horizon = max(
+                                    duration, int(policy.get("lookahead_min", duration))
+                                )
+                                ok, _worst = _future_demand_ok(
+                                    t,
+                                    horizon,
+                                    baseline_kw,
+                                    if_kw_now,
+                                    selected_power,
+                                    hard_guard,
+                                )
+                                if (
+                                    (not ok)
+                                    and (not force_mode)
+                                    and (not bypass_demand_guard)
+                                ):
+                                    delay_reason_counts["future_demand_guard"] = (
+                                        delay_reason_counts.get(
+                                            "future_demand_guard", 0
+                                        )
+                                        + 1
+                                    )
+                                    _advance_minute_dynamics(t)
+                                    continue
                                 melt_finish = min(SIM_DURATION_MIN, t + duration)
 
                                 b_id = batch_id_counter + 1
@@ -1857,6 +2037,74 @@ def simulate_policy_day(policy_params, controller=None):
         )
     )
 
+    # Objective-only TOU diagnostics (does not affect accounting energy).
+    tou_eff = np.asarray(tou_effective_price_series, dtype=float).ravel()
+    if_active_mask = np.asarray(if_kw_series, dtype=float).ravel() > 1e-9
+    if len(tou_eff) > 0:
+        tou_ref = (
+            float(ENERGY_MODE_TOU_REF_THB_PER_KWH_OVERRIDE)
+            if ENERGY_MODE_TOU_REF_THB_PER_KWH_OVERRIDE is not None
+            else float(np.quantile(tou_eff, float(ENERGY_MODE_TOU_REF_Q)))
+        )
+        tou_high_th = (
+            float(ENERGY_MODE_TOU_HIGH_THB_PER_KWH_OVERRIDE)
+            if ENERGY_MODE_TOU_HIGH_THB_PER_KWH_OVERRIDE is not None
+            else float(np.quantile(tou_eff, float(ENERGY_MODE_TOU_HIGH_Q)))
+        )
+    else:
+        tou_ref = 0.0
+        tou_high_th = 0.0
+    high_tou_melt_minutes = float(np.sum(if_active_mask & (tou_eff >= tou_high_th)))
+    high_tou_gap_sum = float(
+        np.sum(np.maximum(0.0, tou_eff - tou_ref) * if_active_mask.astype(float))
+    )
+
+    # Plot-only IF profile (do NOT affect accounting arrays or costs).
+    if_kw_plot = np.asarray(if_kw_series, dtype=float).copy()
+    if USE_VISUAL_IF_PROFILE:
+        try:
+            kw_cap = float(max(IF_POWER_OPTIONS)) if len(IF_POWER_OPTIONS) else 500.0
+        except Exception:
+            kw_cap = 500.0
+        for b in batches.values():
+            try:
+                if int(b.get("if_furnace", -1)) < 0:
+                    continue
+                if (
+                    str(b.get("status", "")) in ("unpoured",)
+                    and int(b.get("start_min", SIM_DURATION_MIN)) >= SIM_DURATION_MIN
+                ):
+                    continue
+                start = int(b.get("start_min", 0))
+                end = int(b.get("melt_finish_min", start))
+                start = max(0, min(SIM_DURATION_MIN, start))
+                end = max(start, min(SIM_DURATION_MIN, end))
+                dur = int(end - start)
+                if dur <= 0:
+                    continue
+                p_kw = float(b.get("power_kw", 0.0))
+                target_kwh = float(b.get("energy_kwh_profile", p_kw * (dur / 60.0)))
+                vis = np.asarray(
+                    build_visual_if_profile(
+                        dur,
+                        target_kwh=target_kwh,
+                        kw_max=kw_cap,
+                    ),
+                    dtype=float,
+                )
+                if len(vis) != dur:
+                    continue
+                # Replace only the melting-window contribution for this furnace:
+                # accounting had constant p_kw; visualization uses vis.
+                if_kw_plot[start:end] += vis - p_kw
+            except Exception:
+                continue
+        if_kw_plot = np.clip(if_kw_plot, 0.0, None)
+
+    total_plant_kw_plot = np.asarray(baseline_kw, dtype=float) + np.asarray(
+        if_kw_plot, dtype=float
+    )
+
     return {
         "policy": policy,
         "schedule": schedule,
@@ -1874,9 +2122,11 @@ def simulate_policy_day(policy_params, controller=None):
         "baseline_spike_mask": baseline_spike_mask,
         "baseline_spike_extra_kw_series": baseline_spike_extra_kw_series,
         "if_kw": if_kw_series,
+        "if_kw_plot": if_kw_plot,
         "tou_raw_price": tou_raw_price_series,  # NEW/CHANGED
         "tou_effective_price": tou_effective_price_series,  # NEW/CHANGED
         "total_plant_kw": total_plant_kw,
+        "total_plant_kw_plot": total_plant_kw_plot,
         "metrics": {
             "melt_kwh": total_melt_kwh,
             "reheat_kwh": total_reheat_kwh,
@@ -1897,6 +2147,10 @@ def simulate_policy_day(policy_params, controller=None):
             "energy_cost_if_day": energy_cost_if_day,
             "energy_cost_baseline_day": energy_cost_baseline_day,
             "share_if_cost": share_if_cost,
+            "tou_ref_thb_per_kwh": tou_ref,
+            "tou_high_thb_per_kwh": tou_high_th,
+            "high_tou_melt_minutes": high_tou_melt_minutes,
+            "high_tou_gap_sum": high_tou_gap_sum,
             "mh_empty_minutes": mh_empty_minutes,
             "mh_low_level_minutes": mh_low_level_minutes,
             "mh_low_level_penalty": mh_low_level_penalty,
@@ -1943,6 +2197,8 @@ def evaluate_policy(policy_params):
     m = sim["metrics"]
 
     comp = _compute_obj1_components(m)
+    if OPT_MODE == "energy":
+        comp = _apply_energy_mode_reweighting(comp, m)
     total_cost_energy = compute_total_cost(m, comp)
     low_level_minutes_total = float(
         m["mh_low_level_minutes"]["A"] + m["mh_low_level_minutes"]["B"]
@@ -1998,6 +2254,8 @@ def evaluate_policy(policy_params):
         "opt_mode": OPT_MODE,  # NEW/CHANGED
         "objective_total_cost": f_scalar,
         "energy_mode_total_cost": total_cost_energy,  # NEW/CHANGED
+        "energy_cost_weight_energy_mode": float(ENERGY_COST_WEIGHT_ENERGY_MODE),
+        "high_tou_gap_weight": float(ENERGY_MODE_HIGH_TOU_GAP_WEIGHT),
         "obj1_total": f_scalar,
         "obj1_raw_total": raw_obj1_total,
         "obj1_mode": OBJ1_AGGREGATION_MODE,
@@ -2009,6 +2267,7 @@ def evaluate_policy(policy_params):
         "comp_empty_penalty": comp["empty_penalty"],
         "comp_low_level_min_penalty": comp["low_level_min_penalty"],
         "comp_low_level_shape_penalty": comp["low_level_shape_penalty"],
+        "comp_high_tou_penalty": comp.get("high_tou_penalty", 0.0),
         "comp_overflow_penalty": comp["overflow_penalty"],
         "comp_unpoured_penalty": comp["unpoured_penalty"],
         "comp_prep_wait_penalty": comp["prep_wait_penalty"],  # NEW/CHANGED
@@ -2020,6 +2279,7 @@ def evaluate_policy(policy_params):
         "pct_empty_penalty": contribution_pct["empty_penalty"],
         "pct_low_level_min_penalty": contribution_pct["low_level_min_penalty"],
         "pct_low_level_shape_penalty": contribution_pct["low_level_shape_penalty"],
+        "pct_high_tou_penalty": contribution_pct.get("high_tou_penalty", 0.0),
         "pct_overflow_penalty": contribution_pct["overflow_penalty"],
         "pct_unpoured_penalty": contribution_pct["unpoured_penalty"],
         "violation_overflow": overflow_violation,
@@ -2050,6 +2310,10 @@ def evaluate_policy(policy_params):
         "energy_cost_if_day": m.get("energy_cost_if_day", 0.0),
         "energy_cost_baseline_day": m.get("energy_cost_baseline_day", 0.0),
         "share_if_cost": m.get("share_if_cost", 0.0),
+        "tou_ref_thb_per_kwh": m.get("tou_ref_thb_per_kwh", 0.0),
+        "tou_high_thb_per_kwh": m.get("tou_high_thb_per_kwh", 0.0),
+        "high_tou_melt_minutes": m.get("high_tou_melt_minutes", 0.0),
+        "high_tou_gap_sum": m.get("high_tou_gap_sum", 0.0),
         "demand_excess_kw": m["demand_excess_kw"],
         "demand_penalty": m["demand_penalty"],
         "mh_empty_minutes_A": m["mh_empty_minutes"]["A"],
@@ -2093,9 +2357,11 @@ def evaluate_policy(policy_params):
         "baseline_spike_mask": sim.get("baseline_spike_mask"),
         "baseline_spike_extra_kw_series": sim.get("baseline_spike_extra_kw_series"),
         "if_kw": sim["if_kw"],
+        "if_kw_plot": sim.get("if_kw_plot"),
         "tou_raw_price": sim.get("tou_raw_price"),
         "tou_effective_price": sim.get("tou_effective_price"),
         "total_plant_kw": sim["total_plant_kw"],
+        "total_plant_kw_plot": sim.get("total_plant_kw_plot"),
         "delay_reason_counts": m.get("delay_reason_counts", {}),
         "obj_term_makespan": ENERGY_MAKESPAN_COST_PER_MIN
         * float(m.get("makespan_minutes", SIM_DURATION_MIN)),
@@ -2111,6 +2377,12 @@ def evaluate_policy(policy_params):
         ),
         "obj_term_cheap_melt_credit": ENERGY_CHEAP_MELT_CREDIT_PER_MIN
         * float(m.get("cheap_melt_minutes", 0.0)),
+        "obj_term_high_tou_penalty": (
+            float(ENERGY_MODE_HIGH_TOU_GAP_WEIGHT)
+            * float(m.get("high_tou_gap_sum", 0.0))
+            if OPT_MODE == "energy"
+            else 0.0
+        ),
     }
     return f_scalar, np.asarray(g_constraints, dtype=float), cost_components
 
@@ -2319,10 +2591,14 @@ def format_policy_breakdown(cost):
         f"  JIT Delay Minutes         : {cost.get('jit_delay_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Solar Melt Minutes        : {cost.get('solar_melt_minutes', 0.0):.2f}",  # NEW/CHANGED
         f"  Cheap Melt Minutes        : {cost.get('cheap_melt_minutes', 0.0):.2f}",
+        f"  TOU Ref/High (THB/kWh)    : {cost.get('tou_ref_thb_per_kwh', 0.0):.3f} / {cost.get('tou_high_thb_per_kwh', 0.0):.3f}",
+        f"  High TOU Melt Minutes     : {cost.get('high_tou_melt_minutes', 0.0):.2f}",
+        f"  High TOU Gap Sum          : {cost.get('high_tou_gap_sum', 0.0):.2f}",
         f"  Solar Cost Saving         : {cost.get('solar_cost_saving', 0.0):.2f}",  # NEW/CHANGED
         f"  Obj Term Makespan         : {cost.get('obj_term_makespan', 0.0):.2f}",
         f"  Obj Term Idle Gap         : {cost.get('obj_term_idle_gap', 0.0):.2f}",
         f"  Obj Term Cheap Credit     : -{cost.get('obj_term_cheap_melt_credit', 0.0):.2f}",
+        f"  Obj Term High TOU Penalty : {cost.get('obj_term_high_tou_penalty', 0.0):.2f}",
         f"  Start Delay (min)         : {cost.get('start_delay_min', 0.0):.2f}",  # NEW/CHANGED
         f"  Zero Minutes Total        : {cost.get('zero_minutes_total', 0.0):.2f}",  # NEW/CHANGED
         f"  EPS Deficit Area          : {cost.get('eps_deficit_area', 0.0):.2f}",  # NEW/CHANGED
@@ -2335,6 +2611,7 @@ def format_policy_breakdown(cost):
         f"    - Empty Penalty         : {cost.get('comp_empty_penalty', 0.0):.2f} / {cost.get('pct_empty_penalty', 0.0):.2f}%",
         f"    - Low-Level Min Penalty : {cost.get('comp_low_level_min_penalty', 0.0):.2f} / {cost.get('pct_low_level_min_penalty', 0.0):.2f}%",
         f"    - Low-Level Shape       : {cost.get('comp_low_level_shape_penalty', 0.0):.2f} / {cost.get('pct_low_level_shape_penalty', 0.0):.2f}%",
+        f"    - High TOU Penalty      : {cost.get('comp_high_tou_penalty', 0.0):.2f} / {cost.get('pct_high_tou_penalty', 0.0):.2f}%",
         f"    - Overflow Penalty      : {cost.get('comp_overflow_penalty', 0.0):.2f} / {cost.get('pct_overflow_penalty', 0.0):.2f}%",
         f"    - Unpoured Penalty      : {cost.get('comp_unpoured_penalty', 0.0):.2f} / {cost.get('pct_unpoured_penalty', 0.0):.2f}%",
         f"    - Prep Wait Penalty     : {cost.get('comp_prep_wait_penalty', 0.0):.2f}",
@@ -2363,6 +2640,7 @@ def print_delay_reason_summary(cost_details, top_k=5):
         "start_delay_block",
         "demand_guard",
         "billing_demand_guard",
+        "future_demand_guard",
         "jit_gate",
         "prep_not_ready",
         "policy_not_start",
@@ -2399,7 +2677,9 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     baseline_spike_mask = cost_details.get("baseline_spike_mask")
     baseline_spike_extra = cost_details.get("baseline_spike_extra_kw_series")
     if_kw = cost_details.get("if_kw")
+    if_kw_plot = cost_details.get("if_kw_plot")
     total_kw = cost_details.get("total_plant_kw")
+    total_kw_plot = cost_details.get("total_plant_kw_plot")
     tou_raw = cost_details.get("tou_raw_price")
     tou_effective = cost_details.get("tou_effective_price")
 
@@ -2473,7 +2753,20 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax2.grid(True, alpha=0.4)
     ax2.legend(loc="upper right")
 
+    use_visual = bool(
+        USE_VISUAL_IF_PROFILE
+        and (if_kw_plot is not None)
+        and (total_kw_plot is not None)
+        and (baseline_kw is not None)
+    )
     if baseline_kw is not None and if_kw is not None and total_kw is not None:
+        if use_visual:
+            if_kw_to_plot = np.asarray(if_kw_plot, dtype=float)
+            total_kw_to_plot = np.asarray(total_kw_plot, dtype=float)
+        else:
+            if_kw_to_plot = np.asarray(if_kw, dtype=float)
+            total_kw_to_plot = np.asarray(total_kw, dtype=float)
+
         # Optional: visualize baseline spike injection without affecting IF series.
         if baseline_spike_extra is not None:
             try:
@@ -2495,19 +2788,45 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
         ax3.plot(
             t_shifted, baseline_kw, label="Baseline kW", color="gray", linewidth=1.5
         )
-        ax3.plot(t_shifted, if_kw, label="IF kW", color="blue", linewidth=1.5)
-        ax3.plot(t_shifted, total_kw, label="Total Plant kW", color="red", linewidth=2)
+        ax3.plot(
+            t_shifted,
+            if_kw_to_plot,
+            label="IF kW (plot)" if use_visual else "IF kW",
+            color="blue",
+            linewidth=1.5,
+        )
+        ax3.plot(
+            t_shifted,
+            total_kw_to_plot,
+            label="Total Plant kW (plot)" if use_visual else "Total Plant kW",
+            color="red",
+            linewidth=2,
+        )
         ax3.axhline(
             CONTRACT_DEMAND_KW, color="black", linestyle="--", label="Contract kW"
         )
-        peak_idx = int(np.argmax(total_kw))
+        peak_idx = int(np.argmax(total_kw_to_plot))
         ax3.scatter(
             [SHIFT_START + peak_idx],
-            [total_kw[peak_idx]],
-            color="magenta",
+            [total_kw_to_plot[peak_idx]],
+            color="magenta" if not use_visual else "orange",
             zorder=5,
-            label=f"Peak {total_kw[peak_idx]:.1f} kW",
+            label=f"Peak {'(plot) ' if use_visual else ''}{total_kw_to_plot[peak_idx]:.1f} kW",
         )
+        if use_visual:
+            try:
+                peak_idx_acc = int(np.argmax(np.asarray(total_kw, dtype=float)))
+                ax3.scatter(
+                    [SHIFT_START + peak_idx_acc],
+                    [float(np.asarray(total_kw, dtype=float)[peak_idx_acc])],
+                    color="magenta",
+                    zorder=5,
+                    label=f"Peak (account) {float(np.asarray(total_kw, dtype=float)[peak_idx_acc]):.1f} kW",
+                    marker="x",
+                )
+            except Exception:
+                pass
+
         md_15_line = float(cost_details.get("md_15_kw", 0.0))
         ax3.axhline(
             md_15_line,
@@ -2516,6 +2835,22 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             linewidth=1.6,
             label=f"MD15 {md_15_line:.1f} kW",
         )
+        md_15_plot = None
+        if use_visual:
+            try:
+                md_15_plot = float(
+                    compute_md_15min_kw(total_kw_to_plot, interval=DEMAND_INTERVAL_MIN)
+                )
+                ax3.axhline(
+                    md_15_plot,
+                    color="darkgreen",
+                    linestyle="--",
+                    linewidth=1.4,
+                    alpha=0.85,
+                    label=f"MD15 (plot) {md_15_plot:.1f} kW",
+                )
+            except Exception:
+                md_15_plot = None
 
         if baseline_spike_mask is not None:
             try:
@@ -2539,10 +2874,13 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
         md_15 = float(cost_details.get("md_15_kw", 0.0))
         dc_month = float(cost_details.get("demand_charge_month", 0.0))
         dc_day = float(cost_details.get("demand_charge_day_equiv", 0.0))
+        md15_txt = f"MD15(acc)={md_15:.1f} kW" + (
+            f" | MD15(plot)={md_15_plot:.1f} kW" if md_15_plot is not None else ""
+        )
         ax3.text(
             0.01,
             0.98,
-            f"MD15={md_15:.1f} kW | DC month={dc_month:.1f} THB | DC day~{dc_day:.1f} THB",
+            f"{md15_txt} | DC month={dc_month:.1f} THB | DC day~{dc_day:.1f} THB",
             transform=ax3.transAxes,
             ha="left",
             va="top",
@@ -2571,10 +2909,11 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             color="purple",
             linewidth=2.0,
         )
-    if if_kw is not None and tou_effective is not None:
+    if (if_kw is not None or if_kw_plot is not None) and tou_effective is not None:
         y0 = float(np.min(tou_effective))
         y1 = y0 + max(0.05, 0.08 * float(np.ptp(tou_effective) + 1e-9))
-        active_mask = np.asarray(if_kw) > 1e-9
+        active_src = if_kw_plot if use_visual else if_kw
+        active_mask = np.asarray(active_src) > 1e-9
         ax4.fill_between(
             t_shifted,
             y0,
@@ -2636,8 +2975,12 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
         dtype=float,
     )
     if_kw = np.asarray(cost_details.get("if_kw", np.zeros_like(mh_a)), dtype=float)
+    if_kw_plot = np.asarray(cost_details.get("if_kw_plot", if_kw), dtype=float)
     total_kw = np.asarray(
         cost_details.get("total_plant_kw", baseline_kw + if_kw), dtype=float
+    )
+    total_kw_plot = np.asarray(
+        cost_details.get("total_plant_kw_plot", baseline_kw + if_kw_plot), dtype=float
     )
 
     n = int(
@@ -2648,7 +2991,9 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
             len(baseline_spike_mask),
             len(baseline_spike_extra_kw_series),
             len(if_kw),
+            len(if_kw_plot),
             len(total_kw),
+            len(total_kw_plot),
         )
     )
     step = max(1, int(step_min))
@@ -2665,7 +3010,9 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
                 "baseline_spike_flag",
                 "baseline_spike_extra_kw",
                 "if_kw",
+                "if_kw_plot",
                 "total_plant_kw",
+                "total_plant_kw_plot",
             ]
         )
         for t in range(0, n, step):
@@ -2680,7 +3027,9 @@ def dump_mh_trace(cost_details, out_csv_path, step_min=1):
                     int(bool(baseline_spike_mask[t])),
                     float(baseline_spike_extra_kw_series[t]),
                     float(if_kw[t]),
+                    float(if_kw_plot[t]),
                     float(total_kw[t]),
+                    float(total_kw_plot[t]),
                 ]
             )
 
