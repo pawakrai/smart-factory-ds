@@ -2,6 +2,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def _moving_average(x, window_size):
+    x = np.asarray(x, dtype=float).ravel()
+    w = int(max(1, window_size))
+    if len(x) < w:
+        return None
+    return np.convolve(x, np.ones(w, dtype=float) / float(w), mode="valid")
+
+
 def plot_training_results(
     episode_rewards, episode_lengths, episode_energies, episode_losses=None
 ):
@@ -17,9 +25,7 @@ def plot_training_results(
     # Plot moving average of rewards
     window_size = 100
     if len(episode_rewards) >= window_size:
-        moving_avg = np.convolve(
-            episode_rewards, np.ones(window_size) / window_size, mode="valid"
-        )
+        moving_avg = _moving_average(episode_rewards, window_size)
         axes[0].plot(
             range(window_size - 1, len(episode_rewards)),
             moving_avg,
@@ -48,6 +54,16 @@ def plot_training_results(
     axes[2].set_xlabel("Episode")
     axes[2].set_ylabel("Energy (kWh)")
     axes[2].grid(True)
+    # Moving average of energy
+    moving_avg_energy = _moving_average(episode_energies, window_size)
+    if moving_avg_energy is not None:
+        axes[2].plot(
+            range(window_size - 1, len(episode_energies)),
+            moving_avg_energy,
+            "k--",
+            linewidth=1.6,
+            label=f"Moving Average ({window_size})",
+        )
     axes[2].legend()
 
     # Plot training loss if available
@@ -57,6 +73,16 @@ def plot_training_results(
         axes[3].set_xlabel("Episode")
         axes[3].set_ylabel("Loss")
         axes[3].grid(True)
+        # Moving average of loss
+        moving_avg_loss = _moving_average(episode_losses, window_size)
+        if moving_avg_loss is not None:
+            axes[3].plot(
+                range(window_size - 1, len(episode_losses)),
+                moving_avg_loss,
+                "k--",
+                linewidth=1.6,
+                label=f"Moving Average ({window_size})",
+            )
         axes[3].legend()
 
     plt.tight_layout()
@@ -103,7 +129,7 @@ def plot_episode_details(temperatures, powers, energies, rewards, targetTemp):
     plt.show()
 
 
-def replay_episode(env, agent):
+def replay_episode(env, agent, debug_q_values: bool = False, debug_steps: int = 5):
     state = env.reset()
     done = False
     total_reward = 0
@@ -123,7 +149,19 @@ def replay_episode(env, agent):
 
     while not done:
         # Get and record action
-        action = agent.select_action(state)
+        if debug_q_values and hasattr(agent, "get_q_values") and len(actions) < int(
+            debug_steps
+        ):
+            try:
+                q = agent.get_q_values(state)
+                top = int(np.argmax(q)) if len(q) else -1
+                print(
+                    f"Q(step={len(actions)}): {np.round(q, 3)} | argmax={top} ({env.action_space.get(top)})"
+                )
+            except Exception:
+                pass
+
+        action = agent.select_action(state, explore=False)
         actions.append(env.action_space[action])
 
         # Take step and record data

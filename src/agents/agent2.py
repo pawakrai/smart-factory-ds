@@ -17,6 +17,7 @@ class DQNAgent:
         epsilon=1.0,
         epsilon_min=0.01,
         epsilon_decay=0.995,
+        epsilon_decay_per_step=True,
         memory_size=10000,
         batch_size=64,
         target_update_freq=100,
@@ -27,6 +28,7 @@ class DQNAgent:
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
+        self.epsilon_decay_per_step = bool(epsilon_decay_per_step)
         self.batch_size = batch_size
         self.gamma = gamma
         self.target_update_freq = target_update_freq
@@ -48,10 +50,30 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.steps = 0
 
-    def select_action(self, state):
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-        if np.random.random() < self.epsilon:
-            return np.random.randint(0, self.action_dim)
+    def end_episode(self):
+        """Optional epsilon decay hook for per-episode schedules."""
+        if not self.epsilon_decay_per_step:
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+    def get_q_values(self, state):
+        """Return Q-values as a 1D numpy array (no side effects)."""
+        with torch.no_grad():
+            s = torch.FloatTensor(state).unsqueeze(0)
+            q = self.model(s).cpu().numpy().reshape(-1)
+        return q
+
+    def select_action(self, state, explore: bool = True):
+        """
+        Select an action.
+
+        - explore=True (default): epsilon-greedy with decay (training behavior)
+        - explore=False: purely greedy (evaluation/replay), does NOT touch epsilon
+        """
+        if explore:
+            if self.epsilon_decay_per_step:
+                self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+            if np.random.random() < self.epsilon:
+                return np.random.randint(0, self.action_dim)
 
         with torch.no_grad():
             state = torch.FloatTensor(state).unsqueeze(0)

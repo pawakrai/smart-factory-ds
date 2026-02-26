@@ -27,10 +27,10 @@ class AluminumMeltingEnvironment:
     def __init__(
         self,
         initial_weight_kg=350,
-        target_temp_c=900,
+        target_temp_c=950,
         scrap_addition_start=60 * 60,
         scrap_addition_end=75 * 60,
-        start_mode="cold",  # "cold" or "hot"
+        start_mode="hot",  # "cold" or "hot"
         idle_time_min=0,  # idle time from previous batch
         wall_temp_c=None,  # preset wall temperature if known
         initial_metal_temp_c=None,  # preset initial metal temp if known
@@ -98,6 +98,11 @@ class AluminumMeltingEnvironment:
         high_power_eff_start_kw=450.0,  # start reducing thermal efficiency above this
         high_power_eff_end_kw=500.0,  # efficiency reaches min at this power
         high_power_eff_min=0.95,  # minimum multiplier for thermal efficiency
+        # ---------- RL reward shaping ----------
+        dense_reward=True,  # if True, emit step rewards (default keeps legacy terminal-only)
+        dense_reward_w_progress=2.0,
+        dense_reward_w_power=0.05,
+        dense_reward_w_time=0.002,
     ):
         self.rng = np.random.default_rng(seed)
 
@@ -231,6 +236,18 @@ class AluminumMeltingEnvironment:
         )
         self.high_power_eff_min = float(np.clip(high_power_eff_min, 0.3, 1.0))
 
+        # reward shaping
+        self.dense_reward = bool(dense_reward)
+        self.dense_reward_w_progress = float(dense_reward_w_progress)
+        self.dense_reward_w_power = float(dense_reward_w_power)
+        self.dense_reward_w_time = float(dense_reward_w_time)
+        self._prev_progress = 0.0
+
+    def _progress(self):
+        denom = max(1e-9, float(self.target_temp - self.ambient_temp))
+        p = (float(self.state["temperature"]) - float(self.ambient_temp)) / denom
+        return float(np.clip(p, 0.0, 1.0))
+
     def reset(self):
         self.current_mass = float(self.initial_mass)
         self.scrap_additions = []
@@ -247,6 +264,9 @@ class AluminumMeltingEnvironment:
             "scrap_added": 0.0,
             "last_scrap_time": 0.0,
         }
+
+        # Initialize progress tracker for dense reward shaping.
+        self._prev_progress = self._progress()
 
         return np.array(
             [
@@ -562,7 +582,19 @@ class AluminumMeltingEnvironment:
         ):
             done = True
 
-        reward = self.calculate_reward() if done else 0.0
+        shaped = 0.0
+        if self.dense_reward:
+            prog = self._progress()
+            dprog = prog - float(self._prev_progress)
+            self._prev_progress = prog
+            power_pen = float(np.clip(metered_power_kw / 500.0, 0.0, 1.5))
+            shaped = (
+                self.dense_reward_w_progress * dprog
+                - self.dense_reward_w_power * power_pen
+                - self.dense_reward_w_time
+            )
+        reward = float(self.calculate_reward()) if done else 0.0
+        reward = float(reward + shaped)
 
         state_array = np.array(
             [
