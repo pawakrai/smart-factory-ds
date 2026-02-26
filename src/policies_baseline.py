@@ -81,6 +81,8 @@ def make_rule_based_controller(
             "chosen_if": int(chosen_if),
             "selected_power": float(fixed_power),
             "force_mode_override": force_mode,
+            "bypass_jit_gate": True,
+            "bypass_demand_guard": True,
             "delay_reason": None,
         }
 

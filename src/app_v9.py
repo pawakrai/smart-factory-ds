@@ -2192,8 +2192,8 @@ def simulate_policy_day(policy_params, controller=None):
     }
 
 
-def evaluate_policy(policy_params):
-    sim = simulate_policy_day(policy_params)
+def evaluate_policy(policy_params, controller=None):
+    sim = simulate_policy_day(policy_params, controller=controller)
     m = sim["metrics"]
 
     comp = _compute_obj1_components(m)

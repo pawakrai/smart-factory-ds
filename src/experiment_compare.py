@@ -173,7 +173,9 @@ def _plot_overlay_total_kw(details_list):
     plt.figure(figsize=(16, 5))
     t = np.arange(sim.SIM_DURATION_MIN) + sim.SHIFT_START
     for d in details_list:
-        y = np.asarray(d.get("total_plant_kw"), dtype=float)
+        y = np.asarray(
+            d.get("total_plant_kw_plot", d.get("total_plant_kw")), dtype=float
+        )
         plt.plot(t, y, linewidth=1.8, label=d.get("policy_name", "policy"))
     plt.axhline(sim.CONTRACT_DEMAND_KW, linestyle="--", color="black", label="Contract kW")
     plt.title("Total Plant kW Overlay Across Policies")
@@ -200,16 +202,15 @@ def main(seed=42):
 
     # Keep baselines comparable and unaffected by service-specific JIT clamp.
     sim.OPT_MODE = "energy"
-    res_cont = _details_from_sim(
-        sim.simulate_policy_day(base_x, controller=continuous_melting_controller),
-        name="continuous_baseline",
-        opt_mode="baseline",
+    _, _, res_cont = sim.evaluate_policy(
+        base_x, controller=continuous_melting_controller
     )
-    res_rule = _details_from_sim(
-        sim.simulate_policy_day(base_x, controller=rb_controller),
-        name="rule_based",
-        opt_mode="baseline",
-    )
+    res_cont["policy_name"] = "continuous_baseline"
+    res_cont["opt_mode"] = "baseline"
+
+    _, _, res_rule = sim.evaluate_policy(base_x, controller=rb_controller)
+    res_rule["policy_name"] = "rule_based"
+    res_rule["opt_mode"] = "baseline"
     res_ga_energy = _run_ga_mode("energy", seed=seed)
     res_ga_service = _run_ga_mode("service", seed=seed)
     sim.OPT_MODE = original_mode
