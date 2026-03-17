@@ -6,7 +6,9 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import timedelta
 
-df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20251110.xlsx", header=4)  # new
+df = pd.read_excel(
+    "../data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx", header=4
+)  # new
 # df = pd.read_excel("../data/raw/MDB6 (INDUCTION)_20251111.xlsx", header=4)  # new
 
 df_cleaned = df.drop(index=[0, 1])
@@ -149,19 +151,28 @@ batch_durations = calculate_durations(batches)
 # Plot energy consumption per batch
 batch_names = [f"Batch {i+1}" for i in range(len(batches))]
 
+# Exclude specific batches from plots/analysis (1-indexed batch numbers)
+EXCLUDED_BATCHES = [21, 94, 95]
+_keep_mask = np.array(
+    [(i + 1) not in set(EXCLUDED_BATCHES) for i in range(len(batches))], dtype=bool
+)
+batch_names_plot = [bn for bn, keep in zip(batch_names, _keep_mask) if keep]
+energy_consumption_plot = np.asarray(energy_consumption, dtype=float)[_keep_mask]
+batch_durations_plot = np.asarray(batch_durations, dtype=float)[_keep_mask]
+
 plt.figure(figsize=(10, 6))
-plt.bar(batch_names, energy_consumption, color="skyblue")
+plt.bar(batch_names_plot, energy_consumption_plot, color="skyblue")
 plt.xlabel("Batch")
 plt.ylabel("Energy Consumption (kWh)")
-plt.title("Energy Consumption per Batch")
+plt.title(f"Energy Consumption per Batch (Excluded: {EXCLUDED_BATCHES})")
 plt.show()
 
 # Plot batch durations
 plt.figure(figsize=(10, 6))
-plt.bar(batch_names, batch_durations, color="salmon")
+plt.bar(batch_names_plot, batch_durations_plot, color="salmon")
 plt.xlabel("Batch")
 plt.ylabel("Duration (hours)")
-plt.title("Duration of Each Batch")
+plt.title(f"Duration of Each Batch (Excluded: {EXCLUDED_BATCHES})")
 plt.show()
 
 
@@ -190,6 +201,8 @@ df_melt_profile = pd.DataFrame(
 
 # Step 3: Iterate over each batch and calculate kWh usage and time duration
 for i, (start_time, end_time) in enumerate(extended_batches):
+    if (i + 1) in set(EXCLUDED_BATCHES):
+        continue
     # Filter data for the current batch
     df_batch = df_cleaned[
         (df_cleaned["Date Time"] >= start_time) & (df_cleaned["Date Time"] <= end_time)
@@ -264,13 +277,15 @@ for i, (start_time, end_time) in enumerate(extended_batches):
     fig.show()
 
 
-# Step 7: Filter out B21 and B94 from analysis
+# Step 7: Filter out batches from analysis
 print(f"\nOriginal number of batches: {len(df_melt_profile)}")
-df_melt_profile_filtered = df_melt_profile[~df_melt_profile["batch"].isin([1])].copy()
+df_melt_profile_filtered = df_melt_profile[
+    ~df_melt_profile["batch"].isin([1] + list(EXCLUDED_BATCHES))
+].copy()
 print(
     f"Number of batches after filtering (excluding small batch): {len(df_melt_profile_filtered)}"
 )
-print(f"Excluded batches: small batch\n")
+print(f"Excluded batches: small batch + {EXCLUDED_BATCHES}\n")
 
 # Step 8: Create scatter plot showing relationship between time duration and energy consumption for filtered batches
 plt.figure(figsize=(12, 8))
