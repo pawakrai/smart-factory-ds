@@ -1,0 +1,84 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme CSS Variables ─────────────────────────────── */
+:root {
+  color-scheme: dark;
+  --bg-base: #09090b;
+  --bg-card: #18181b;
+  --bg-elevated: #27272a;
+  --border-color: #3f3f46;
+  --text-primary: #fafafa;
+  --text-secondary: #d4d4d8;   /* zinc-300 — slightly subdued primary */
+  --text-muted: #a1a1aa;       /* zinc-400 — labels, secondary info */
+  --text-dim: #71717a;         /* zinc-500 — very muted, timestamps */
+  --brand-gray: #a1a1aa;       /* HARP logo on dark bg — readable gray */
+  --scrollbar-track: #18181b;
+  --scrollbar-thumb: #3f3f46;
+  --scrollbar-thumb-hover: #52525b;
+}
+
+html.light {
+  color-scheme: light;
+  --bg-base: #f4f4f5;
+  --bg-card: #ffffff;
+  --bg-elevated: #e4e4e7;
+  --border-color: #d4d4d8;
+  --text-primary: #09090b;
+  --text-secondary: #27272a;   /* zinc-800 — slightly lighter than primary */
+  --text-muted: #52525b;       /* zinc-600 — clearly readable muted text */
+  --text-dim: #71717a;         /* zinc-500 — subtle but accessible */
+  --brand-gray: #3D3D3D;       /* HARP logo on light bg — original brand dark */
+  --scrollbar-track: #e4e4e7;
+  --scrollbar-thumb: #a1a1aa;
+  --scrollbar-thumb-hover: #71717a;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: "Inter", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .font-kpi {
+    font-family: "JetBrains Mono", monospace;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}

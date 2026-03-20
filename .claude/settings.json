@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/src/environment/aluminum_melting_env_*.py)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(/Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/models/__init__.py:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(PYTHONPATH=. .venv/bin/python -c \":*)",
+      "Bash(.venv/bin/pip list:*)",
+      "Bash(python3 -c \"import pydantic_settings; print\\(''ok''\\)\")",
+      "Bash(.venv/bin/python -c \"import pydantic_settings; print\\(pydantic_settings.__version__\\)\")",
+      "Bash(.venv/bin/pip show:*)",
+      "Bash(.venv/bin/python --version)",
+      "Bash(.venv/bin/python -c \"import sys; print\\(sys.path\\)\")",
+      "Bash(.venv/bin/pip --version)",
+      "Bash(.venv/bin/pip3.11 install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(ls /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/.venv/bin/python*)",
+      "Bash(grep -E \"\\\\.py$|^d\")",
+      "Bash(find /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/frontend/src/components -type f -name *.tsx)",
+      "Bash(python -c \"from backend.routers.energy import router; print\\(''OK''\\)\")",
+      "Bash(PYTHONPATH=. python3 -c \"from backend.routers.energy import router; print\\(''OK''\\)\")",
+      "Bash(python3 -m py_compile /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/routers/energy.py)",
+      "Bash(python3 -m py_compile /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/services/ga_service.py /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/routers/plans.py /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/models/batch.py)",
+      "Bash(npx shadcn@latest add alert-dialog --yes)"
+    ]
+  }
+}
