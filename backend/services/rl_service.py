@@ -24,14 +24,34 @@ def _run_rl_model(duration_min: int) -> list[dict[str, Any]]:
 
 
 def _mock_profile(duration_min: int) -> list[dict[str, Any]]:
-    """Ramp-up → hold → ramp-down power profile."""
-    profile = []
-    for t in range(0, duration_min + 1, 5):
-        if t < 20:
-            kw = 100 + t * 15
-        elif t < 90:
-            kw = 400
-        else:
-            kw = max(100, 400 - (t - 90) * 10)
-        profile.append({"time_min": t, "power_kw": kw})
-    return profile
+    """
+    Induction furnace power profile:
+      0–5 min  : 50 kW  (initial heat-up)
+      5–10 min : 150 kW
+      10–15 min: 250 kW
+      15–35 min: 350 kW
+      35 min   : 0 kW   (Si+Fe addition pause)
+      36–40 min: 400 kW (recovery ramp)
+      40–end   : 450 kW (max power hold)
+      end      : 0 kW   (batch complete)
+    """
+    def _kw_at(t: int) -> float:
+        if t < 5:            return 50.0
+        if t < 10:           return 150.0
+        if t < 15:           return 250.0
+        if t < 35:           return 350.0
+        if t < 36:           return 0.0    # Si+Fe addition
+        if t < 40:           return 400.0
+        if t < duration_min: return 450.0
+        return 0.0  # sharp drop at batch end
+
+    # Emit all key transition points + every 5 min after t=40
+    key_points: set[int] = {0, 5, 10, 15, 35, 36, 40, duration_min}
+    for t in range(45, duration_min, 5):
+        key_points.add(t)
+
+    return [
+        {"time_min": t, "power_kw": _kw_at(t)}
+        for t in sorted(key_points)
+        if t <= duration_min
+    ]

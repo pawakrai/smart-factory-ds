@@ -7,6 +7,10 @@ class PlanCreate(BaseModel):
     target_batches: int
     shift_start: datetime
     opt_mode: str = "energy"  # "energy" | "service"
+    if_a_enabled: bool = True
+    if_b_enabled: bool = True
+    mh_a_consumption_rate: Optional[float] = None   # None = use settings default
+    mh_b_consumption_rate: Optional[float] = None
 
 
 class PlanUpdate(BaseModel):
@@ -41,6 +45,8 @@ class ScheduleData(BaseModel):
     baseline_kw: list[float]
     total_plant_kw: list[float]
     tou_effective_price: list[float]
+    tou_raw_price: list[float] = []
+    contract_demand_kw: float = 1600.0
     # Solar window in minutes relative to shift start (None if outside shift)
     solar_window_start_min: Optional[int] = None
     solar_window_end_min: Optional[int] = None

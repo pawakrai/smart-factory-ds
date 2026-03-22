@@ -108,7 +108,7 @@ def _run_app_v9_ga(plan: "Plan", settings_dict: dict[str, str]) -> GaResult:
         policy = app_v9._decode_policy_vector(best_x)
         sim = app_v9.simulate_policy_day(policy)
 
-    return _build_ga_result(plan, sim, settings_dict)
+    return _build_ga_result(plan, sim, settings_dict, app_v9)
 
 
 def _extract_best_x(result, algorithm):
@@ -160,6 +160,18 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
     shift_dt = plan.shift_start
     app_v9.SHIFT_START = shift_dt.hour * 60 + shift_dt.minute
 
+    # Furnace enable flags from plan
+    app_v9.USE_FURNACE_A = bool(getattr(plan, "if_a_enabled", True))
+    app_v9.USE_FURNACE_B = bool(getattr(plan, "if_b_enabled", True))
+
+    # M&H consumption rates: plan-level values take precedence over settings
+    mh_a_rate = getattr(plan, "mh_a_consumption_rate", None)
+    mh_b_rate = getattr(plan, "mh_b_consumption_rate", None)
+    if mh_a_rate is None:
+        mh_a_rate = f("mh_a_consumption_rate_kg_per_min", 2.20)
+    if mh_b_rate is None:
+        mh_b_rate = f("mh_b_consumption_rate_kg_per_min", 2.30)
+
     # IF Furnace
     app_v9.IF_POWER_OPTIONS = [
         f("if_power_option_low_kw", 450),
@@ -188,8 +200,8 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         "B": f("mh_b_initial_level_kg", 230),
     }
     app_v9.MH_CONSUMPTION_RATE_KG_PER_MIN = {
-        "A": f("mh_a_consumption_rate_kg_per_min", 2.20),
-        "B": f("mh_b_consumption_rate_kg_per_min", 2.30),
+        "A": float(mh_a_rate),
+        "B": float(mh_b_rate),
     }
     app_v9.MH_MIN_OPERATIONAL_LEVEL_KG = {
         "A": f("mh_a_min_operational_level_kg", 200),
@@ -228,7 +240,36 @@ def _hhmm_to_min(hhmm: str) -> int:
         return 0
 
 
-def _build_ga_result(plan: "Plan", sim: dict, settings_dict: dict[str, str]) -> GaResult:
+def _build_visual_if_kw(sim: dict, kw_max: float, app_v9) -> "np.ndarray":
+    """Recompute IF kW series using build_visual_if_profile for realistic chart shape."""
+    import numpy as np
+    duration = len(sim.get("if_kw", []))
+    if duration == 0:
+        return np.zeros(1440, dtype=float)
+    result = np.zeros(duration, dtype=float)
+    for b in sim.get("schedule", []):
+        try:
+            start = int(b.get("start_min", 0))
+            end = int(b.get("melt_finish_min", start))
+            start = max(0, min(duration, start))
+            end = max(start, min(duration, end))
+            dur = end - start
+            if dur <= 0:
+                continue
+            p_kw = float(b.get("power_kw", 0.0))
+            target_kwh = float(b.get("energy_kwh_profile", p_kw * (dur / 60.0)))
+            vis = np.asarray(
+                app_v9.build_visual_if_profile(dur, target_kwh=target_kwh, kw_max=kw_max),
+                dtype=float,
+            )
+            if len(vis) == dur:
+                result[start:end] += vis
+        except Exception:
+            continue
+    return np.clip(result, 0.0, None)
+
+
+def _build_ga_result(plan: "Plan", sim: dict, settings_dict: dict[str, str], app_v9=None) -> GaResult:
     """Convert simulate_policy_day() output into GaResult."""
     import numpy as np
 
@@ -290,11 +331,19 @@ def _build_ga_result(plan: "Plan", sim: dict, settings_dict: dict[str, str]) -> 
     # --- ScheduleData (time-series, downsampled every SAMPLE_INTERVAL minutes) ---
     SAMPLE_INTERVAL = 5
     mh_levels = sim.get("mh_levels", {})
-    if_kw_raw = sim.get("if_kw", np.zeros(1440))
     baseline_raw = sim.get("baseline_kw", np.zeros(1440))
-    total_kw_raw = sim.get("total_plant_kw", np.zeros(1440))
     tou_raw = sim.get("tou_effective_price", np.zeros(1440))
 
+    # Use visual IF profile for chart display (realistic ramp shape, not flat accounting kW)
+    if app_v9 is not None:
+        visual_kw_max = float(settings_dict.get("if_visual_kw_max", "450"))
+        if_kw_raw = _build_visual_if_kw(sim, visual_kw_max, app_v9)
+        total_kw_raw = np.asarray(baseline_raw, dtype=float) + if_kw_raw
+    else:
+        if_kw_raw = sim.get("if_kw", np.zeros(1440))
+        total_kw_raw = sim.get("total_plant_kw", np.zeros(1440))
+
+    tou_raw_price_raw = sim.get("tou_raw_price", np.zeros(1440))
     mh_a_raw = mh_levels.get("A", np.zeros(1440)) if mh_levels else np.zeros(1440)
     mh_b_raw = mh_levels.get("B", np.zeros(1440)) if mh_levels else np.zeros(1440)
 
@@ -327,6 +376,8 @@ def _build_ga_result(plan: "Plan", sim: dict, settings_dict: dict[str, str]) -> 
         baseline_kw=_sample(baseline_raw),
         total_plant_kw=_sample(total_kw_raw),
         tou_effective_price=_sample(tou_raw),
+        tou_raw_price=_sample(tou_raw_price_raw),
+        contract_demand_kw=float(settings_dict.get("contract_demand_kw", "1600")),
         solar_window_start_min=solar_start_rel,
         solar_window_end_min=solar_end_rel,
     )

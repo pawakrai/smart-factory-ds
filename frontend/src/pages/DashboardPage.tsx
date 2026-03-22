@@ -9,6 +9,27 @@ import type { FurnaceData } from "@/components/dashboard/FurnaceStatusCard";
 import { useEnergyLogs } from "@/hooks/useEnergyLogs";
 import { ChartSkeleton, KpiCardSkeleton } from "@/components/ui/Skeleton";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import type { EnergyLog } from "@/types";
+
+// Realistic 24-hour mock data (peak 09:00–22:00 ~420 kW, off-peak ~190 kW)
+const today = new Date();
+today.setMinutes(0, 0, 0);
+const MOCK_ENERGY_LOGS: EnergyLog[] = Array.from({ length: 24 }, (_, h) => {
+  const ts = new Date(today);
+  ts.setHours(h);
+  const isPeak = h >= 9 && h < 22;
+  const base = isPeak ? 420 : 190;
+  const noise = () => (Math.random() - 0.4) * 60;
+  const sim_kw = Math.round(base + noise());
+  const actual_kw = Math.round(sim_kw * (1 + (Math.random() - 0.45) * 0.12));
+  return {
+    id: `mock-${h}`,
+    batch_id: null,
+    timestamp: ts.toISOString(),
+    sim_kw,
+    actual_kw,
+  };
+});
 
 const FURNACES: FurnaceData[] = [
   { name: "Induction Furnace A", temp: "720°C", power: "380 kW", status: "running" },
@@ -21,19 +42,15 @@ export default function DashboardPage() {
   const [seeding, setSeeding] = useState(false);
   const { data: logs = [], isLoading, refetch } = useEnergyLogs({ limit: 200 });
 
+  // Use live data when available, fall back to mock data
+  const displayLogs = logs.length > 0 ? logs : MOCK_ENERGY_LOGS;
+
   // Derive KPIs from live energy data
   const avgActual =
-    logs.length > 0
-      ? logs.reduce((s, l) => s + (l.actual_kw ?? 0), 0) / logs.length
-      : null;
+    displayLogs.reduce((s, l) => s + (l.actual_kw ?? 0), 0) / displayLogs.length;
   const avgSim =
-    logs.length > 0
-      ? logs.reduce((s, l) => s + (l.sim_kw ?? 0), 0) / logs.length
-      : null;
-  const efficiencyPct =
-    avgActual && avgSim && avgSim > 0
-      ? Math.min(100, (avgSim / avgActual) * 100)
-      : null;
+    displayLogs.reduce((s, l) => s + (l.sim_kw ?? 0), 0) / displayLogs.length;
+  const efficiencyPct = avgSim > 0 ? Math.min(100, (avgSim / avgActual) * 100) : null;
 
   const kpiCards = [
     {
@@ -45,10 +62,10 @@ export default function DashboardPage() {
     },
     {
       label: "Avg Power (Actual)",
-      value: avgActual != null ? Math.round(avgActual).toString() : "—",
+      value: Math.round(avgActual).toString(),
       unit: "kW",
       icon: Zap,
-      delta: avgSim != null ? `${Math.round(avgSim)} kW simulated` : "No data",
+      delta: `${Math.round(avgSim)} kW simulated`,
     },
     {
       label: "Active Furnaces",
@@ -64,6 +81,7 @@ export default function DashboardPage() {
       icon: TrendingUp,
       delta: efficiencyPct != null && efficiencyPct >= 90 ? "On target" : "Check schedule",
     },
+
   ];
 
   async function handleSeedMock() {
@@ -139,7 +157,7 @@ export default function DashboardPage() {
             <div className="h-56"><ChartSkeleton /></div>
           ) : (
             <ErrorBoundary label="Energy Chart">
-              <EnergyBarChart logs={logs} />
+              <EnergyBarChart logs={displayLogs} />
             </ErrorBoundary>
           )}
         </div>
@@ -211,7 +229,7 @@ export default function DashboardPage() {
             <div className="h-28"><ChartSkeleton /></div>
           ) : (
             <ErrorBoundary label="Trend Chart">
-              <TrendSummaryWidget logs={logs} />
+              <TrendSummaryWidget logs={displayLogs} />
             </ErrorBoundary>
           )}
         </div>

@@ -39,6 +39,7 @@ def _seed_settings():
 
     defaults = [
         # ── Section A: IF Furnace ──────────────────────────────────────────────
+        ("if_visual_kw_max",                 "450",    "Max kW cap for visual IF power profile in charts (kW)"),
         ("if_power_option_low_kw",           "450",    "IF power option low (kW)"),
         ("if_power_option_mid_kw",           "475",    "IF power option mid (kW)"),
         ("if_power_option_high_kw",          "500",    "IF power option high (kW)"),

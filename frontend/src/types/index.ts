@@ -77,6 +77,8 @@ export interface ScheduleData {
   baseline_kw: number[];
   total_plant_kw: number[];
   tou_effective_price: number[];
+  tou_raw_price: number[];
+  contract_demand_kw: number;
   solar_window_start_min?: number;
   solar_window_end_min?: number;
 }

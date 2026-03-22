@@ -72,3 +72,11 @@ export function useDeletePlan() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["plans"] }),
   });
 }
+
+export function useActivatePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => plansApi.activate(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["plans"] }),
+  });
+}

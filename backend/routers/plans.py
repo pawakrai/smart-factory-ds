@@ -49,7 +49,7 @@ def _run_ga_and_update(plan_id: str) -> None:
             if ga_result.schedule_data:
                 plan.schedule_data = ga_result.schedule_data.model_dump_json()
 
-            plan.status = "active"
+            plan.status = "draft"
             logger.info("GA completed for plan %s", plan_id)
         except Exception as exc:
             logger.error("GA background task failed for plan %s: %s", plan_id, exc, exc_info=True)
@@ -72,6 +72,10 @@ def create_plan(data: PlanCreate, background_tasks: BackgroundTasks, session: Se
         opt_mode=data.opt_mode,
         consumption_rate=0.0,
         status="pending",
+        if_a_enabled=data.if_a_enabled,
+        if_b_enabled=data.if_b_enabled,
+        mh_a_consumption_rate=data.mh_a_consumption_rate,
+        mh_b_consumption_rate=data.mh_b_consumption_rate,
     )
     session.add(plan)
     session.commit()
@@ -96,6 +100,26 @@ def update_plan(plan_id: str, data: PlanUpdate, session: Session = Depends(get_s
         raise HTTPException(404, "Plan not found")
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(plan, k, v)
+    session.add(plan)
+    session.commit()
+    session.refresh(plan)
+    return plan
+
+
+@router.post("/{plan_id}/activate", response_model=PlanRead)
+def activate_plan(plan_id: str, session: Session = Depends(get_session)):
+    plan = session.get(Plan, plan_id)
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    if plan.status == "pending":
+        raise HTTPException(400, "Cannot activate a plan while GA is still running")
+    if plan.status == "completed":
+        raise HTTPException(400, "Cannot re-activate a completed plan")
+    for p in session.exec(select(Plan).where(Plan.status == "active")).all():
+        if p.id != plan_id:
+            p.status = "draft"
+            session.add(p)
+    plan.status = "active"
     session.add(plan)
     session.commit()
     session.refresh(plan)
