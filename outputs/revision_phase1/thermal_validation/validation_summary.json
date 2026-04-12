@@ -1,0 +1,39 @@
+{
+  "calibration_split_encoded_in_repo": false,
+  "thermal_params_source": "engineering estimates (hardcoded in env_11 constructor lines 24-82)",
+  "thermal_params": {
+    "overall_efficiency": 0.9326,
+    "eff_to_metal": 0.8726,
+    "eff_to_wall": 0.0269,
+    "k_wall_metal": 800,
+    "hot_k_wall_metal": 1100.0,
+    "wall_heat_capacity_J_per_K": 2500000.0,
+    "wall_area_m2": 3.5,
+    "wall_h_W_m2K": 18.0,
+    "wall_emissivity": 0.55,
+    "metal_area_m2": 1.0,
+    "metal_h_W_m2K": 2.79,
+    "metal_emissivity": 0.005,
+    "hot_metal_emissivity": 0.18,
+    "melting_point_c": 660.0,
+    "latent_band_c": 50.0,
+    "latent_scale": 0.324,
+    "post_melt_scale": 0.803,
+    "energy_consumption_scale": 1.068
+  },
+  "data_files_inspected": 8,
+  "files_with_candidate_columns": [
+    "data/สรุปการหลอมทุก Batch new.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20251007_123642_missing_data.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20251110.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20251111.xlsx",
+    "data/raw/MDB6 (INDUCTION)_May1-15.xlsx",
+    "data/raw/MDB6 (INDUCTION)_May16-31.xlsx"
+  ],
+  "n_batches_available_for_comparison": 0,
+  "validation_metrics": null,
+  "gap_description": "The thermal model in env_11 uses hardcoded engineering estimates for all heat transfer coefficients, efficiencies, and thermal mass parameters. No calibration pipeline or train/validation split exists in the repository. Available factory Excel files contain power setpoint and batch-level summaries but lack per-step temperature traces, making formal thermal calibration not directly reproducible from repository data alone.",
+  "recommendation": "To formally validate the thermal model: (1) Collect per-step temperature logs from the SCADA/PLC system during actual melting operations. (2) Define a train/validation split by date or batch index. (3) Fit heat transfer parameters using least-squares or Bayesian calibration. The current engineering estimates can be treated as prior values for this process.",
+  "minimum_claim_for_paper": "Thermal model parameters are engineering estimates. Formal validation against plant data requires per-step temperature traces not currently available in the repository."
+}

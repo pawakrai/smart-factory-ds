@@ -1,0 +1,23 @@
+{
+  "variant": "safety_low",
+  "n_eval_episodes": 50,
+  "duration_mean": 87.92,
+  "duration_sd": 0.9346657156438337,
+  "energy_mean_kwh": 605.7339999999997,
+  "energy_sd_kwh": 16.595099517628626,
+  "success_rate": 1.0,
+  "safety_violations_mean_per_ep": 1.0,
+  "safety_violations_sd_per_ep": 0.0,
+  "safety_violation_free_pct": 0.0,
+  "coefficients": {
+    "tracking_scale": 0.5,
+    "safety_scale": 1.0,
+    "progress_scale": 2.0,
+    "energy_scale": 0.02,
+    "time_scale": 0.001,
+    "terminal_success_base": 10.0,
+    "terminal_success_eff": 5.0,
+    "terminal_fail": 5.0,
+    "optimal_efficiency": 1.8
+  }
+}

@@ -1,0 +1,13 @@
+[
+  {
+    "file": "data/สรุปการหลอมทุก Batch new.xlsx",
+    "parser": "targeted_summary_parser",
+    "n_sheets_parsed": 15,
+    "n_after_filter": 15,
+    "filters_applied": [
+      "energy_kwh: [50.0, 2000.0] kWh or NaN",
+      "duration_min: [10.0, 300.0] min or NaN",
+      "weight_kg: [50.0, 2000.0] kg or NaN"
+    ]
+  }
+]

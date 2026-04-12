@@ -1,0 +1,5 @@
+checkpoint,attempted_violations_total,attempted_violations_mean_per_ep,attempted_violations_sd_per_ep,attempted_violations_max_per_ep,violation_free_episodes,violation_free_pct,executed_violations_total,executed_violations_mean_per_ep
+ep_500,89,0.89,0.3128897569432403,1,11,0.11,0,0.0
+ep_1000,78,0.78,0.41424630354415964,1,22,0.22,0,0.0
+ep_1500,49,0.49,0.4998999899979995,1,51,0.51,0,0.0
+final,49,0.49,0.4998999899979995,1,51,0.51,0,0.0

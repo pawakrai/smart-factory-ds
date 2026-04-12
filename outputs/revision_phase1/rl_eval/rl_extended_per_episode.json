@@ -1,0 +1,2002 @@
+[
+  {
+    "policy": "dqn_final",
+    "episode": 1,
+    "idle_time_min": 20.274940139438453,
+    "duration_min": 95.0,
+    "total_energy_kwh": 615.8799999999995,
+    "final_temp_c": 956.2230126896299,
+    "success": true,
+    "overshoot_c": 6.223012689629854
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 2,
+    "idle_time_min": 6.42969603714773,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 957.7387936485287,
+    "success": true,
+    "overshoot_c": 7.738793648528713
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 3,
+    "idle_time_min": 9.28356092645075,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 955.8000253398172,
+    "success": true,
+    "overshoot_c": 5.800025339817239
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 4,
+    "idle_time_min": 23.983982903244996,
+    "duration_min": 95.0,
+    "total_energy_kwh": 622.1099999999996,
+    "final_temp_c": 955.3840378355361,
+    "success": true,
+    "overshoot_c": 5.384037835536105
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 5,
+    "idle_time_min": 29.874062965964004,
+    "duration_min": 96.0,
+    "total_energy_kwh": 626.5599999999995,
+    "final_temp_c": 950.9576901891795,
+    "success": true,
+    "overshoot_c": 0.957690189179516
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 6,
+    "idle_time_min": 4.266954458401554,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 954.024679974135,
+    "success": true,
+    "overshoot_c": 4.024679974134983
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 7,
+    "idle_time_min": 2.3617660128599693,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 953.0199446190351,
+    "success": true,
+    "overshoot_c": 3.0199446190350727
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 8,
+    "idle_time_min": 5.424714410905639,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 951.3999128692483,
+    "success": true,
+    "overshoot_c": 1.3999128692482827
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 9,
+    "idle_time_min": 10.789406750680527,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 956.5593786946741,
+    "success": true,
+    "overshoot_c": 6.5593786946741375
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 10,
+    "idle_time_min": 5.08857749121145,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 953.4710233148099,
+    "success": true,
+    "overshoot_c": 3.4710233148099405
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 11,
+    "idle_time_min": 17.662779466191903,
+    "duration_min": 94.0,
+    "total_energy_kwh": 605.1999999999996,
+    "final_temp_c": 955.412119136106,
+    "success": true,
+    "overshoot_c": 5.412119136105957
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 12,
+    "idle_time_min": 18.504225414713343,
+    "duration_min": 94.0,
+    "total_energy_kwh": 608.7599999999995,
+    "final_temp_c": 956.133442102219,
+    "success": true,
+    "overshoot_c": 6.1334421022189645
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 13,
+    "idle_time_min": 3.1615703924512695,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 956.5118360627075,
+    "success": true,
+    "overshoot_c": 6.511836062707516
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 14,
+    "idle_time_min": 16.971931530774917,
+    "duration_min": 93.0,
+    "total_energy_kwh": 597.1899999999996,
+    "final_temp_c": 951.9833267292781,
+    "success": true,
+    "overshoot_c": 1.983326729278133
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 15,
+    "idle_time_min": 0.1388892998515734,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.0399999999996,
+    "final_temp_c": 954.7500781632707,
+    "success": true,
+    "overshoot_c": 4.7500781632707
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 16,
+    "idle_time_min": 13.953575982264669,
+    "duration_min": 92.0,
+    "total_energy_kwh": 596.2999999999996,
+    "final_temp_c": 957.6359666175426,
+    "success": true,
+    "overshoot_c": 7.6359666175426355
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 17,
+    "idle_time_min": 29.26866592885613,
+    "duration_min": 96.0,
+    "total_energy_kwh": 626.5599999999995,
+    "final_temp_c": 951.1095351488743,
+    "success": true,
+    "overshoot_c": 1.109535148874329
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 18,
+    "idle_time_min": 23.98285315354491,
+    "duration_min": 95.0,
+    "total_energy_kwh": 622.1099999999996,
+    "final_temp_c": 954.9986528554238,
+    "success": true,
+    "overshoot_c": 4.998652855423757
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 19,
+    "idle_time_min": 17.904671001123557,
+    "duration_min": 93.0,
+    "total_energy_kwh": 600.7499999999995,
+    "final_temp_c": 954.68129150823,
+    "success": true,
+    "overshoot_c": 4.681291508229947
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 20,
+    "idle_time_min": 9.760489652481676,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 955.4934768050575,
+    "success": true,
+    "overshoot_c": 5.493476805057526
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 21,
+    "idle_time_min": 6.19031734156591,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 957.9132269198127,
+    "success": true,
+    "overshoot_c": 7.9132269198127005
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 22,
+    "idle_time_min": 13.281767012785059,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 951.2079496586974,
+    "success": true,
+    "overshoot_c": 1.20794965869743
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 23,
+    "idle_time_min": 8.341241992260457,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 957.5563817417611,
+    "success": true,
+    "overshoot_c": 7.556381741761129
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 24,
+    "idle_time_min": 26.248735203786715,
+    "duration_min": 96.0,
+    "total_energy_kwh": 622.9999999999995,
+    "final_temp_c": 952.3612870754081,
+    "success": true,
+    "overshoot_c": 2.361287075408086
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 25,
+    "idle_time_min": 6.394720372019032,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 957.5426742727664,
+    "success": true,
+    "overshoot_c": 7.542674272766362
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 26,
+    "idle_time_min": 8.227350127658417,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 957.455126154973,
+    "success": true,
+    "overshoot_c": 7.455126154972959
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 27,
+    "idle_time_min": 24.21545959403575,
+    "duration_min": 95.0,
+    "total_energy_kwh": 622.1099999999996,
+    "final_temp_c": 954.7867623056935,
+    "success": true,
+    "overshoot_c": 4.7867623056935145
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 28,
+    "idle_time_min": 8.050959779249352,
+    "duration_min": 89.0,
+    "total_energy_kwh": 580.2799999999996,
+    "final_temp_c": 956.782041528427,
+    "success": true,
+    "overshoot_c": 6.782041528427044
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 29,
+    "idle_time_min": 8.041886087028878,
+    "duration_min": 89.0,
+    "total_energy_kwh": 580.2799999999996,
+    "final_temp_c": 957.4190482451729,
+    "success": true,
+    "overshoot_c": 7.419048245172917
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 30,
+    "idle_time_min": 2.1264535269047036,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 952.4937448964199,
+    "success": true,
+    "overshoot_c": 2.493744896419912
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 31,
+    "idle_time_min": 14.01626441476023,
+    "duration_min": 91.0,
+    "total_energy_kwh": 588.2899999999996,
+    "final_temp_c": 954.3199899987723,
+    "success": true,
+    "overshoot_c": 4.319989998772257
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 32,
+    "idle_time_min": 7.926163198214056,
+    "duration_min": 89.0,
+    "total_energy_kwh": 582.0599999999996,
+    "final_temp_c": 955.5299697393905,
+    "success": true,
+    "overshoot_c": 5.529969739390481
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 33,
+    "idle_time_min": 26.668261140944768,
+    "duration_min": 96.0,
+    "total_energy_kwh": 622.9999999999995,
+    "final_temp_c": 951.7535180620052,
+    "success": true,
+    "overshoot_c": 1.7535180620052415
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 34,
+    "idle_time_min": 8.589549376278443,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 956.8435758521499,
+    "success": true,
+    "overshoot_c": 6.843575852149911
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 35,
+    "idle_time_min": 23.213007950956126,
+    "duration_min": 95.0,
+    "total_energy_kwh": 622.9999999999995,
+    "final_temp_c": 956.6443069095803,
+    "success": true,
+    "overshoot_c": 6.644306909580337
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 36,
+    "idle_time_min": 14.617345831568562,
+    "duration_min": 92.0,
+    "total_energy_kwh": 596.2999999999996,
+    "final_temp_c": 955.5983648362467,
+    "success": true,
+    "overshoot_c": 5.598364836246674
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 37,
+    "idle_time_min": 14.04057140803826,
+    "duration_min": 92.0,
+    "total_energy_kwh": 596.2999999999996,
+    "final_temp_c": 957.3299613989167,
+    "success": true,
+    "overshoot_c": 7.32996139891668
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 38,
+    "idle_time_min": 28.94790624841434,
+    "duration_min": 97.0,
+    "total_energy_kwh": 627.4499999999995,
+    "final_temp_c": 957.01335421618,
+    "success": true,
+    "overshoot_c": 7.013354216180005
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 39,
+    "idle_time_min": 26.946820029346338,
+    "duration_min": 97.0,
+    "total_energy_kwh": 631.0099999999995,
+    "final_temp_c": 957.0232277005413,
+    "success": true,
+    "overshoot_c": 7.02322770054127
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 40,
+    "idle_time_min": 2.3710295129265546,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 952.5898920521803,
+    "success": true,
+    "overshoot_c": 2.5898920521802893
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 41,
+    "idle_time_min": 7.356128119747973,
+    "duration_min": 89.0,
+    "total_energy_kwh": 582.0599999999996,
+    "final_temp_c": 957.2179413501506,
+    "success": true,
+    "overshoot_c": 7.217941350150568
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 42,
+    "idle_time_min": 5.543612360298871,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 951.2926162179339,
+    "success": true,
+    "overshoot_c": 1.292616217933869
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 43,
+    "idle_time_min": 27.164247121228108,
+    "duration_min": 97.0,
+    "total_energy_kwh": 627.4499999999995,
+    "final_temp_c": 952.0973214462224,
+    "success": true,
+    "overshoot_c": 2.097321446222395
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 44,
+    "idle_time_min": 16.614961266605242,
+    "duration_min": 93.0,
+    "total_energy_kwh": 600.7499999999995,
+    "final_temp_c": 955.2047810904038,
+    "success": true,
+    "overshoot_c": 5.204781090403799
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 45,
+    "idle_time_min": 11.149769424795755,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 954.5026242892525,
+    "success": true,
+    "overshoot_c": 4.502624289252481
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 46,
+    "idle_time_min": 25.016910927868622,
+    "duration_min": 95.0,
+    "total_energy_kwh": 622.1099999999996,
+    "final_temp_c": 957.1712768208334,
+    "success": true,
+    "overshoot_c": 7.171276820833441
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 47,
+    "idle_time_min": 10.463177352828396,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 952.3332505836665,
+    "success": true,
+    "overshoot_c": 2.3332505836665405
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 48,
+    "idle_time_min": 20.449621559529454,
+    "duration_min": 94.0,
+    "total_energy_kwh": 605.1999999999996,
+    "final_temp_c": 950.1213044161161,
+    "success": true,
+    "overshoot_c": 0.12130441611611786
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 49,
+    "idle_time_min": 6.850517092672122,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 956.1212685762958,
+    "success": true,
+    "overshoot_c": 6.121268576295847
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 50,
+    "idle_time_min": 0.7161686738410689,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 952.7410893272161,
+    "success": true,
+    "overshoot_c": 2.7410893272160592
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 51,
+    "idle_time_min": 20.88356950447218,
+    "duration_min": 95.0,
+    "total_energy_kwh": 613.2099999999996,
+    "final_temp_c": 954.30321061728,
+    "success": true,
+    "overshoot_c": 4.303210617280001
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 52,
+    "idle_time_min": 10.105582973047852,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 954.1404818210763,
+    "success": true,
+    "overshoot_c": 4.140481821076264
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 53,
+    "idle_time_min": 10.259777931635975,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 952.7309126458777,
+    "success": true,
+    "overshoot_c": 2.730912645877652
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 54,
+    "idle_time_min": 8.275226040211386,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 957.3938823032753,
+    "success": true,
+    "overshoot_c": 7.393882303275291
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 55,
+    "idle_time_min": 7.540312083525105,
+    "duration_min": 89.0,
+    "total_energy_kwh": 582.0599999999996,
+    "final_temp_c": 955.1334140749553,
+    "success": true,
+    "overshoot_c": 5.13341407495534
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 56,
+    "idle_time_min": 17.103165864742962,
+    "duration_min": 94.0,
+    "total_energy_kwh": 605.1999999999996,
+    "final_temp_c": 955.8996262569905,
+    "success": true,
+    "overshoot_c": 5.899626256990473
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 57,
+    "idle_time_min": 10.01568663109146,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 954.400975001771,
+    "success": true,
+    "overshoot_c": 4.40097500177103
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 58,
+    "idle_time_min": 12.767933761521254,
+    "duration_min": 90.0,
+    "total_energy_kwh": 584.7299999999996,
+    "final_temp_c": 953.8325558790948,
+    "success": true,
+    "overshoot_c": 3.832555879094798
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 59,
+    "idle_time_min": 6.057894178252594,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 957.3670677088787,
+    "success": true,
+    "overshoot_c": 7.3670677088787215
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 60,
+    "idle_time_min": 15.154790128555875,
+    "duration_min": 92.0,
+    "total_energy_kwh": 596.2999999999996,
+    "final_temp_c": 953.8958168433833,
+    "success": true,
+    "overshoot_c": 3.8958168433832725
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 61,
+    "idle_time_min": 17.56161681023535,
+    "duration_min": 93.0,
+    "total_energy_kwh": 597.1899999999996,
+    "final_temp_c": 952.2772206156782,
+    "success": true,
+    "overshoot_c": 2.277220615678175
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 62,
+    "idle_time_min": 12.609004826936385,
+    "duration_min": 90.0,
+    "total_energy_kwh": 584.7299999999996,
+    "final_temp_c": 952.9550141404094,
+    "success": true,
+    "overshoot_c": 2.9550141404093893
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 63,
+    "idle_time_min": 12.103405982852818,
+    "duration_min": 90.0,
+    "total_energy_kwh": 584.7299999999996,
+    "final_temp_c": 953.8501714534124,
+    "success": true,
+    "overshoot_c": 3.850171453412372
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 64,
+    "idle_time_min": 28.318284500812535,
+    "duration_min": 96.0,
+    "total_energy_kwh": 619.4399999999995,
+    "final_temp_c": 950.1536812421892,
+    "success": true,
+    "overshoot_c": 0.1536812421892364
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 65,
+    "idle_time_min": 1.4463713593778327,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 951.5342071955109,
+    "success": true,
+    "overshoot_c": 1.5342071955109304
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 66,
+    "idle_time_min": 9.782213715436503,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 955.146664048883,
+    "success": true,
+    "overshoot_c": 5.1466640488830535
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 67,
+    "idle_time_min": 15.567939917074282,
+    "duration_min": 92.0,
+    "total_energy_kwh": 596.2999999999996,
+    "final_temp_c": 954.6393419635228,
+    "success": true,
+    "overshoot_c": 4.639341963522838
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 68,
+    "idle_time_min": 17.953624742521036,
+    "duration_min": 93.0,
+    "total_energy_kwh": 600.7499999999995,
+    "final_temp_c": 952.9525525639557,
+    "success": true,
+    "overshoot_c": 2.9525525639556918
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 69,
+    "idle_time_min": 1.2688531867191977,
+    "duration_min": 88.0,
+    "total_energy_kwh": 574.9399999999996,
+    "final_temp_c": 958.4459656779753,
+    "success": true,
+    "overshoot_c": 8.445965677975323
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 70,
+    "idle_time_min": 7.237703818935661,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 955.3339441346501,
+    "success": true,
+    "overshoot_c": 5.333944134650096
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 71,
+    "idle_time_min": 1.6276903050157265,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 951.3198869386392,
+    "success": true,
+    "overshoot_c": 1.319886938639229
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 72,
+    "idle_time_min": 0.2319227806403279,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 955.9423124292595,
+    "success": true,
+    "overshoot_c": 5.942312429259459
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 73,
+    "idle_time_min": 9.66293359442919,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 955.9404588942833,
+    "success": true,
+    "overshoot_c": 5.940458894283324
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 74,
+    "idle_time_min": 12.209961315362378,
+    "duration_min": 90.0,
+    "total_energy_kwh": 584.7299999999996,
+    "final_temp_c": 954.0474380136291,
+    "success": true,
+    "overshoot_c": 4.047438013629062
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 75,
+    "idle_time_min": 25.775230585496168,
+    "duration_min": 96.0,
+    "total_energy_kwh": 622.9999999999995,
+    "final_temp_c": 956.314924536748,
+    "success": true,
+    "overshoot_c": 6.314924536747981
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 76,
+    "idle_time_min": 0.404293614806307,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 953.5502088602495,
+    "success": true,
+    "overshoot_c": 3.5502088602495405
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 77,
+    "idle_time_min": 21.487068152059173,
+    "duration_min": 95.0,
+    "total_energy_kwh": 609.6499999999995,
+    "final_temp_c": 952.5200635012678,
+    "success": true,
+    "overshoot_c": 2.5200635012678276
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 78,
+    "idle_time_min": 13.708605028429112,
+    "duration_min": 91.0,
+    "total_energy_kwh": 590.9599999999996,
+    "final_temp_c": 952.1316615799918,
+    "success": true,
+    "overshoot_c": 2.131661579991828
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 79,
+    "idle_time_min": 17.672250382675085,
+    "duration_min": 93.0,
+    "total_energy_kwh": 597.1899999999996,
+    "final_temp_c": 952.3143117503565,
+    "success": true,
+    "overshoot_c": 2.3143117503565236
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 80,
+    "idle_time_min": 4.391832575287053,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 955.0323713013478,
+    "success": true,
+    "overshoot_c": 5.03237130134778
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 81,
+    "idle_time_min": 24.058770077056938,
+    "duration_min": 94.0,
+    "total_energy_kwh": 614.0999999999996,
+    "final_temp_c": 950.6552680897007,
+    "success": true,
+    "overshoot_c": 0.6552680897007122
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 82,
+    "idle_time_min": 11.379087305767225,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 954.8711406221114,
+    "success": true,
+    "overshoot_c": 4.8711406221113975
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 83,
+    "idle_time_min": 12.294470360213744,
+    "duration_min": 90.0,
+    "total_energy_kwh": 584.7299999999996,
+    "final_temp_c": 953.673795331392,
+    "success": true,
+    "overshoot_c": 3.6737953313919434
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 84,
+    "idle_time_min": 16.974633320551106,
+    "duration_min": 93.0,
+    "total_energy_kwh": 597.1899999999996,
+    "final_temp_c": 952.0846972690763,
+    "success": true,
+    "overshoot_c": 2.084697269076287
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 85,
+    "idle_time_min": 7.821481576115587,
+    "duration_min": 89.0,
+    "total_energy_kwh": 582.0599999999996,
+    "final_temp_c": 956.0870245057376,
+    "success": true,
+    "overshoot_c": 6.087024505737645
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 86,
+    "idle_time_min": 13.090753535676594,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 950.9673636320614,
+    "success": true,
+    "overshoot_c": 0.9673636320613923
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 87,
+    "idle_time_min": 4.044565763022941,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 954.8886087065015,
+    "success": true,
+    "overshoot_c": 4.888608706501486
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 88,
+    "idle_time_min": 21.08673474969706,
+    "duration_min": 95.0,
+    "total_energy_kwh": 613.2099999999996,
+    "final_temp_c": 952.1643049617303,
+    "success": true,
+    "overshoot_c": 2.164304961730295
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 89,
+    "idle_time_min": 3.0168309295780285,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 958.0202454492467,
+    "success": true,
+    "overshoot_c": 8.020245449246659
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 90,
+    "idle_time_min": 8.385532461607857,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 957.3189879878956,
+    "success": true,
+    "overshoot_c": 7.318987987895639
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 91,
+    "idle_time_min": 6.555618341415002,
+    "duration_min": 89.0,
+    "total_energy_kwh": 581.1699999999996,
+    "final_temp_c": 957.1379261281146,
+    "success": true,
+    "overshoot_c": 7.1379261281146
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 92,
+    "idle_time_min": 3.9487992206072997,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 954.4299539307176,
+    "success": true,
+    "overshoot_c": 4.429953930717602
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 93,
+    "idle_time_min": 16.472734242084424,
+    "duration_min": 93.0,
+    "total_energy_kwh": 600.7499999999995,
+    "final_temp_c": 956.6046374666461,
+    "success": true,
+    "overshoot_c": 6.604637466646068
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 94,
+    "idle_time_min": 5.908714692631238,
+    "duration_min": 88.0,
+    "total_energy_kwh": 573.1599999999996,
+    "final_temp_c": 951.2793089469675,
+    "success": true,
+    "overshoot_c": 1.2793089469674896
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 95,
+    "idle_time_min": 22.53508672129275,
+    "duration_min": 94.0,
+    "total_energy_kwh": 614.9899999999996,
+    "final_temp_c": 952.9957864011394,
+    "success": true,
+    "overshoot_c": 2.995786401139412
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 96,
+    "idle_time_min": 8.396181310062612,
+    "duration_min": 90.0,
+    "total_energy_kwh": 582.9499999999996,
+    "final_temp_c": 957.0378702010266,
+    "success": true,
+    "overshoot_c": 7.037870201026635
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 97,
+    "idle_time_min": 29.040242910932495,
+    "duration_min": 97.0,
+    "total_energy_kwh": 627.4499999999995,
+    "final_temp_c": 956.6731478625816,
+    "success": true,
+    "overshoot_c": 6.6731478625815726
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 98,
+    "idle_time_min": 16.95338157861049,
+    "duration_min": 93.0,
+    "total_energy_kwh": 602.5299999999995,
+    "final_temp_c": 956.9199831896292,
+    "success": true,
+    "overshoot_c": 6.919983189629193
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 99,
+    "idle_time_min": 2.6392820546906295,
+    "duration_min": 87.0,
+    "total_energy_kwh": 566.9299999999996,
+    "final_temp_c": 951.5380555121586,
+    "success": true,
+    "overshoot_c": 1.5380555121586212
+  },
+  {
+    "policy": "dqn_final",
+    "episode": 100,
+    "idle_time_min": 18.606947892530957,
+    "duration_min": 93.0,
+    "total_energy_kwh": 599.8599999999996,
+    "final_temp_c": 952.7997448544144,
+    "success": true,
+    "overshoot_c": 2.799744854414371
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 1,
+    "idle_time_min": 20.274940139438453,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 951.8918830070221,
+    "success": true,
+    "overshoot_c": 1.891883007022102
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 2,
+    "idle_time_min": 6.42969603714773,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 950.4913499590614,
+    "success": true,
+    "overshoot_c": 0.491349959061381
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 3,
+    "idle_time_min": 9.28356092645075,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 955.3482521967836,
+    "success": true,
+    "overshoot_c": 5.348252196783619
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 4,
+    "idle_time_min": 23.983982903244996,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 957.2857211881612,
+    "success": true,
+    "overshoot_c": 7.285721188161233
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 5,
+    "idle_time_min": 29.874062965964004,
+    "duration_min": 93.0,
+    "total_energy_kwh": 626.5599999999996,
+    "final_temp_c": 952.9604333057167,
+    "success": true,
+    "overshoot_c": 2.9604333057167196
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 6,
+    "idle_time_min": 4.266954458401554,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 955.4331746792224,
+    "success": true,
+    "overshoot_c": 5.433174679222361
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 7,
+    "idle_time_min": 2.3617660128599693,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 951.1636353173083,
+    "success": true,
+    "overshoot_c": 1.1636353173082625
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 8,
+    "idle_time_min": 5.424714410905639,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 952.5897842080952,
+    "success": true,
+    "overshoot_c": 2.5897842080952387
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 9,
+    "idle_time_min": 10.789406750680527,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 952.9228641655562,
+    "success": true,
+    "overshoot_c": 2.922864165556234
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 10,
+    "idle_time_min": 5.08857749121145,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 952.7334338643393,
+    "success": true,
+    "overshoot_c": 2.733433864339304
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 11,
+    "idle_time_min": 17.662779466191903,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 950.0252564396432,
+    "success": true,
+    "overshoot_c": 0.025256439643158046
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 12,
+    "idle_time_min": 18.504225414713343,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 954.3842787903295,
+    "success": true,
+    "overshoot_c": 4.3842787903295175
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 13,
+    "idle_time_min": 3.1615703924512695,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 956.9870929024239,
+    "success": true,
+    "overshoot_c": 6.98709290242391
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 14,
+    "idle_time_min": 16.971931530774917,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 950.4514891692295,
+    "success": true,
+    "overshoot_c": 0.45148916922948956
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 15,
+    "idle_time_min": 0.1388892998515734,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 954.7533122899603,
+    "success": true,
+    "overshoot_c": 4.753312289960263
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 16,
+    "idle_time_min": 13.953575982264669,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 953.1313059276204,
+    "success": true,
+    "overshoot_c": 3.1313059276203603
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 17,
+    "idle_time_min": 29.26866592885613,
+    "duration_min": 93.0,
+    "total_energy_kwh": 626.5599999999996,
+    "final_temp_c": 955.200646090162,
+    "success": true,
+    "overshoot_c": 5.2006460901619675
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 18,
+    "idle_time_min": 23.98285315354491,
+    "duration_min": 91.0,
+    "total_energy_kwh": 610.5399999999996,
+    "final_temp_c": 953.9977499403369,
+    "success": true,
+    "overshoot_c": 3.9977499403369166
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 19,
+    "idle_time_min": 17.904671001123557,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 957.0720662749562,
+    "success": true,
+    "overshoot_c": 7.072066274956228
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 20,
+    "idle_time_min": 9.760489652481676,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 954.7166563256675,
+    "success": true,
+    "overshoot_c": 4.716656325667486
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 21,
+    "idle_time_min": 6.19031734156591,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.3149019570557,
+    "success": true,
+    "overshoot_c": 7.3149019570556675
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 22,
+    "idle_time_min": 13.281767012785059,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 953.407536252502,
+    "success": true,
+    "overshoot_c": 3.407536252502041
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 23,
+    "idle_time_min": 8.341241992260457,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 950.3691754634323,
+    "success": true,
+    "overshoot_c": 0.3691754634322706
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 24,
+    "idle_time_min": 26.248735203786715,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 955.4429622782146,
+    "success": true,
+    "overshoot_c": 5.4429622782146225
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 25,
+    "idle_time_min": 6.394720372019032,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.8916023005181,
+    "success": true,
+    "overshoot_c": 7.891602300518116
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 26,
+    "idle_time_min": 8.227350127658417,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.6690841055145,
+    "success": true,
+    "overshoot_c": 7.669084105514457
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 27,
+    "idle_time_min": 24.21545959403575,
+    "duration_min": 91.0,
+    "total_energy_kwh": 610.5399999999996,
+    "final_temp_c": 952.8606983715098,
+    "success": true,
+    "overshoot_c": 2.860698371509784
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 28,
+    "idle_time_min": 8.050959779249352,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 950.1914941241488,
+    "success": true,
+    "overshoot_c": 0.19149412414878952
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 29,
+    "idle_time_min": 8.041886087028878,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 950.602760335015,
+    "success": true,
+    "overshoot_c": 0.6027603350149775
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 30,
+    "idle_time_min": 2.1264535269047036,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 952.7167815955173,
+    "success": true,
+    "overshoot_c": 2.7167815955173182
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 31,
+    "idle_time_min": 14.01626441476023,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 953.9023744039407,
+    "success": true,
+    "overshoot_c": 3.902374403940712
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 32,
+    "idle_time_min": 7.926163198214056,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 951.0694161945263,
+    "success": true,
+    "overshoot_c": 1.0694161945262977
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 33,
+    "idle_time_min": 26.668261140944768,
+    "duration_min": 91.0,
+    "total_energy_kwh": 610.5399999999996,
+    "final_temp_c": 951.781184803606,
+    "success": true,
+    "overshoot_c": 1.7811848036060383
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 34,
+    "idle_time_min": 8.589549376278443,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 956.6376549048673,
+    "success": true,
+    "overshoot_c": 6.637654904867304
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 35,
+    "idle_time_min": 23.213007950956126,
+    "duration_min": 91.0,
+    "total_energy_kwh": 610.5399999999996,
+    "final_temp_c": 954.1219054350028,
+    "success": true,
+    "overshoot_c": 4.121905435002759
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 36,
+    "idle_time_min": 14.617345831568562,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 952.571990079878,
+    "success": true,
+    "overshoot_c": 2.5719900798779918
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 37,
+    "idle_time_min": 14.04057140803826,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 953.7852229724903,
+    "success": true,
+    "overshoot_c": 3.78522297249026
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 38,
+    "idle_time_min": 28.94790624841434,
+    "duration_min": 93.0,
+    "total_energy_kwh": 626.5599999999996,
+    "final_temp_c": 956.7997139685027,
+    "success": true,
+    "overshoot_c": 6.799713968502715
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 39,
+    "idle_time_min": 26.946820029346338,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 955.4138433286577,
+    "success": true,
+    "overshoot_c": 5.413843328657663
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 40,
+    "idle_time_min": 2.3710295129265546,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 951.1857469584131,
+    "success": true,
+    "overshoot_c": 1.1857469584131195
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 41,
+    "idle_time_min": 7.356128119747973,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 956.156990190115,
+    "success": true,
+    "overshoot_c": 6.156990190115039
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 42,
+    "idle_time_min": 5.543612360298871,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 950.4434577744058,
+    "success": true,
+    "overshoot_c": 0.4434577744058288
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 43,
+    "idle_time_min": 27.164247121228108,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 954.8244520020693,
+    "success": true,
+    "overshoot_c": 4.824452002069279
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 44,
+    "idle_time_min": 16.614961266605242,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 951.4650402204645,
+    "success": true,
+    "overshoot_c": 1.465040220464516
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 45,
+    "idle_time_min": 11.149769424795755,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 950.2153952815698,
+    "success": true,
+    "overshoot_c": 0.21539528156984034
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 46,
+    "idle_time_min": 25.016910927868622,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 955.6275471100342,
+    "success": true,
+    "overshoot_c": 5.627547110034243
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 47,
+    "idle_time_min": 10.463177352828396,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 952.0501623352841,
+    "success": true,
+    "overshoot_c": 2.050162335284085
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 48,
+    "idle_time_min": 20.449621559529454,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 952.4817246764267,
+    "success": true,
+    "overshoot_c": 2.4817246764266656
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 49,
+    "idle_time_min": 6.850517092672122,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.3406278664278,
+    "success": true,
+    "overshoot_c": 7.340627866427781
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 50,
+    "idle_time_min": 0.7161686738410689,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 955.2285579724328,
+    "success": true,
+    "overshoot_c": 5.228557972432782
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 51,
+    "idle_time_min": 20.88356950447218,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 951.9822367003039,
+    "success": true,
+    "overshoot_c": 1.982236700303929
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 52,
+    "idle_time_min": 10.105582973047852,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 952.6472190189429,
+    "success": true,
+    "overshoot_c": 2.6472190189429057
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 53,
+    "idle_time_min": 10.259777931635975,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 952.6748288593471,
+    "success": true,
+    "overshoot_c": 2.6748288593471443
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 54,
+    "idle_time_min": 8.275226040211386,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.4719723489865,
+    "success": true,
+    "overshoot_c": 7.471972348986469
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 55,
+    "idle_time_min": 7.540312083525105,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 955.4216012921664,
+    "success": true,
+    "overshoot_c": 5.421601292166429
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 56,
+    "idle_time_min": 17.103165864742962,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 951.2275346942233,
+    "success": true,
+    "overshoot_c": 1.2275346942233227
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 57,
+    "idle_time_min": 10.01568663109146,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 953.9452081869523,
+    "success": true,
+    "overshoot_c": 3.9452081869523
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 58,
+    "idle_time_min": 12.767933761521254,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 955.065114052672,
+    "success": true,
+    "overshoot_c": 5.0651140526720155
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 59,
+    "idle_time_min": 6.057894178252594,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 956.9561405687382,
+    "success": true,
+    "overshoot_c": 6.956140568738192
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 60,
+    "idle_time_min": 15.154790128555875,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 957.9704777524574,
+    "success": true,
+    "overshoot_c": 7.970477752457441
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 61,
+    "idle_time_min": 17.56161681023535,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 957.5989469175081,
+    "success": true,
+    "overshoot_c": 7.598946917508101
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 62,
+    "idle_time_min": 12.609004826936385,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 955.219502008713,
+    "success": true,
+    "overshoot_c": 5.219502008712993
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 63,
+    "idle_time_min": 12.103405982852818,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 956.2310971719438,
+    "success": true,
+    "overshoot_c": 6.231097171943816
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 64,
+    "idle_time_min": 28.318284500812535,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 953.7209222304081,
+    "success": true,
+    "overshoot_c": 3.720922230408064
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 65,
+    "idle_time_min": 1.4463713593778327,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 953.8203255093152,
+    "success": true,
+    "overshoot_c": 3.8203255093152393
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 66,
+    "idle_time_min": 9.782213715436503,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 953.9664908095505,
+    "success": true,
+    "overshoot_c": 3.9664908095504643
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 67,
+    "idle_time_min": 15.567939917074282,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 957.0318905192024,
+    "success": true,
+    "overshoot_c": 7.03189051920242
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 68,
+    "idle_time_min": 17.953624742521036,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 957.6697205057878,
+    "success": true,
+    "overshoot_c": 7.669720505787836
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 69,
+    "idle_time_min": 1.2688531867191977,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 952.9350221625753,
+    "success": true,
+    "overshoot_c": 2.935022162575251
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 70,
+    "idle_time_min": 7.237703818935661,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 956.8704312313891,
+    "success": true,
+    "overshoot_c": 6.870431231389148
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 71,
+    "idle_time_min": 1.6276903050157265,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 952.4573417998816,
+    "success": true,
+    "overshoot_c": 2.4573417998816467
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 72,
+    "idle_time_min": 0.2319227806403279,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 954.5184884774894,
+    "success": true,
+    "overshoot_c": 4.518488477489427
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 73,
+    "idle_time_min": 9.66293359442919,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 954.5276053890258,
+    "success": true,
+    "overshoot_c": 4.52760538902578
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 74,
+    "idle_time_min": 12.209961315362378,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 957.5678713571396,
+    "success": true,
+    "overshoot_c": 7.567871357139552
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 75,
+    "idle_time_min": 25.775230585496168,
+    "duration_min": 93.0,
+    "total_energy_kwh": 626.5599999999996,
+    "final_temp_c": 956.2050427994872,
+    "success": true,
+    "overshoot_c": 6.20504279948716
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 76,
+    "idle_time_min": 0.404293614806307,
+    "duration_min": 86.0,
+    "total_energy_kwh": 570.4899999999997,
+    "final_temp_c": 955.9303907317523,
+    "success": true,
+    "overshoot_c": 5.930390731752254
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 77,
+    "idle_time_min": 21.487068152059173,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 951.0512368504594,
+    "success": true,
+    "overshoot_c": 1.0512368504594178
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 78,
+    "idle_time_min": 13.708605028429112,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 954.7924975810532,
+    "success": true,
+    "overshoot_c": 4.792497581053226
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 79,
+    "idle_time_min": 17.672250382675085,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 957.4086668144139,
+    "success": true,
+    "overshoot_c": 7.408666814413891
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 80,
+    "idle_time_min": 4.391832575287053,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 954.1222932643515,
+    "success": true,
+    "overshoot_c": 4.12229326435147
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 81,
+    "idle_time_min": 24.058770077056938,
+    "duration_min": 92.0,
+    "total_energy_kwh": 618.5499999999996,
+    "final_temp_c": 955.6393001150923,
+    "success": true,
+    "overshoot_c": 5.639300115092283
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 82,
+    "idle_time_min": 11.379087305767225,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 952.2045221199841,
+    "success": true,
+    "overshoot_c": 2.2045221199840626
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 83,
+    "idle_time_min": 12.294470360213744,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 957.0624444654721,
+    "success": true,
+    "overshoot_c": 7.06244446547214
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 84,
+    "idle_time_min": 16.974633320551106,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 950.2938987963279,
+    "success": true,
+    "overshoot_c": 0.2938987963278805
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 85,
+    "idle_time_min": 7.821481576115587,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 950.9550586765965,
+    "success": true,
+    "overshoot_c": 0.9550586765965363
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 86,
+    "idle_time_min": 13.090753535676594,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 954.0830946881697,
+    "success": true,
+    "overshoot_c": 4.083094688169695
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 87,
+    "idle_time_min": 4.044565763022941,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 954.3939434868356,
+    "success": true,
+    "overshoot_c": 4.39394348683561
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 88,
+    "idle_time_min": 21.08673474969706,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 950.7321350642684,
+    "success": true,
+    "overshoot_c": 0.732135064268391
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 89,
+    "idle_time_min": 3.0168309295780285,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 956.5491080193241,
+    "success": true,
+    "overshoot_c": 6.5491080193240805
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 90,
+    "idle_time_min": 8.385532461607857,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.2268554041041,
+    "success": true,
+    "overshoot_c": 7.226855404104072
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 91,
+    "idle_time_min": 6.555618341415002,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.3995583021028,
+    "success": true,
+    "overshoot_c": 7.399558302102832
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 92,
+    "idle_time_min": 3.9487992206072997,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 956.5042815775993,
+    "success": true,
+    "overshoot_c": 6.504281577599272
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 93,
+    "idle_time_min": 16.472734242084424,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 956.3792676380974,
+    "success": true,
+    "overshoot_c": 6.379267638097417
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 94,
+    "idle_time_min": 5.908714692631238,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 957.1752092793147,
+    "success": true,
+    "overshoot_c": 7.175209279314686
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 95,
+    "idle_time_min": 22.53508672129275,
+    "duration_min": 91.0,
+    "total_energy_kwh": 610.5399999999996,
+    "final_temp_c": 956.0223188914963,
+    "success": true,
+    "overshoot_c": 6.0223188914962975
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 96,
+    "idle_time_min": 8.396181310062612,
+    "duration_min": 88.0,
+    "total_energy_kwh": 586.5099999999996,
+    "final_temp_c": 956.7921351774049,
+    "success": true,
+    "overshoot_c": 6.79213517740493
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 97,
+    "idle_time_min": 29.040242910932495,
+    "duration_min": 93.0,
+    "total_energy_kwh": 626.5599999999996,
+    "final_temp_c": 954.1066265206599,
+    "success": true,
+    "overshoot_c": 4.1066265206599155
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 98,
+    "idle_time_min": 16.95338157861049,
+    "duration_min": 89.0,
+    "total_energy_kwh": 594.5199999999996,
+    "final_temp_c": 950.9970616981375,
+    "success": true,
+    "overshoot_c": 0.997061698137486
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 99,
+    "idle_time_min": 2.6392820546906295,
+    "duration_min": 87.0,
+    "total_energy_kwh": 578.4999999999997,
+    "final_temp_c": 957.8294715014044,
+    "success": true,
+    "overshoot_c": 7.829471501404441
+  },
+  {
+    "policy": "expert_profile",
+    "episode": 100,
+    "idle_time_min": 18.606947892530957,
+    "duration_min": 90.0,
+    "total_energy_kwh": 602.5299999999996,
+    "final_temp_c": 954.5229055010365,
+    "success": true,
+    "overshoot_c": 4.522905501036462
+  }
+]

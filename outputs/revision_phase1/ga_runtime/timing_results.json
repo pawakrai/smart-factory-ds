@@ -1,0 +1,92 @@
+{
+  "config": {
+    "opt_mode": "energy",
+    "n_gen": 100,
+    "pop_size": 80,
+    "n_timing_runs": 5,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "early_stop_patience_gens": 20,
+    "early_stop_delta": 50.0
+  },
+  "summary": {
+    "n_successful_runs": 5,
+    "wall_time_mean_sec": 68.112,
+    "wall_time_sd_sec": 1.641,
+    "wall_time_min_sec": 66.076,
+    "wall_time_max_sec": 70.217,
+    "wall_time_mean_min": 1.14
+  },
+  "per_run_results": [
+    {
+      "run": 1,
+      "seed": 0,
+      "opt_mode": "energy",
+      "n_gen": 100,
+      "pop_size": 80,
+      "wall_time_sec": 67.857,
+      "poured_batches": 12,
+      "missing_batches": 0,
+      "energy_cost": 28339.71,
+      "early_stop_note": "Early stopping configured: patience=20 gens, delta=50.0 THB",
+      "error": null
+    },
+    {
+      "run": 2,
+      "seed": 1,
+      "opt_mode": "energy",
+      "n_gen": 100,
+      "pop_size": 80,
+      "wall_time_sec": 69.755,
+      "poured_batches": 12,
+      "missing_batches": 0,
+      "energy_cost": 28456.69,
+      "early_stop_note": "Early stopping configured: patience=20 gens, delta=50.0 THB",
+      "error": null
+    },
+    {
+      "run": 3,
+      "seed": 2,
+      "opt_mode": "energy",
+      "n_gen": 100,
+      "pop_size": 80,
+      "wall_time_sec": 70.217,
+      "poured_batches": 12,
+      "missing_batches": 0,
+      "energy_cost": 28198.56,
+      "early_stop_note": "Early stopping configured: patience=20 gens, delta=50.0 THB",
+      "error": null
+    },
+    {
+      "run": 4,
+      "seed": 3,
+      "opt_mode": "energy",
+      "n_gen": 100,
+      "pop_size": 80,
+      "wall_time_sec": 66.654,
+      "poured_batches": 12,
+      "missing_batches": 0,
+      "energy_cost": 28251.17,
+      "early_stop_note": "Early stopping configured: patience=20 gens, delta=50.0 THB",
+      "error": null
+    },
+    {
+      "run": 5,
+      "seed": 4,
+      "opt_mode": "energy",
+      "n_gen": 100,
+      "pop_size": 80,
+      "wall_time_sec": 66.076,
+      "poured_batches": 12,
+      "missing_batches": 0,
+      "energy_cost": 28182.39,
+      "early_stop_note": "Early stopping configured: patience=20 gens, delta=50.0 THB",
+      "error": null
+    }
+  ]
+}

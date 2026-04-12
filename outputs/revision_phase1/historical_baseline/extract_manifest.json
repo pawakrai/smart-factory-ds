@@ -1,0 +1,167 @@
+{
+  "script": "extract_historical_baseline.py",
+  "run_timestamp": "2026-04-12T10:15:50.337505",
+  "git_commit": "238e401",
+  "data_sources": [
+    {
+      "file": "data/สรุปการหลอมทุก Batch new.xlsx",
+      "exists": true,
+      "sha256_prefix": "38536716184d3a20"
+    },
+    {
+      "file": "data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx",
+      "exists": true,
+      "sha256_prefix": "28250679f43ef23c"
+    },
+    {
+      "file": "data/raw/MDB6 (INDUCTION)_20251007_123642_missing_data.xlsx",
+      "exists": true,
+      "sha256_prefix": "91ad2c836de148e5"
+    },
+    {
+      "file": "data/raw/MDB6 (INDUCTION)_20251110.xlsx",
+      "exists": true,
+      "sha256_prefix": "5ce2f0606132d100"
+    },
+    {
+      "file": "data/raw/MDB6 (INDUCTION)_20251111.xlsx",
+      "exists": true,
+      "sha256_prefix": "7569601831601284"
+    },
+    {
+      "file": "data/raw/MDB6 (INDUCTION)_May1-15.xlsx",
+      "exists": true,
+      "sha256_prefix": "c3403ae727b47d1c"
+    },
+    {
+      "file": "data/raw/MDB6 (INDUCTION)_May16-31.xlsx",
+      "exists": true,
+      "sha256_prefix": "2c92ccfadeb8e159"
+    },
+    {
+      "file": "data/raw/Induction furnace Feb.2025.xls",
+      "exists": true,
+      "sha256_prefix": "686d04e88640a038"
+    },
+    {
+      "file": "data/raw/seperate_controls/MDB6 (INDUCTION)_20250602.xlsx",
+      "exists": true,
+      "sha256_prefix": "09309b3369119e8f"
+    },
+    {
+      "file": "data/raw/seperate_controls/MDB6 (INDUCTION)_20250606.xlsx",
+      "exists": true,
+      "sha256_prefix": "92cc36a708593981"
+    },
+    {
+      "file": "data/raw/seperate_controls/MDB6 (INDUCTION)_20250625.xlsx",
+      "exists": true,
+      "sha256_prefix": "17da1ca1aeb73ac6"
+    },
+    {
+      "file": "data/raw/seperate_controls/MDB6 (INDUCTION)_20250702.xlsx",
+      "exists": true,
+      "sha256_prefix": "8bd2099fdaf596c2"
+    },
+    {
+      "file": "data/raw/seperate_controls/MDB6 (INDUCTION)_20250730.xlsx",
+      "exists": true,
+      "sha256_prefix": "6285b3965c6e27c7"
+    },
+    {
+      "file": "data/raw/seperate_controls/MDB6 (INDUCTION)_20250926.xlsx",
+      "exists": true,
+      "sha256_prefix": "de85528112f99a0f"
+    }
+  ],
+  "validity_filters": {
+    "energy_kwh": [
+      50.0,
+      2000.0
+    ],
+    "duration_min": [
+      10.0,
+      300.0
+    ],
+    "weight_kg": [
+      50.0,
+      2000.0
+    ]
+  },
+  "keyword_matchers": {
+    "energy": [
+      "kwh",
+      "energy",
+      "พลังงาน",
+      "กิโลวัตต์",
+      "กิโลวัตต์ชั่วโมง"
+    ],
+    "duration": [
+      "duration",
+      "time",
+      "นาที",
+      "min",
+      "เวลา",
+      "ระยะเวลา"
+    ],
+    "weight": [
+      "kg",
+      "weight",
+      "น้ำหนัก",
+      "กก",
+      "กิโลกรัม"
+    ],
+    "power": [
+      "kw",
+      "power",
+      "กำลัง",
+      "พลัง"
+    ]
+  },
+  "output_stats": {
+    "energy_kwh": {
+      "metric": "energy_kwh",
+      "N": 15,
+      "mean": 580.8666666666667,
+      "sd": 22.39217550416939,
+      "median": 579.0,
+      "min": 545.0,
+      "max": 614.0,
+      "p25": 574.0,
+      "p75": 597.5
+    },
+    "duration_min": {
+      "metric": "duration_min",
+      "N": 15,
+      "mean": 92.53333333333333,
+      "sd": 9.575763055508322,
+      "median": 90.0,
+      "min": 85.0,
+      "max": 126.0,
+      "p25": 90.0,
+      "p75": 90.0
+    },
+    "weight_kg": {
+      "metric": "weight_kg",
+      "N": 15,
+      "mean": 382.6666666666667,
+      "sd": 17.943031542980158,
+      "median": 396.0,
+      "min": 354.0,
+      "max": 399.0,
+      "p25": 370.0,
+      "p75": 397.0
+    },
+    "power_kw": {
+      "metric": "power_kw",
+      "N": 15,
+      "mean": 483.3333333333333,
+      "sd": 34.931906550288595,
+      "median": 475.0,
+      "min": 450.0,
+      "max": 550.0,
+      "p25": 450.0,
+      "p75": 500.0
+    }
+  }
+}

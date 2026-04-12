@@ -1,0 +1,63 @@
+{
+  "script": "ga_repeated_runs.py",
+  "run_timestamp": "2026-04-12T10:57:20.307221",
+  "git_commit": "238e401",
+  "reduced_budget": {
+    "n_gen": 50,
+    "pop_size": 50,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+    ],
+    "n_modes": 2,
+    "total_runs": 40
+  },
+  "bridge": {
+    "n_gen": 100,
+    "pop_size": 80,
+    "seeds": [
+      42,
+      0,
+      1
+    ],
+    "n_modes": 2,
+    "total_runs": 6
+  },
+  "opt_modes": [
+    "energy",
+    "service"
+  ],
+  "metric_keys": [
+    "energy_cost",
+    "reheat_kwh",
+    "holding_min",
+    "poured_batches",
+    "missing_batches",
+    "peak_kw",
+    "solar_saving"
+  ],
+  "early_stop_config": {
+    "patience_gens": 20,
+    "delta_obj": 50.0
+  },
+  "filters_applied": [],
+  "note": "Reduced-budget (n_gen=50, pop_size=50) used for repeatability statistics. Bridge runs (n_gen=100, pop_size=80) reproduce original paper config on 3 seeds to validate consistency. Seed 42 = original paper experiment."
+}

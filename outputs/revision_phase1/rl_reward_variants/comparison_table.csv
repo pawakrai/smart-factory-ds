@@ -1,0 +1,4 @@
+variant,safety_coeff,n_eval,duration_mean_min,duration_sd_min,energy_mean_kwh,energy_sd_kwh,success_rate,safety_violations_mean_per_ep,violation_free_pct
+baseline_coeffs,5.0,50,87.9,1.6278820596099703,600.2871999999996,15.98360710728338,1.0,1.0,0.0
+safety_low,1.0,50,87.92,0.9346657156438337,605.7339999999997,16.595099517628626,1.0,1.0,0.0
+safety_high,25.0,50,90.46,2.210972636646596,594.6089999999996,17.477796342788732,1.0,1.0,0.0

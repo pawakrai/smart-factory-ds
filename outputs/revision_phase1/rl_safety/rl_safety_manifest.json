@@ -1,0 +1,434 @@
+{
+  "script": "eval_rl_safety.py",
+  "run_timestamp": "2026-04-12T10:18:12.500941",
+  "git_commit": "238e401",
+  "seed": 2024,
+  "num_episodes": 100,
+  "idle_time_min_range": [
+    0,
+    30
+  ],
+  "checkpoints_evaluated": {
+    "ep_500": "checkpoints_env_11/dqn_episode_500.pth",
+    "ep_1000": "checkpoints_env_11/dqn_episode_1000.pth",
+    "ep_1500": "checkpoints_env_11/dqn_episode_1500.pth",
+    "final": "models/dqn_final_model_env11.pth"
+  },
+  "env_kwargs": {
+    "target_temp_c": 950.0,
+    "start_mode": "hot",
+    "initial_weight_kg": 350,
+    "max_time_min": 120
+  },
+  "alloying_window_min": [
+    30.0,
+    31.0
+  ],
+  "episode_conditions": [
+    {
+      "episode": 1,
+      "idle_time_min": 20.274940139438453
+    },
+    {
+      "episode": 2,
+      "idle_time_min": 6.42969603714773
+    },
+    {
+      "episode": 3,
+      "idle_time_min": 9.28356092645075
+    },
+    {
+      "episode": 4,
+      "idle_time_min": 23.983982903244996
+    },
+    {
+      "episode": 5,
+      "idle_time_min": 29.874062965964004
+    },
+    {
+      "episode": 6,
+      "idle_time_min": 4.266954458401554
+    },
+    {
+      "episode": 7,
+      "idle_time_min": 2.3617660128599693
+    },
+    {
+      "episode": 8,
+      "idle_time_min": 5.424714410905639
+    },
+    {
+      "episode": 9,
+      "idle_time_min": 10.789406750680527
+    },
+    {
+      "episode": 10,
+      "idle_time_min": 5.08857749121145
+    },
+    {
+      "episode": 11,
+      "idle_time_min": 17.662779466191903
+    },
+    {
+      "episode": 12,
+      "idle_time_min": 18.504225414713343
+    },
+    {
+      "episode": 13,
+      "idle_time_min": 3.1615703924512695
+    },
+    {
+      "episode": 14,
+      "idle_time_min": 16.971931530774917
+    },
+    {
+      "episode": 15,
+      "idle_time_min": 0.1388892998515734
+    },
+    {
+      "episode": 16,
+      "idle_time_min": 13.953575982264669
+    },
+    {
+      "episode": 17,
+      "idle_time_min": 29.26866592885613
+    },
+    {
+      "episode": 18,
+      "idle_time_min": 23.98285315354491
+    },
+    {
+      "episode": 19,
+      "idle_time_min": 17.904671001123557
+    },
+    {
+      "episode": 20,
+      "idle_time_min": 9.760489652481676
+    },
+    {
+      "episode": 21,
+      "idle_time_min": 6.19031734156591
+    },
+    {
+      "episode": 22,
+      "idle_time_min": 13.281767012785059
+    },
+    {
+      "episode": 23,
+      "idle_time_min": 8.341241992260457
+    },
+    {
+      "episode": 24,
+      "idle_time_min": 26.248735203786715
+    },
+    {
+      "episode": 25,
+      "idle_time_min": 6.394720372019032
+    },
+    {
+      "episode": 26,
+      "idle_time_min": 8.227350127658417
+    },
+    {
+      "episode": 27,
+      "idle_time_min": 24.21545959403575
+    },
+    {
+      "episode": 28,
+      "idle_time_min": 8.050959779249352
+    },
+    {
+      "episode": 29,
+      "idle_time_min": 8.041886087028878
+    },
+    {
+      "episode": 30,
+      "idle_time_min": 2.1264535269047036
+    },
+    {
+      "episode": 31,
+      "idle_time_min": 14.01626441476023
+    },
+    {
+      "episode": 32,
+      "idle_time_min": 7.926163198214056
+    },
+    {
+      "episode": 33,
+      "idle_time_min": 26.668261140944768
+    },
+    {
+      "episode": 34,
+      "idle_time_min": 8.589549376278443
+    },
+    {
+      "episode": 35,
+      "idle_time_min": 23.213007950956126
+    },
+    {
+      "episode": 36,
+      "idle_time_min": 14.617345831568562
+    },
+    {
+      "episode": 37,
+      "idle_time_min": 14.04057140803826
+    },
+    {
+      "episode": 38,
+      "idle_time_min": 28.94790624841434
+    },
+    {
+      "episode": 39,
+      "idle_time_min": 26.946820029346338
+    },
+    {
+      "episode": 40,
+      "idle_time_min": 2.3710295129265546
+    },
+    {
+      "episode": 41,
+      "idle_time_min": 7.356128119747973
+    },
+    {
+      "episode": 42,
+      "idle_time_min": 5.543612360298871
+    },
+    {
+      "episode": 43,
+      "idle_time_min": 27.164247121228108
+    },
+    {
+      "episode": 44,
+      "idle_time_min": 16.614961266605242
+    },
+    {
+      "episode": 45,
+      "idle_time_min": 11.149769424795755
+    },
+    {
+      "episode": 46,
+      "idle_time_min": 25.016910927868622
+    },
+    {
+      "episode": 47,
+      "idle_time_min": 10.463177352828396
+    },
+    {
+      "episode": 48,
+      "idle_time_min": 20.449621559529454
+    },
+    {
+      "episode": 49,
+      "idle_time_min": 6.850517092672122
+    },
+    {
+      "episode": 50,
+      "idle_time_min": 0.7161686738410689
+    },
+    {
+      "episode": 51,
+      "idle_time_min": 20.88356950447218
+    },
+    {
+      "episode": 52,
+      "idle_time_min": 10.105582973047852
+    },
+    {
+      "episode": 53,
+      "idle_time_min": 10.259777931635975
+    },
+    {
+      "episode": 54,
+      "idle_time_min": 8.275226040211386
+    },
+    {
+      "episode": 55,
+      "idle_time_min": 7.540312083525105
+    },
+    {
+      "episode": 56,
+      "idle_time_min": 17.103165864742962
+    },
+    {
+      "episode": 57,
+      "idle_time_min": 10.01568663109146
+    },
+    {
+      "episode": 58,
+      "idle_time_min": 12.767933761521254
+    },
+    {
+      "episode": 59,
+      "idle_time_min": 6.057894178252594
+    },
+    {
+      "episode": 60,
+      "idle_time_min": 15.154790128555875
+    },
+    {
+      "episode": 61,
+      "idle_time_min": 17.56161681023535
+    },
+    {
+      "episode": 62,
+      "idle_time_min": 12.609004826936385
+    },
+    {
+      "episode": 63,
+      "idle_time_min": 12.103405982852818
+    },
+    {
+      "episode": 64,
+      "idle_time_min": 28.318284500812535
+    },
+    {
+      "episode": 65,
+      "idle_time_min": 1.4463713593778327
+    },
+    {
+      "episode": 66,
+      "idle_time_min": 9.782213715436503
+    },
+    {
+      "episode": 67,
+      "idle_time_min": 15.567939917074282
+    },
+    {
+      "episode": 68,
+      "idle_time_min": 17.953624742521036
+    },
+    {
+      "episode": 69,
+      "idle_time_min": 1.2688531867191977
+    },
+    {
+      "episode": 70,
+      "idle_time_min": 7.237703818935661
+    },
+    {
+      "episode": 71,
+      "idle_time_min": 1.6276903050157265
+    },
+    {
+      "episode": 72,
+      "idle_time_min": 0.2319227806403279
+    },
+    {
+      "episode": 73,
+      "idle_time_min": 9.66293359442919
+    },
+    {
+      "episode": 74,
+      "idle_time_min": 12.209961315362378
+    },
+    {
+      "episode": 75,
+      "idle_time_min": 25.775230585496168
+    },
+    {
+      "episode": 76,
+      "idle_time_min": 0.404293614806307
+    },
+    {
+      "episode": 77,
+      "idle_time_min": 21.487068152059173
+    },
+    {
+      "episode": 78,
+      "idle_time_min": 13.708605028429112
+    },
+    {
+      "episode": 79,
+      "idle_time_min": 17.672250382675085
+    },
+    {
+      "episode": 80,
+      "idle_time_min": 4.391832575287053
+    },
+    {
+      "episode": 81,
+      "idle_time_min": 24.058770077056938
+    },
+    {
+      "episode": 82,
+      "idle_time_min": 11.379087305767225
+    },
+    {
+      "episode": 83,
+      "idle_time_min": 12.294470360213744
+    },
+    {
+      "episode": 84,
+      "idle_time_min": 16.974633320551106
+    },
+    {
+      "episode": 85,
+      "idle_time_min": 7.821481576115587
+    },
+    {
+      "episode": 86,
+      "idle_time_min": 13.090753535676594
+    },
+    {
+      "episode": 87,
+      "idle_time_min": 4.044565763022941
+    },
+    {
+      "episode": 88,
+      "idle_time_min": 21.08673474969706
+    },
+    {
+      "episode": 89,
+      "idle_time_min": 3.0168309295780285
+    },
+    {
+      "episode": 90,
+      "idle_time_min": 8.385532461607857
+    },
+    {
+      "episode": 91,
+      "idle_time_min": 6.555618341415002
+    },
+    {
+      "episode": 92,
+      "idle_time_min": 3.9487992206072997
+    },
+    {
+      "episode": 93,
+      "idle_time_min": 16.472734242084424
+    },
+    {
+      "episode": 94,
+      "idle_time_min": 5.908714692631238
+    },
+    {
+      "episode": 95,
+      "idle_time_min": 22.53508672129275
+    },
+    {
+      "episode": 96,
+      "idle_time_min": 8.396181310062612
+    },
+    {
+      "episode": 97,
+      "idle_time_min": 29.040242910932495
+    },
+    {
+      "episode": 98,
+      "idle_time_min": 16.95338157861049
+    },
+    {
+      "episode": 99,
+      "idle_time_min": 2.6392820546906295
+    },
+    {
+      "episode": 100,
+      "idle_time_min": 18.606947892530957
+    }
+  ],
+  "violation_definition": {
+    "attempted": "agent chose action > 0 when 30 <= t_min < 31 (pre-override)",
+    "executed": "next_state[3] > 0 when 30 <= t_min < 31 (post-override, expected 0)"
+  },
+  "filters_applied": []
+}

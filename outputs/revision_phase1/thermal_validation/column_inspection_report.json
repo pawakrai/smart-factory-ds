@@ -1,0 +1,501 @@
+[
+  {
+    "file": "data/สรุปการหลอมทุก Batch new.xlsx",
+    "sheets": {
+      "450_1": {
+        "columns": [
+          "Date",
+          "2025-10-02 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 572.0 kWh\nEnergy consumption per batch: 1144.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 572.0 kWh\nEnergy consumption per batch: 1144.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 572.0 kWh\nEnergy consumption per batch: 1144.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "450_2": {
+        "columns": [
+          "Date",
+          "2025-10-01 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 602.0 kWh\nEnergy consumption per batch: 1204.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 602.0 kWh\nEnergy consumption per batch: 1204.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 602.0 kWh\nEnergy consumption per batch: 1204.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "450_3": {
+        "columns": [
+          "Date",
+          "2025-10-01 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 604.0 kWh\nEnergy consumption per batch: 1208.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 604.0 kWh\nEnergy consumption per batch: 1208.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 604.0 kWh\nEnergy consumption per batch: 1208.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "450_4": {
+        "columns": [
+          "Date",
+          "2025-10-01 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 593.0 kWh\nEnergy consumption per batch: 1186.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 593.0 kWh\nEnergy consumption per batch: 1186.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 593.0 kWh\nEnergy consumption per batch: 1186.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "Summary": {
+        "columns": [
+          "Unnamed: 0",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": null,
+          "power": null,
+          "weight": null
+        }
+      },
+      "450_5": {
+        "columns": [
+          "Date",
+          "2025-11-11 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 614.0 kWh\nEnergy consumption per batch: 1228.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 614.0 kWh\nEnergy consumption per batch: 1228.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 614.0 kWh\nEnergy consumption per batch: 1228.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "450_6": {
+        "columns": [
+          "Date",
+          "2025-11-11 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "475_1": {
+        "columns": [
+          "Date",
+          "2025-11-10 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 613.0 kWh\nEnergy consumption per batch: 1226.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 613.0 kWh\nEnergy consumption per batch: 1226.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 613.0 kWh\nEnergy consumption per batch: 1226.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "475_2": {
+        "columns": [
+          "Date",
+          "2025-11-10 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 579.0 kWh\nEnergy consumption per batch: 1158.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 579.0 kWh\nEnergy consumption per batch: 1158.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 579.0 kWh\nEnergy consumption per batch: 1158.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "500_1": {
+        "columns": [
+          "Date",
+          "2025-10-06 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 545.0 kWh\nEnergy consumption per batch: 1090.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 545.0 kWh\nEnergy consumption per batch: 1090.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 545.0 kWh\nEnergy consumption per batch: 1090.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "500_2": {
+        "columns": [
+          "Date",
+          "2025-11-10 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 584.0 kWh\nEnergy consumption per batch: 1168.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 584.0 kWh\nEnergy consumption per batch: 1168.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 584.0 kWh\nEnergy consumption per batch: 1168.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "500_3": {
+        "columns": [
+          "Date",
+          "2025-11-10 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 585.0 kWh\nEnergy consumption per batch: 1170.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 585.0 kWh\nEnergy consumption per batch: 1170.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 585.0 kWh\nEnergy consumption per batch: 1170.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "500_4": {
+        "columns": [
+          "Date",
+          "2025-11-11 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "500_5": {
+        "columns": [
+          "Date",
+          "2025-11-11 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 576.0 kWh\nEnergy consumption per batch: 1152.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "550_1": {
+        "columns": [
+          "Date",
+          "2025-10-06 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 547.0 kWh\nEnergy consumption per batch: 1094.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 547.0 kWh\nEnergy consumption per batch: 1094.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 547.0 kWh\nEnergy consumption per batch: 1094.0 kWh/ton",
+          "weight": null
+        }
+      },
+      "550_2": {
+        "columns": [
+          "Date",
+          "2025-10-06 00:00:00",
+          "Unnamed: 2",
+          "Energy consumption for Batch 1: 547.0 kWh\nEnergy consumption per batch: 1094.0 kWh/ton"
+        ],
+        "n_preview_rows": 7,
+        "candidate_fields": {
+          "energy": "Energy consumption for Batch 1: 547.0 kWh\nEnergy consumption per batch: 1094.0 kWh/ton",
+          "duration": null,
+          "power": "Energy consumption for Batch 1: 547.0 kWh\nEnergy consumption per batch: 1094.0 kWh/ton",
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx",
+    "sheets": {
+      "MDB6 (INDUCTION)": {
+        "columns": [
+          "Data Realtime",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6",
+          "Unnamed: 7",
+          "Unnamed: 8",
+          "Unnamed: 9",
+          "Unnamed: 10",
+          "Unnamed: 11",
+          "Unnamed: 12",
+          "Unnamed: 13",
+          "Unnamed: 14",
+          "Unnamed: 15",
+          "Unnamed: 16",
+          "Unnamed: 17",
+          "Unnamed: 18",
+          "Unnamed: 19",
+          "Unnamed: 20"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": "Data Realtime",
+          "power": null,
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/MDB6 (INDUCTION)_20251007_123642_missing_data.xlsx",
+    "sheets": {
+      "MDB6 (INDUCTION)": {
+        "columns": [
+          "Data Realtime",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6",
+          "Unnamed: 7",
+          "Unnamed: 8",
+          "Unnamed: 9",
+          "Unnamed: 10",
+          "Unnamed: 11",
+          "Unnamed: 12",
+          "Unnamed: 13",
+          "Unnamed: 14",
+          "Unnamed: 15",
+          "Unnamed: 16",
+          "Unnamed: 17",
+          "Unnamed: 18",
+          "Unnamed: 19",
+          "Unnamed: 20"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": "Data Realtime",
+          "power": null,
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/MDB6 (INDUCTION)_20251110.xlsx",
+    "sheets": {
+      "MDB6 (INDUCTION)": {
+        "columns": [
+          "Data Realtime",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6",
+          "Unnamed: 7",
+          "Unnamed: 8",
+          "Unnamed: 9",
+          "Unnamed: 10",
+          "Unnamed: 11",
+          "Unnamed: 12",
+          "Unnamed: 13",
+          "Unnamed: 14",
+          "Unnamed: 15",
+          "Unnamed: 16",
+          "Unnamed: 17",
+          "Unnamed: 18",
+          "Unnamed: 19",
+          "Unnamed: 20"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": "Data Realtime",
+          "power": null,
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/MDB6 (INDUCTION)_20251111.xlsx",
+    "sheets": {
+      "MDB6 (INDUCTION)": {
+        "columns": [
+          "Data Realtime",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6",
+          "Unnamed: 7",
+          "Unnamed: 8",
+          "Unnamed: 9",
+          "Unnamed: 10",
+          "Unnamed: 11",
+          "Unnamed: 12",
+          "Unnamed: 13",
+          "Unnamed: 14",
+          "Unnamed: 15",
+          "Unnamed: 16",
+          "Unnamed: 17",
+          "Unnamed: 18",
+          "Unnamed: 19",
+          "Unnamed: 20"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": "Data Realtime",
+          "power": null,
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/MDB6 (INDUCTION)_May1-15.xlsx",
+    "sheets": {
+      "MDB6 (INDUCTION)": {
+        "columns": [
+          "Data Realtime",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6",
+          "Unnamed: 7",
+          "Unnamed: 8",
+          "Unnamed: 9",
+          "Unnamed: 10",
+          "Unnamed: 11",
+          "Unnamed: 12",
+          "Unnamed: 13",
+          "Unnamed: 14",
+          "Unnamed: 15",
+          "Unnamed: 16",
+          "Unnamed: 17",
+          "Unnamed: 18",
+          "Unnamed: 19",
+          "Unnamed: 20"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": "Data Realtime",
+          "power": null,
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/MDB6 (INDUCTION)_May16-31.xlsx",
+    "sheets": {
+      "MDB6 (INDUCTION)": {
+        "columns": [
+          "Data Realtime",
+          "Unnamed: 1",
+          "Unnamed: 2",
+          "Unnamed: 3",
+          "Unnamed: 4",
+          "Unnamed: 5",
+          "Unnamed: 6",
+          "Unnamed: 7",
+          "Unnamed: 8",
+          "Unnamed: 9",
+          "Unnamed: 10",
+          "Unnamed: 11",
+          "Unnamed: 12",
+          "Unnamed: 13",
+          "Unnamed: 14",
+          "Unnamed: 15",
+          "Unnamed: 16",
+          "Unnamed: 17",
+          "Unnamed: 18",
+          "Unnamed: 19",
+          "Unnamed: 20"
+        ],
+        "n_preview_rows": 8,
+        "candidate_fields": {
+          "energy": null,
+          "duration": "Data Realtime",
+          "power": null,
+          "weight": null
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "file": "data/raw/Induction furnace Feb.2025.xls",
+    "sheets": {},
+    "error": "Missing optional dependency 'xlrd'. Install xlrd >= 2.0.1 for xls Excel support Use pip or conda to install xlrd."
+  }
+]

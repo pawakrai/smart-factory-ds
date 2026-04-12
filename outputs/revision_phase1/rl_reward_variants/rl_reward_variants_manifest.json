@@ -1,0 +1,77 @@
+{
+  "script": "train_rl_reward_variants.py",
+  "run_timestamp": "2026-04-12T10:21:50.996324",
+  "git_commit": "238e401",
+  "seed": 42,
+  "train_episodes": 500,
+  "eval_episodes": 50,
+  "parity_test": {
+    "result": "PASSED"
+  },
+  "training_status": "COMPLETED",
+  "env_kwargs": {
+    "target_temp_c": 950.0,
+    "start_mode": "hot",
+    "initial_weight_kg": 350,
+    "max_time_min": 120
+  },
+  "agent_kwargs": {
+    "state_dim": 8,
+    "action_dim": 10,
+    "learning_rate": 0.0005,
+    "gamma": 0.95,
+    "epsilon": 1.0,
+    "epsilon_min": 0.01,
+    "epsilon_decay": 0.995,
+    "memory_size": 10000,
+    "batch_size": 64,
+    "target_update_freq": 100,
+    "hidden_size": 512
+  },
+  "variants": {
+    "baseline_coeffs": {
+      "coefficients": {
+        "tracking_scale": 0.5,
+        "safety_scale": 5.0,
+        "progress_scale": 2.0,
+        "energy_scale": 0.02,
+        "time_scale": 0.001,
+        "terminal_success_base": 10.0,
+        "terminal_success_eff": 5.0,
+        "terminal_fail": 5.0,
+        "optimal_efficiency": 1.8
+      }
+    },
+    "safety_low": {
+      "coefficients": {
+        "tracking_scale": 0.5,
+        "safety_scale": 1.0,
+        "progress_scale": 2.0,
+        "energy_scale": 0.02,
+        "time_scale": 0.001,
+        "terminal_success_base": 10.0,
+        "terminal_success_eff": 5.0,
+        "terminal_fail": 5.0,
+        "optimal_efficiency": 1.8
+      }
+    },
+    "safety_high": {
+      "coefficients": {
+        "tracking_scale": 0.5,
+        "safety_scale": 25.0,
+        "progress_scale": 2.0,
+        "energy_scale": 0.02,
+        "time_scale": 0.001,
+        "terminal_success_base": 10.0,
+        "terminal_success_eff": 5.0,
+        "terminal_fail": 5.0,
+        "optimal_efficiency": 1.8
+      }
+    }
+  },
+  "filters_applied": [],
+  "config_values": {
+    "target_temp_c": 950.0,
+    "max_power_kw": 450.0
+  }
+}

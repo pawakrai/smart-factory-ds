@@ -1,0 +1,47 @@
+{
+  "script": "thermal_model_validation.py",
+  "run_timestamp": "2026-04-12T10:18:22.733460",
+  "git_commit": "238e401",
+  "data_files_checked": [
+    "data/\u0e2a\u0e23\u0e38\u0e1b\u0e01\u0e32\u0e23\u0e2b\u0e25\u0e2d\u0e21\u0e17\u0e38\u0e01 Batch new.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20251007_123642_missing_data.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20251110.xlsx",
+    "data/raw/MDB6 (INDUCTION)_20251111.xlsx",
+    "data/raw/MDB6 (INDUCTION)_May1-15.xlsx",
+    "data/raw/MDB6 (INDUCTION)_May16-31.xlsx",
+    "data/raw/Induction furnace Feb.2025.xls"
+  ],
+  "env_kwargs": {
+    "target_temp_c": 950.0,
+    "start_mode": "hot",
+    "initial_weight_kg": 350,
+    "max_time_min": 120
+  },
+  "thermal_params_documented": {
+    "overall_efficiency": 0.9326,
+    "eff_to_metal": 0.8726,
+    "eff_to_wall": 0.0269,
+    "k_wall_metal": 800,
+    "hot_k_wall_metal": 1100.0,
+    "wall_heat_capacity_J_per_K": 2500000.0,
+    "wall_area_m2": 3.5,
+    "wall_h_W_m2K": 18.0,
+    "wall_emissivity": 0.55,
+    "metal_area_m2": 1.0,
+    "metal_h_W_m2K": 2.79,
+    "metal_emissivity": 0.005,
+    "hot_metal_emissivity": 0.18,
+    "melting_point_c": 660.0,
+    "latent_band_c": 50.0,
+    "latent_scale": 0.324,
+    "post_melt_scale": 0.803,
+    "energy_consumption_scale": 1.068
+  },
+  "calibration_split_encoded_in_repo": false,
+  "n_batches_compared": 0,
+  "filters_applied": [
+    "power_kw: excluded if <= 0 or > 1000 or NaN",
+    "weight_kg: defaulted to 350 kg if missing or out of [50, 2000]"
+  ]
+}

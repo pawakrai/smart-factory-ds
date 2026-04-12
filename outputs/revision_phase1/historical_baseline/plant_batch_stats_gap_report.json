@@ -1,0 +1,5 @@
+{
+  "data_available": false,
+  "reason": "No usable batch-level columns found in any data file.",
+  "recommendation": "Reviewer item A cannot be computed from available repository data. The column inspection report lists all available fields per file. To supply historical baseline statistics, provide raw batch records with at least one of: energy_kwh, duration_min, or weight_kg columns."
+}

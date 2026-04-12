@@ -1,0 +1,39 @@
+{
+  "script": "ga_runtime.py",
+  "run_timestamp": "2026-04-12T10:23:55.169354",
+  "git_commit": "238e401",
+  "timing_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "opt_mode": "energy",
+  "n_gen": 100,
+  "pop_size": 80,
+  "early_stop_config": {
+    "patience_gens": 20,
+    "delta_obj": 50.0
+  },
+  "machine_info": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "system": "Darwin",
+    "node": "Kriwitchs-MacBook-Pro.local",
+    "processor": "arm",
+    "machine": "arm64",
+    "python_version": "3.11.11",
+    "cpu_count_logical": 12,
+    "cpu_count_physical": 12,
+    "memory_total_gb": 34.36
+  },
+  "summary": {
+    "n_successful_runs": 5,
+    "wall_time_mean_sec": 68.112,
+    "wall_time_sd_sec": 1.641,
+    "wall_time_min_sec": 66.076,
+    "wall_time_max_sec": 70.217,
+    "wall_time_mean_min": 1.14
+  },
+  "filters_applied": []
+}
