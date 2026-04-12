@@ -32,6 +32,7 @@ const schema = z.object({
   fe_kg: z.coerce.number().min(0, "Must be ≥ 0"),
   si_kg: z.coerce.number().min(0, "Must be ≥ 0"),
   scrap_kg: z.coerce.number().min(0, "Must be ≥ 0"),
+  actual_finish: z.string().optional(),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -113,9 +114,7 @@ function getPowerAtTime(profile: PowerProfilePoint[], t: number): number {
 }
 
 function toDatetimeLocal(iso: string) {
-  // Force UTC interpretation if no timezone info (naive datetime from backend)
-  const hasTimezone = iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso);
-  const d = new Date(hasTimezone ? iso : iso + "Z");
+  const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -127,15 +126,13 @@ function nowLocalISO(): string {
 }
 
 function fmtTime(iso: string): string {
-  const hasTimezone = iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso);
-  const d = new Date(hasTimezone ? iso : iso + "Z");
+  const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function fmtDateTime(iso: string): string {
-  const hasTimezone = iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso);
-  const d = new Date(hasTimezone ? iso : iso + "Z");
+  const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -143,6 +140,7 @@ function fmtDateTime(iso: string): string {
 // ── Inline row editor state type ──
 type RowEditState = {
   actual_start: string;
+  actual_finish: string;
   ingot_kg: string;
   fe_kg: string;
   si_kg: string;
@@ -152,6 +150,7 @@ type RowEditState = {
 function initRowEdit(b: Batch): RowEditState {
   return {
     actual_start: b.actual_start ? toDatetimeLocal(b.actual_start) : "",
+    actual_finish: b.actual_finish ? toDatetimeLocal(b.actual_finish) : "",
     ingot_kg: b.ingot_kg != null ? String(b.ingot_kg) : "",
     fe_kg: b.fe_kg != null ? String(b.fe_kg) : "",
     si_kg: b.si_kg != null ? String(b.si_kg) : "",
@@ -210,6 +209,7 @@ export default function OperatorExecutionPage() {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
@@ -235,6 +235,19 @@ export default function OperatorExecutionPage() {
     const id = setInterval(tick, 10_000);
     return () => clearInterval(id);
   }, [batchStarted, startedAt]);
+
+  // ── Auto-fill actual_finish when batch starts ──
+  useEffect(() => {
+    if (batchStarted && startedAt && selectedBatch?.duration_min != null) {
+      const finishMs = new Date(startedAt).getTime() + selectedBatch.duration_min * 60000;
+      const d = new Date(finishMs);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setValue("actual_finish", `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    } else {
+      setValue("actual_finish", "");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchStarted, startedAt, selectedBatch?.duration_min]);
 
   const currentPower = batchStarted && profile.length > 0
     ? getPowerAtTime(profile, elapsedMin)
@@ -282,7 +295,7 @@ export default function OperatorExecutionPage() {
   async function handleSaveEditedStart() {
     if (!selectedBatch || !editStartValue) return;
     try {
-      const iso = new Date(editStartValue).toISOString();
+      const iso = editStartValue.length === 16 ? editStartValue + ":00" : editStartValue;
       await updateBatch.mutateAsync({ id: selectedBatch.id, data: { actual_start: iso } });
       setStartedAt(iso);
       setEditingStart(false);
@@ -294,7 +307,13 @@ export default function OperatorExecutionPage() {
   async function onSubmit(values: FormData) {
     if (!selectedBatch) return;
     try {
-      await updateBatch.mutateAsync({ id: selectedBatch.id, data: { ...values, status: "completed" } });
+      const actualFinishISO = values.actual_finish
+        ? (values.actual_finish.length === 16 ? values.actual_finish + ":00" : values.actual_finish)
+        : undefined;
+      await updateBatch.mutateAsync({
+        id: selectedBatch.id,
+        data: { ingot_kg: values.ingot_kg, fe_kg: values.fe_kg, si_kg: values.si_kg, scrap_kg: values.scrap_kg, actual_finish: actualFinishISO, status: "completed" },
+      });
       showToast("success", `Batch #${selectedBatch.batch_number} marked completed`);
 
       const allDone = batches
@@ -336,7 +355,12 @@ export default function OperatorExecutionPage() {
       await updateBatch.mutateAsync({
         id: batchId,
         data: {
-          actual_start: rowEdit.actual_start ? new Date(rowEdit.actual_start).toISOString() : undefined,
+          actual_start: rowEdit.actual_start
+            ? (rowEdit.actual_start.length === 16 ? rowEdit.actual_start + ":00" : rowEdit.actual_start)
+            : undefined,
+          actual_finish: rowEdit.actual_finish
+            ? (rowEdit.actual_finish.length === 16 ? rowEdit.actual_finish + ":00" : rowEdit.actual_finish)
+            : undefined,
           ingot_kg: rowEdit.ingot_kg !== "" ? parseFloat(rowEdit.ingot_kg) : undefined,
           fe_kg: rowEdit.fe_kg !== "" ? parseFloat(rowEdit.fe_kg) : undefined,
           si_kg: rowEdit.si_kg !== "" ? parseFloat(rowEdit.si_kg) : undefined,
@@ -646,6 +670,17 @@ export default function OperatorExecutionPage() {
               );
             })}
 
+            {/* Actual Finish */}
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1.5">Actual Finish</label>
+              <input
+                type="datetime-local"
+                {...register("actual_finish")}
+                className="w-full bg-bg-elevated border border-[var(--border-color)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-brand-red font-mono"
+              />
+              <p className="text-xs text-zinc-600 mt-0.5">Auto-filled · adjustable</p>
+            </div>
+
             <div className="flex-1" />
 
             <button
@@ -677,7 +712,7 @@ export default function OperatorExecutionPage() {
             <thead>
               <tr className="border-b border-[var(--border-color)]">
                 <th className="w-8 px-2 py-2" />
-                {["#", "Furnace", "Expected Start", "Actual Start", "Status"].map((h) => (
+                {["#", "Furnace", "Expected Start", "Expected Finish", "Actual Start", "Est. Actual Finish", "Status"].map((h) => (
                   <th key={h} className="px-4 py-2 text-left text-zinc-500 font-medium uppercase tracking-wide">
                     {h}
                   </th>
@@ -710,7 +745,17 @@ export default function OperatorExecutionPage() {
                         {b.expected_start ? fmtTime(b.expected_start) : "—"}
                       </td>
                       <td className="px-4 py-2 font-mono text-zinc-400">
+                        {b.melt_finish_at ? fmtTime(b.melt_finish_at) : "—"}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-zinc-400">
                         {b.actual_start ? fmtTime(b.actual_start) : "—"}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-zinc-400">
+                        {b.actual_finish
+                          ? fmtTime(b.actual_finish)
+                          : b.actual_start && b.duration_min != null
+                            ? fmtTime(new Date(new Date(b.actual_start).getTime() + b.duration_min * 60000).toISOString())
+                            : "—"}
                       </td>
                       <td className="px-4 py-2">
                         <span className="flex items-center gap-1.5" style={{ color: STATUS_COLORS[b.status] }}>
@@ -723,15 +768,26 @@ export default function OperatorExecutionPage() {
                     {/* Expanded detail / edit row */}
                     {isExpanded && rowEdit && (
                       <tr key={`${b.id}-edit`} className="border-b border-[var(--border-color)] bg-bg-elevated/20">
-                        <td colSpan={6} className="px-5 py-4">
+                        <td colSpan={8} className="px-5 py-4">
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 items-end">
                             {/* Actual Start */}
-                            <div className="md:col-span-2">
-                              <label className="block text-xs text-zinc-500 mb-1">Actual Start Time</label>
+                            <div>
+                              <label className="block text-xs text-zinc-500 mb-1">Actual Start</label>
                               <input
                                 type="datetime-local"
                                 value={rowEdit.actual_start}
                                 onChange={(e) => setRowEdit((v) => v ? { ...v, actual_start: e.target.value } : v)}
+                                className="w-full bg-bg-card border border-[var(--border-color)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-brand-red font-mono transition-colors"
+                              />
+                            </div>
+
+                            {/* Actual Finish */}
+                            <div>
+                              <label className="block text-xs text-zinc-500 mb-1">Actual Finish</label>
+                              <input
+                                type="datetime-local"
+                                value={rowEdit.actual_finish}
+                                onChange={(e) => setRowEdit((v) => v ? { ...v, actual_finish: e.target.value } : v)}
                                 className="w-full bg-bg-card border border-[var(--border-color)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-brand-red font-mono transition-colors"
                               />
                             </div>
@@ -814,6 +870,12 @@ export default function OperatorExecutionPage() {
                           <div className="mt-3 pt-3 border-t border-[var(--border-color)]/50 flex flex-wrap gap-4 text-xs text-zinc-600">
                             {b.expected_start && (
                               <span>Expected Start: <span className="font-mono text-zinc-400">{fmtDateTime(b.expected_start)}</span></span>
+                            )}
+                            {b.melt_finish_at && (
+                              <span>Expected Finish: <span className="font-mono text-zinc-400">{fmtDateTime(b.melt_finish_at)}</span></span>
+                            )}
+                            {b.actual_finish && (
+                              <span>Actual Finish: <span className="font-mono text-green-400">{fmtDateTime(b.actual_finish)}</span></span>
                             )}
                             {b.duration_min != null && (
                               <span>Duration: <span className="font-mono text-zinc-400">{b.duration_min} min</span></span>

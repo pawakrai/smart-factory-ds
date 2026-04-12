@@ -23,5 +23,6 @@ class Batch(SQLModel, table=True):
     power_kw: Optional[float] = None           # IF power used: 450 | 475 | 500 kW
     is_cold_start: bool = Field(default=False) # cold start penalty applied
     energy_kwh: Optional[float] = None        # estimated energy for this batch (kWh)
+    actual_finish: Optional[datetime] = None           # actual melt finish recorded by operator
     status: str = Field(default="pending")
     created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -8,7 +8,7 @@ from ..services.rl_service import get_power_profile
 router = APIRouter(prefix="/batches", tags=["batches"])
 
 
-@router.get("/", response_model=list[Batch])
+@router.get("", response_model=list[Batch])
 def list_batches(
     plan_id: str | None = Query(None),
     session: Session = Depends(get_session),

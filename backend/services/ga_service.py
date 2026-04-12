@@ -207,6 +207,17 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         "A": f("mh_a_min_operational_level_kg", 200),
         "B": f("mh_b_min_operational_level_kg", 125),
     }
+    app_v9.MH_EMPTY_PENALTY_PER_MIN = f("mh_empty_penalty_per_min", 150)
+    app_v9.MH_LOW_LEVEL_MINUTE_PENALTY = f("mh_low_level_minute_penalty", 40)
+    app_v9.MH_LOW_LEVEL_PENALTY_RATE = f("mh_low_level_penalty_rate", 200)
+    app_v9.LOW_LEVEL_NONLINEAR_FACTOR = f("mh_low_level_nonlinear_factor", 3.0)
+    app_v9.MAX_EMPTY_MIN_ALLOW = f("mh_max_empty_min_allow", 120)
+    app_v9.MAX_LOW_LEVEL_MIN_ALLOW = f("mh_max_low_level_min_allow", 240)
+
+    # Objective weights for MH level components
+    app_v9.OBJ1_COMPONENT_WEIGHTS["empty_penalty"] = f("ga_obj_weight_empty_penalty", 1.10)
+    app_v9.OBJ1_COMPONENT_WEIGHTS["low_level_min_penalty"] = f("ga_obj_weight_low_level_min", 0.80)
+    app_v9.OBJ1_COMPONENT_WEIGHTS["low_level_shape_penalty"] = f("ga_obj_weight_low_level_shape", 0.90)
 
     # Energy & Tariff
     onpeak_base = f("tou_onpeak_baht_per_kwh", 4.1839)

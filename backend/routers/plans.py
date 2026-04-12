@@ -59,12 +59,12 @@ def _run_ga_and_update(plan_id: str) -> None:
         session.commit()
 
 
-@router.get("/", response_model=list[PlanRead])
+@router.get("", response_model=list[PlanRead])
 def list_plans(session: Session = Depends(get_session)):
     return session.exec(select(Plan).order_by(Plan.created_at.desc())).all()
 
 
-@router.post("/", response_model=PlanRead, status_code=202)
+@router.post("", response_model=PlanRead, status_code=202)
 def create_plan(data: PlanCreate, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     plan = Plan(
         target_batches=data.target_batches,

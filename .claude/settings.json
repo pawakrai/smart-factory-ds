@@ -24,7 +24,17 @@
       "Bash(PYTHONPATH=. python3 -c \"from backend.routers.energy import router; print\\(''OK''\\)\")",
       "Bash(python3 -m py_compile /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/routers/energy.py)",
       "Bash(python3 -m py_compile /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/services/ga_service.py /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/routers/plans.py /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/models/batch.py)",
-      "Bash(npx shadcn@latest add alert-dialog --yes)"
+      "Bash(npx shadcn@latest add alert-dialog --yes)",
+      "Bash(/opt/homebrew/Cellar/python@3.11/3.11.11/Frameworks/Python.framework/Versions/3.11/bin/python3.11 -m pip install python-multipart --target /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/.venv/lib/python3.11/site-packages/ -q)",
+      "Bash(PYTHONPATH=. python -m pytest tests/test_single_furnace_mode.py -v)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/test_single_furnace_mode.py -v)",
+      "Read(//usr/local/bin/**)",
+      "Bash(conda info:*)",
+      "Bash(PYTHONPATH=. /opt/homebrew/bin/python3.11 -m pytest tests/test_single_furnace_mode.py -v)",
+      "Bash(PYTHONPATH=. .venv/bin/python -m pytest tests/test_single_furnace_mode.py -v)",
+      "Bash(PYTHONPATH=. .venv/bin/python3.13 -m pytest tests/test_single_furnace_mode.py -v)",
+      "Bash(.venv/bin/python3.13 -c ':*)",
+      "Bash(git add:*)"
     ]
   }
 }

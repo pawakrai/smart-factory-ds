@@ -1476,7 +1476,9 @@ def simulate_policy_day(policy_params, controller=None):
                     continue
                 if prep_remaining[f_idx] <= 0:
                     continue
-                if any(mf != f_idx for mf in melting_furnaces):
+                # Single-furnace: prep ticks down every idle minute (operator does prep during furnace downtime).
+                # Dual-furnace: prep ticks down only when the other furnace is actively melting (alternating model).
+                if len(available_if_furnaces) == 1 or any(mf != f_idx for mf in melting_furnaces):
                     prep_remaining[f_idx] = max(0, prep_remaining[f_idx] - 1)
 
         # 2) pour with feasibility repair (no overflow)

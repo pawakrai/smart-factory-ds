@@ -22,3 +22,7 @@ sqlalchemy==2.0.36
 
 # Utilities
 python-dateutil==2.9.0.post0
+
+# Excel upload / export
+openpyxl==3.1.5
+python-multipart==0.0.22

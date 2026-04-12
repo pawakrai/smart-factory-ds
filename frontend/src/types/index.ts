@@ -18,6 +18,7 @@ export interface Batch {
   batch_number: number;
   expected_start: string | null;
   actual_start: string | null;
+  actual_finish: string | null;
   furnace: "A" | "B" | null;
   duration_min: number | null;
   melt_finish_at: string | null;

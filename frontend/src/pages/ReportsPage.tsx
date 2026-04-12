@@ -7,7 +7,9 @@ import type { Batch } from "@/types";
 type SortField =
   | "batch_number"
   | "expected_start"
+  | "melt_finish_at"
   | "actual_start"
+  | "actual_finish"
   | "ingot_kg"
   | "fe_kg"
   | "si_kg"
@@ -27,6 +29,13 @@ function fmtNum(v: number | null | undefined, decimals = 1) {
   return v != null ? v.toFixed(decimals) : "—";
 }
 
+function fmtActualFinish(b: Batch): string {
+  if (b.actual_finish) return fmtDatetime(b.actual_finish);
+  if (!b.actual_start || b.duration_min == null) return "—";
+  const d = new Date(new Date(b.actual_start).getTime() + b.duration_min * 60000);
+  return d.toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 function SortIcon({ field, sortField, sortDir }: { field: string; sortField: string; sortDir: SortDir }) {
   if (field !== sortField) return <ChevronsUpDown size={12} className="text-zinc-600" />;
   return sortDir === "asc"
@@ -36,7 +45,8 @@ function SortIcon({ field, sortField, sortDir }: { field: string; sortField: str
 
 function exportCSV(batches: Batch[]) {
   const headers = [
-    "batch_number", "furnace", "expected_start", "actual_start",
+    "batch_number", "furnace", "expected_start", "melt_finish_at",
+    "actual_start", "actual_finish",
     "ingot_kg", "fe_kg", "si_kg", "scrap_kg", "power_kw", "energy_kwh", "duration_min", "status",
   ];
   const rows = batches.map((b) =>
@@ -60,10 +70,12 @@ function exportCSV(batches: Batch[]) {
 type ColDef = { label: string; field: SortField; className?: string };
 
 const COLS: ColDef[] = [
-  { label: "Batch #",       field: "batch_number" },
-  { label: "Expected Start", field: "expected_start" },
-  { label: "Actual Start",   field: "actual_start" },
-  { label: "Ingot (kg)",    field: "ingot_kg",   className: "text-right" },
+  { label: "Batch #",          field: "batch_number" },
+  { label: "Expected Start",   field: "expected_start" },
+  { label: "Expected Finish",  field: "melt_finish_at" },
+  { label: "Actual Start",     field: "actual_start" },
+  { label: "Actual Finish",    field: "actual_finish" },
+  { label: "Ingot (kg)",       field: "ingot_kg",   className: "text-right" },
   { label: "Fe (kg)",       field: "fe_kg",      className: "text-right" },
   { label: "Si (kg)",       field: "si_kg",      className: "text-right" },
   { label: "Scrap (kg)",    field: "scrap_kg",   className: "text-right" },
@@ -207,7 +219,7 @@ export default function ReportsPage() {
                 <th key={col.field} className={`px-4 py-3 text-left ${col.className ?? ""}`}>
                   <button
                     onClick={() => handleSort(col.field)}
-                    className="flex items-center gap-1 text-xs font-medium text-zinc-400 uppercase tracking-wide hover:text-[var(--text-primary)] transition-colors ml-auto"
+                    className="flex items-center gap-1 text-xs font-medium text-zinc-400 uppercase tracking-wide hover:text-[var(--text-primary)] transition-colors"
                     style={col.className?.includes("text-right") ? { marginLeft: "auto" } : {}}
                   >
                     {col.label}
@@ -264,9 +276,21 @@ export default function ReportsPage() {
                     {fmtDatetime(b.expected_start)}
                   </td>
 
+                  {/* Expected Finish */}
+                  <td className="px-4 py-3 font-mono text-xs text-zinc-400 whitespace-nowrap">
+                    {fmtDatetime(b.melt_finish_at)}
+                  </td>
+
                   {/* Actual Start */}
                   <td className="px-4 py-3 font-mono text-xs text-zinc-400 whitespace-nowrap">
                     {fmtDatetime(b.actual_start)}
+                  </td>
+
+                  {/* Actual Finish */}
+                  <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">
+                    <span className={b.actual_finish ? "text-green-400" : "text-zinc-400"}>
+                      {fmtActualFinish(b)}
+                    </span>
                   </td>
 
                   {/* Ingot */}
@@ -311,7 +335,7 @@ export default function ReportsPage() {
           {filtered.length > 1 && (
             <tfoot>
               <tr className="border-t-2 border-[var(--border-color)] bg-bg-elevated/30">
-                <td colSpan={3} className="px-4 py-2.5 text-xs text-zinc-500 font-medium uppercase tracking-wide">
+                <td colSpan={5} className="px-4 py-2.5 text-xs text-zinc-500 font-medium uppercase tracking-wide">
                   Total ({filtered.length} batches)
                 </td>
                 <td className="px-4 py-2.5 font-mono text-xs text-[var(--text-primary)] text-right font-semibold">

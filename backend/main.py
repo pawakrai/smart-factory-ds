@@ -4,14 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import init_db, get_session, engine
 from .routers import plans, batches, energy, settings as settings_router
+from .routers import uploads
 
 # Import models so SQLModel registers them before create_all
-from .models import Plan, Batch, EnergyLog, Setting  # noqa: F401
+from .models import Plan, Batch, EnergyLog, Setting, PlantLoadProfile  # noqa: F401
 
 app = FastAPI(
     title="FurnaceFlow API",
     version="1.0.0",
     description="Sharp Manufacturing Energy & Production Dashboard",
+    redirect_slashes=False,
 )
 
 app.add_middleware(
@@ -26,6 +28,7 @@ app.include_router(plans.router, prefix="/api")
 app.include_router(batches.router, prefix="/api")
 app.include_router(energy.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
+app.include_router(uploads.router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -59,6 +62,12 @@ def _seed_settings():
         ("mh_b_initial_level_kg",            "230",    "M&H B starting level at shift start (kg)"),
         ("mh_b_consumption_rate_kg_per_min", "2.30",   "M&H B consumption rate (kg/min)"),
         ("mh_b_min_operational_level_kg",    "125",    "M&H B minimum safe operational level (kg)"),
+        ("mh_empty_penalty_per_min",         "150",    "Penalty per minute when M&H furnace runs empty (Baht/min)"),
+        ("mh_low_level_minute_penalty",      "40",     "Penalty per minute when M&H level is below minimum (Baht/min)"),
+        ("mh_low_level_penalty_rate",        "200",    "Base penalty rate for low-level violation used in simulation"),
+        ("mh_low_level_nonlinear_factor",    "3.0",    "Nonlinear exponent when M&H level drops critically low"),
+        ("mh_max_empty_min_allow",           "120",    "Max cumulative minutes M&H may be empty before hard constraint violation"),
+        ("mh_max_low_level_min_allow",       "240",    "Max cumulative minutes M&H may be below minimum before hard constraint violation"),
         # ── Section C: Energy & Tariff ────────────────────────────────────────
         ("tou_onpeak_baht_per_kwh",          "4.1839", "On-peak TOU energy price (Baht/kWh, excl. FT)"),
         ("tou_offpeak_baht_per_kwh",         "2.6037", "Off-peak TOU energy price (Baht/kWh, excl. FT)"),
@@ -75,6 +84,9 @@ def _seed_settings():
         ("ga_n_generations",                 "100",    "Maximum GA generations"),
         ("ga_early_stop_patience",           "20",     "Generations without improvement before early stop"),
         ("ga_random_seed",                   "42",     "RNG seed for reproducibility"),
+        ("ga_obj_weight_empty_penalty",      "1.10",   "Objective weight for M&H empty penalty in GA scoring"),
+        ("ga_obj_weight_low_level_min",      "0.80",   "Objective weight for M&H below-minimum penalty in GA scoring"),
+        ("ga_obj_weight_low_level_shape",    "0.90",   "Objective weight for M&H low-level shape penalty in GA scoring"),
         # ── Section E: Shift Configuration ───────────────────────────────────
         ("shift_duration_hours",             "8",      "Default shift duration (hours)"),
         ("shift_start_hhmm",                 "08:00",  "Default shift start time of day (HH:MM)"),
@@ -85,6 +97,23 @@ def _seed_settings():
             existing = session.exec(select(Setting).where(Setting.config_key == key)).first()
             if not existing:
                 session.add(Setting(config_key=key, config_value=value, description=desc))
+
+        # Force-correct known data-corruption cases (safe: only triggers on exact wrong value)
+        force_corrections = [
+            # tou_offpeak was accidentally seeded with on-peak value (4.1839) in some envs
+            ("tou_offpeak_baht_per_kwh", "4.1839", "2.6037"),
+        ]
+        for key, wrong_val, correct_val in force_corrections:
+            bad = session.exec(
+                select(Setting).where(
+                    Setting.config_key == key,
+                    Setting.config_value == wrong_val,
+                )
+            ).first()
+            if bad:
+                bad.config_value = correct_val
+                session.add(bad)
+
         session.commit()
 
 

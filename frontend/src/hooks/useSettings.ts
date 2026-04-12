@@ -8,6 +8,14 @@ export function useSettings() {
   });
 }
 
+export function useSettingDefaults() {
+  return useQuery({
+    queryKey: ["settings-defaults"],
+    queryFn: settingsApi.defaults,
+    staleTime: Infinity, // defaults never change at runtime
+  });
+}
+
 export function useUpdateSetting() {
   const qc = useQueryClient();
   return useMutation({

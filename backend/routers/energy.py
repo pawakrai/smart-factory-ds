@@ -10,7 +10,7 @@ from ..schemas.energy_log import EnergyLogCreate
 router = APIRouter(prefix="/energy-logs", tags=["energy"])
 
 
-@router.get("/", response_model=list[EnergyLog])
+@router.get("", response_model=list[EnergyLog])
 def list_energy_logs(
     limit: int = Query(default=200, le=1000),
     shift_start: Optional[str] = Query(default=None, description="ISO datetime — filter logs on or after this time"),
@@ -27,7 +27,7 @@ def list_energy_logs(
     return session.exec(stmt).all()
 
 
-@router.post("/", response_model=EnergyLog, status_code=201)
+@router.post("", response_model=EnergyLog, status_code=201)
 def create_energy_log(data: EnergyLogCreate, session: Session = Depends(get_session)):
     log = EnergyLog(**data.model_dump())
     session.add(log)
