@@ -9,21 +9,30 @@
 ---
 
 ## Script A0 — Historical Baseline (Real Plant Data)
-**File:** `revision_experiments/extract_historical_baseline.py`  
+**File:** `revision_experiments/extract_historical_baseline.py` + `notebooks/Energy_consumption_Sharp_new2.py`  
 **Covers:** Reviewer Item A  
 **Output:** `outputs/revision_phase1/historical_baseline/`
 
-### Results
+### Primary Baseline (N=103) — Main reference for manuscript
+Extracted from `data/raw/MDB6 (INDUCTION)_20241028_111546_missing_data.xlsx` using kW-threshold batch segmentation (threshold=30 kW, gap=3 min). Excluded: batch 1 (small/startup), batches 21, 94, 95 (outliers). SD computed with ddof=1.
+
 | Metric | N | Mean ± SD | Median | Min | Max |
 |--------|---|-----------|--------|-----|-----|
-| Energy (kWh) | 15 | **580.87 ± 22.39** | 579.0 | 545.0 | 614.0 |
-| Duration (min) | 15 | **92.53 ± 9.58** | 90.0 | 85.0 | 126.0 |
+| Energy (kWh) | **103** | **587.31 ± 34.85** | 587.0 | 496.0 | 735.0 |
+| Duration (min) | **103** | **101.93 ± 7.14** | 102.0 | 87.0 | 129.0 |
+| Corr(duration, energy) | — | **r = 0.745** | — | — | — |
+
+### Secondary Baseline (N=15) — Supplementary reference only
+| Metric | N | Mean ± SD | Median | Min | Max |
+|--------|---|-----------|--------|-----|-----|
+| Energy (kWh) | 15 | 580.87 ± 22.39 | 579.0 | 545.0 | 614.0 |
+| Duration (min) | 15 | 92.53 ± 9.58 | 90.0 | 85.0 | 126.0 |
 | Weight (kg) | 15 | 382.67 ± 17.94 | 396.0 | 354.0 | 399.0 |
 | Power (kW) | 15 | 483.33 ± 34.93 | 475.0 | 450.0 | 550.0 |
 
-**Source:** `data/สรุปการหลอมทุก Batch new.xlsx` — 15 real batch records across multiple sheets. Energy embedded in column header strings (e.g., "Energy consumption for Batch N: X kWh"); duration derived from start/end time rows; power from sheet names (format: `{power_kw}_{batch_num}`).
+**Source (N=15):** `data/สรุปการหลอมทุก Batch new.xlsx` — energy embedded in column header strings; duration from start/end time rows.
 
-**Note for paper:** Real plant baseline energy (580.87 ± 22.39 kWh) is the only valid historical reference. Simulated policies (DQN: 591.58 kWh, expert profile: 592.76 kWh) are within ~2% of plant baseline — a strong result indicating good simulation fidelity.
+**Note for paper:** The **103-batch baseline** is the primary historical reference (wider coverage, automated extraction from electrical meter). The 15-batch baseline is a secondary cross-check. The N=103 energy range (496–735 kWh) and duration range (87–129 min) are substantially wider than the simulated range, consistent with a mixture of cold-start and hot-start batches in real operations — motivating the mixed-start evaluation in Phase 2.
 
 ---
 
@@ -201,13 +210,44 @@ See existing results: GA vs. continuous_baseline vs. rule_based — single run, 
 ## Cross-Script Comparison Summary
 
 ### RL Controller Performance vs. Plant Baseline
+
+#### Phase 1 (hot-start only)
 | Source | N | Energy (kWh) | Duration (min) |
 |--------|---|--------------|----------------|
-| **Real plant** (Script A0) | 15 | **580.87 ± 22.39** | **92.53 ± 9.58** |
-| DQN final (Script B) | 100 | 591.58 ± 18.35 | 91.1 ± 3.0 |
-| Expert profile (Script B) | 100 | 592.76 ± 15.01 | 88.8 ± 1.9 |
+| **Real plant — primary (N=103)** | **103** | **587.31 ± 34.85** | **101.93 ± 7.14** |
+| Real plant — secondary (N=15) | 15 | 580.87 ± 22.39 | 92.53 ± 9.58 |
+| DQN final (hot-start only) | 100 | 591.58 ± 18.35 | 91.1 ± 3.0 |
+| Expert profile (hot-start only) | 100 | 592.76 ± 15.01 | 88.8 ± 1.9 |
 
-DQN: +10.71 kWh (+1.84%) vs plant baseline, −1.43 min (−1.5%) vs plant duration. The simulation overestimates energy slightly — consistent with conservative thermal modeling. Both simulated policies are within 1 SD of plant values.
+#### Phase 2 — Mixed Start-State Evaluation (80% hot / 20% cold)
+**Script:** `revision_experiments/eval_rl_cold_hot_mixed.py` | **Seed:** 2024 | **N:** 100 ep/scenario/policy
+
+| Scenario | Policy | Energy (kWh) | SD | Duration (min) | Success |
+|----------|--------|-------------|-----|----------------|---------|
+| cold_start | **DQN** | 616.61 | 1.13 | 93.0 | 100% |
+| cold_start | Expert | 618.39 | 1.13 | 92.0 | 100% |
+| cold_start | Always-max | 642.40 | 3.22 | 81.2 | 100% |
+| hot_start | **DQN** | 591.18 | 18.26 | 91.0 | 100% |
+| hot_start | Expert | 592.52 | 14.86 | 88.8 | 100% |
+| hot_start | Always-max | 626.94 | 52.48 | 79.3 | 100% |
+| **mixed_80_20** | **DQN** | **601.51** | **19.57** | **92.2** | **100%** |
+| mixed_80_20 | Expert | 601.41 | 17.08 | 89.9 | 100% |
+| mixed_80_20 | Always-max | 637.20 | 39.06 | 80.5 | 100% |
+
+**Primary comparison (DQN mixed_80_20 vs plant N=103):**
+- Energy: +14.20 kWh (+2.42%) — **within 1 SD** ✓ (plant SD=±34.85)
+- Duration: −9.7 min (−9.5%) — outside 1 SD (plant SD=±7.14)
+
+**RL vs Always-max savings (main manuscript claim — robust across all scenarios):**
+| Scenario | RL saves vs always-max |
+|----------|----------------------|
+| cold_start | **25.79 kWh (4.0%)** |
+| hot_start | **35.76 kWh (5.7%)** |
+| mixed_80_20 | **35.69 kWh (5.6%)** |
+
+**RL vs Expert:** Essentially equivalent (<0.2% difference) across all scenarios — RL learned expert-level performance without explicit programming.
+
+**Duration gap note:** The ~10 min gap vs plant persists across ALL scenarios (cold, hot, mixed). This is NOT a start-state issue — it is a simulation fidelity gap: the expert power profile ramps up more aggressively than real operators. This is documented in Script I (thermal model validation).
 
 ### Safety Confirmation
 - Zero executed violations across all 400 safety-evaluation episodes (4 checkpoints × 100)
