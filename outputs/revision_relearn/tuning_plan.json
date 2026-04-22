@@ -1,0 +1,141 @@
+{
+  "description": "Pre-registered tuning grid for RL reward-retuning study",
+  "timestamp": "2026-04-16T11:12:15.722394",
+  "base_coefficients": {
+    "tracking_scale": 0.5,
+    "safety_scale": 5.0,
+    "progress_scale": 2.0,
+    "energy_scale": 0.02,
+    "time_scale": 0.001,
+    "terminal_success_base": 10.0,
+    "terminal_success_eff": 5.0,
+    "terminal_fail": 5.0,
+    "optimal_efficiency": 1.8,
+    "overshoot_scale": 0.0
+  },
+  "grid": {
+    "baseline_reward": {
+      "energy_scale": 0.02,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.25": {
+      "energy_scale": 0.025,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.50": {
+      "energy_scale": 0.03,
+      "overshoot_scale": 0.0
+    },
+    "energy_x2.00": {
+      "energy_scale": 0.04,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.50_plus_overshoot": {
+      "energy_scale": 0.03,
+      "overshoot_scale": 0.5
+    },
+    "energy_x1.25_plus_overshoot": {
+      "energy_scale": 0.025,
+      "overshoot_scale": 0.5
+    }
+  },
+  "full_grid": {
+    "baseline_reward": {
+      "tracking_scale": 0.5,
+      "safety_scale": 5.0,
+      "progress_scale": 2.0,
+      "energy_scale": 0.02,
+      "time_scale": 0.001,
+      "terminal_success_base": 10.0,
+      "terminal_success_eff": 5.0,
+      "terminal_fail": 5.0,
+      "optimal_efficiency": 1.8,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.25": {
+      "tracking_scale": 0.5,
+      "safety_scale": 5.0,
+      "progress_scale": 2.0,
+      "energy_scale": 0.025,
+      "time_scale": 0.001,
+      "terminal_success_base": 10.0,
+      "terminal_success_eff": 5.0,
+      "terminal_fail": 5.0,
+      "optimal_efficiency": 1.8,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.50": {
+      "tracking_scale": 0.5,
+      "safety_scale": 5.0,
+      "progress_scale": 2.0,
+      "energy_scale": 0.03,
+      "time_scale": 0.001,
+      "terminal_success_base": 10.0,
+      "terminal_success_eff": 5.0,
+      "terminal_fail": 5.0,
+      "optimal_efficiency": 1.8,
+      "overshoot_scale": 0.0
+    },
+    "energy_x2.00": {
+      "tracking_scale": 0.5,
+      "safety_scale": 5.0,
+      "progress_scale": 2.0,
+      "energy_scale": 0.04,
+      "time_scale": 0.001,
+      "terminal_success_base": 10.0,
+      "terminal_success_eff": 5.0,
+      "terminal_fail": 5.0,
+      "optimal_efficiency": 1.8,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.50_plus_overshoot": {
+      "tracking_scale": 0.5,
+      "safety_scale": 5.0,
+      "progress_scale": 2.0,
+      "energy_scale": 0.03,
+      "time_scale": 0.001,
+      "terminal_success_base": 10.0,
+      "terminal_success_eff": 5.0,
+      "terminal_fail": 5.0,
+      "optimal_efficiency": 1.8,
+      "overshoot_scale": 0.5
+    },
+    "energy_x1.25_plus_overshoot": {
+      "tracking_scale": 0.5,
+      "safety_scale": 5.0,
+      "progress_scale": 2.0,
+      "energy_scale": 0.025,
+      "time_scale": 0.001,
+      "terminal_success_base": 10.0,
+      "terminal_success_eff": 5.0,
+      "terminal_fail": 5.0,
+      "optimal_efficiency": 1.8,
+      "overshoot_scale": 0.5
+    }
+  },
+  "seeds": [
+    42,
+    2024,
+    7
+  ],
+  "train_episodes": 1500,
+  "env_kwargs": {
+    "target_temp_c": 950.0,
+    "start_mode": "hot",
+    "initial_weight_kg": 350,
+    "max_time_min": 120
+  },
+  "agent_kwargs": {
+    "state_dim": 8,
+    "action_dim": 10,
+    "learning_rate": 0.0005,
+    "gamma": 0.95,
+    "epsilon": 1.0,
+    "epsilon_min": 0.01,
+    "epsilon_decay": 0.995,
+    "memory_size": 10000,
+    "batch_size": 64,
+    "target_update_freq": 100,
+    "hidden_size": 512
+  }
+}

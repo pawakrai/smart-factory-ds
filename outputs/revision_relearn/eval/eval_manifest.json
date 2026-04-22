@@ -1,0 +1,1247 @@
+{
+  "script": "eval_rl_relearn_grid.py",
+  "run_timestamp": "2026-04-16T12:46:38.639937",
+  "git_commit": "1e63d91",
+  "eval_seed": 2024,
+  "n_episodes_per_scenario_per_policy": 100,
+  "scenarios": [
+    "cold_start",
+    "hot_start",
+    "mixed_80_20"
+  ],
+  "original_model_path": "/Users/kraiwitchpawadee/Personal/project/smart-factory-ds/models/dqn_final_model_env11.pth",
+  "original_model_md5": "01a2215234e5deb0043b7de8667df24b",
+  "candidates_evaluated": [
+    "baseline_reward_seed2024",
+    "baseline_reward_seed42",
+    "baseline_reward_seed7",
+    "energy_x1.25_seed2024",
+    "energy_x1.25_seed42",
+    "energy_x1.25_seed7",
+    "energy_x1.25_plus_overshoot_seed2024",
+    "energy_x1.25_plus_overshoot_seed42",
+    "energy_x1.25_plus_overshoot_seed7",
+    "energy_x1.50_seed2024",
+    "energy_x1.50_seed42",
+    "energy_x1.50_seed7",
+    "energy_x1.50_plus_overshoot_seed2024",
+    "energy_x1.50_plus_overshoot_seed42",
+    "energy_x1.50_plus_overshoot_seed7",
+    "energy_x2.00_seed2024",
+    "energy_x2.00_seed42",
+    "energy_x2.00_seed7"
+  ],
+  "baseline_policies": [
+    "dqn_final",
+    "expert_profile",
+    "always_max_450kw"
+  ],
+  "episode_configs": {
+    "cold_start": [
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      }
+    ],
+    "hot_start": [
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 20.274940139438453
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.42969603714773
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.28356092645075
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 23.983982903244996
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 29.874062965964004
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.266954458401554
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 2.3617660128599693
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.424714410905639
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.789406750680527
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.08857749121145
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.662779466191903
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 18.504225414713343
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.1615703924512695
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.971931530774917
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 0.1388892998515734
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 13.953575982264669
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 29.26866592885613
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 23.98285315354491
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.904671001123557
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.760489652481676
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.19031734156591
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 13.281767012785059
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.341241992260457
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 26.248735203786715
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.394720372019032
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.227350127658417
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 24.21545959403575
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.050959779249352
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.041886087028878
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 2.1264535269047036
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 14.01626441476023
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.926163198214056
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 26.668261140944768
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.589549376278443
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 23.213007950956126
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 14.617345831568562
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 14.04057140803826
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.94790624841434
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 26.946820029346338
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 2.3710295129265546
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.356128119747973
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.543612360298871
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 27.164247121228108
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.614961266605242
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 11.149769424795755
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.016910927868622
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.463177352828396
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 20.449621559529454
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.850517092672122
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 0.7161686738410689
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 20.88356950447218
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.105582973047852
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.259777931635975
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.275226040211386
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.540312083525105
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.103165864742962
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.01568663109146
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 12.767933761521254
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.057894178252594
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 15.154790128555875
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.56161681023535
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 12.609004826936385
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 12.103405982852818
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.318284500812535
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.4463713593778327
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.782213715436503
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 15.567939917074282
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.953624742521036
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.2688531867191977
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.237703818935661
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.6276903050157265
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 0.2319227806403279
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.66293359442919
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 12.209961315362378
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.775230585496168
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 0.404293614806307
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 21.487068152059173
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 13.708605028429112
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.672250382675085
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.391832575287053
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 24.058770077056938
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 11.379087305767225
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 12.294470360213744
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.974633320551106
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.821481576115587
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 13.090753535676594
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.044565763022941
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 21.08673474969706
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.0168309295780285
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.385532461607857
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.555618341415002
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.9487992206072997
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.472734242084424
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.908714692631238
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 22.53508672129275
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.396181310062612
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 29.040242910932495
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.95338157861049
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 2.6392820546906295
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 18.606947892530957
+      }
+    ],
+    "mixed_80_20": [
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 26.2985974578149
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 14.694053976759898
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.989654595998495
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.004578217614817
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 22.12478365696984
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.5938870207074958
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.021165473049876
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.340609253629868
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 2.1103879508072767
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 20.241019801124
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 15.47909866155399
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.436751774146922
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.153677020558188
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.51707813636804
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.983785256364083
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 11.233647374720263
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 23.13138737783204
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 29.620031906976727
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 24.37918455992451
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 29.61000987821489
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 14.578661542973565
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.54103549916244
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.868784626937059
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.7312865219323115
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 20.83731215748093
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.99477612383835
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.259092141998003
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.18142923895432
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.941145585958008
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 8.245307692338923
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 26.42667077528391
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.7797362460852217
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.428299512917962
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 24.358510835868746
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.789204415100464
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.109663140778032
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 11.416709589228049
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.0169646027007828
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.454923389726776
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.434125465022287
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.6252194976291294
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 18.378552574685752
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 22.40527618989746
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.874672513759908
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.881713348741222
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 17.284530800601154
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.50064526303047
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 11.806301813212528
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.242514044069118
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 13.313997907085756
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 16.599276465750737
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.302289179966397
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.636971243679746
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 25.354419701041383
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.0328937363725315
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.795888934252142
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.685099665627341
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.01779697708133
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 19.416749704085596
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.804451615070378
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 9.274540939846581
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 21.040675368357732
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 6.02131232779878
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 22.492539387939672
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 28.132310570064455
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 27.881666316167372
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 14.658234345551708
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.243841863079751
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 5.325498322628322
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.3618620544748365
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 1.8334314057980727
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 24.76312631316627
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 10.181486453564371
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.422281574824016
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 26.35692657187923
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.152076590732215
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 4.082086673457405
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 7.878535017042937
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "cold",
+        "idle_time_min": null
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 24.995266262145975
+      },
+      {
+        "sub_condition": "hot",
+        "idle_time_min": 3.68797246532138
+      }
+    ]
+  }
+}

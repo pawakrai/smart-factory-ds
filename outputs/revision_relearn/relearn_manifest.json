@@ -1,0 +1,225 @@
+{
+  "script": "train_rl_relearn_grid.py",
+  "run_timestamp": "2026-04-16T12:02:14.356148",
+  "git_commit": "1e63d91",
+  "parity_test": {
+    "result": "PASSED"
+  },
+  "training_status": "COMPLETED",
+  "seeds": [
+    42,
+    2024,
+    7
+  ],
+  "train_episodes": 1500,
+  "env_kwargs": {
+    "target_temp_c": 950.0,
+    "start_mode": "hot",
+    "initial_weight_kg": 350,
+    "max_time_min": 120
+  },
+  "agent_kwargs": {
+    "state_dim": 8,
+    "action_dim": 10,
+    "learning_rate": 0.0005,
+    "gamma": 0.95,
+    "epsilon": 1.0,
+    "epsilon_min": 0.01,
+    "epsilon_decay": 0.995,
+    "memory_size": 10000,
+    "batch_size": 64,
+    "target_update_freq": 100,
+    "hidden_size": 512
+  },
+  "tuning_grid": {
+    "baseline_reward": {
+      "energy_scale": 0.02,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.25": {
+      "energy_scale": 0.025,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.50": {
+      "energy_scale": 0.03,
+      "overshoot_scale": 0.0
+    },
+    "energy_x2.00": {
+      "energy_scale": 0.04,
+      "overshoot_scale": 0.0
+    },
+    "energy_x1.50_plus_overshoot": {
+      "energy_scale": 0.03,
+      "overshoot_scale": 0.5
+    },
+    "energy_x1.25_plus_overshoot": {
+      "energy_scale": 0.025,
+      "overshoot_scale": 0.5
+    }
+  },
+  "training_summary": [
+    {
+      "config": "baseline_reward",
+      "seed": 42,
+      "episodes": 1500,
+      "wall_sec": 184.77797317504883,
+      "final_avg_reward": -0.5842249073068133,
+      "final_avg_energy": 572.6793999999996,
+      "model_path": "outputs/revision_relearn/models/baseline_reward/seed_42/model.pth"
+    },
+    {
+      "config": "baseline_reward",
+      "seed": 2024,
+      "episodes": 1500,
+      "wall_sec": 189.16812109947205,
+      "final_avg_reward": -2.132869699020323,
+      "final_avg_energy": 568.0424999999997,
+      "model_path": "outputs/revision_relearn/models/baseline_reward/seed_2024/model.pth"
+    },
+    {
+      "config": "baseline_reward",
+      "seed": 7,
+      "episodes": 1500,
+      "wall_sec": 190.57841801643372,
+      "final_avg_reward": 0.6767875513358108,
+      "final_avg_energy": 573.1955999999996,
+      "model_path": "outputs/revision_relearn/models/baseline_reward/seed_7/model.pth"
+    },
+    {
+      "config": "energy_x1.25",
+      "seed": 42,
+      "episodes": 1500,
+      "wall_sec": 131.6259400844574,
+      "final_avg_reward": -13.093105214855953,
+      "final_avg_energy": 550.0466999999998,
+      "model_path": "outputs/revision_relearn/models/energy_x1.25/seed_42/model.pth"
+    },
+    {
+      "config": "energy_x1.25",
+      "seed": 2024,
+      "episodes": 1500,
+      "wall_sec": 178.0719609260559,
+      "final_avg_reward": -3.1329977063285304,
+      "final_avg_energy": 573.8541999999997,
+      "model_path": "outputs/revision_relearn/models/energy_x1.25/seed_2024/model.pth"
+    },
+    {
+      "config": "energy_x1.25",
+      "seed": 7,
+      "episodes": 1500,
+      "wall_sec": 176.77013611793518,
+      "final_avg_reward": -10.447545356379367,
+      "final_avg_energy": 567.7398999999997,
+      "model_path": "outputs/revision_relearn/models/energy_x1.25/seed_7/model.pth"
+    },
+    {
+      "config": "energy_x1.50",
+      "seed": 42,
+      "episodes": 1500,
+      "wall_sec": 181.7601978778839,
+      "final_avg_reward": -7.632574701597115,
+      "final_avg_energy": 570.2407999999997,
+      "model_path": "outputs/revision_relearn/models/energy_x1.50/seed_42/model.pth"
+    },
+    {
+      "config": "energy_x1.50",
+      "seed": 2024,
+      "episodes": 1500,
+      "wall_sec": 179.9142508506775,
+      "final_avg_reward": -8.542140542106763,
+      "final_avg_energy": 576.3461999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.50/seed_2024/model.pth"
+    },
+    {
+      "config": "energy_x1.50",
+      "seed": 7,
+      "episodes": 1500,
+      "wall_sec": 162.36417198181152,
+      "final_avg_reward": -6.856819646704091,
+      "final_avg_energy": 575.4828999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.50/seed_7/model.pth"
+    },
+    {
+      "config": "energy_x2.00",
+      "seed": 42,
+      "episodes": 1500,
+      "wall_sec": 156.75670504570007,
+      "final_avg_reward": -16.70693337230174,
+      "final_avg_energy": 573.1599999999997,
+      "model_path": "outputs/revision_relearn/models/energy_x2.00/seed_42/model.pth"
+    },
+    {
+      "config": "energy_x2.00",
+      "seed": 2024,
+      "episodes": 1500,
+      "wall_sec": 149.8364486694336,
+      "final_avg_reward": -19.20451434603894,
+      "final_avg_energy": 580.4223999999998,
+      "model_path": "outputs/revision_relearn/models/energy_x2.00/seed_2024/model.pth"
+    },
+    {
+      "config": "energy_x2.00",
+      "seed": 7,
+      "episodes": 1500,
+      "wall_sec": 155.57670664787292,
+      "final_avg_reward": -13.519472364113273,
+      "final_avg_energy": 573.4714999999998,
+      "model_path": "outputs/revision_relearn/models/energy_x2.00/seed_7/model.pth"
+    },
+    {
+      "config": "energy_x1.50_plus_overshoot",
+      "seed": 42,
+      "episodes": 1500,
+      "wall_sec": 144.09440183639526,
+      "final_avg_reward": -8.372150147842417,
+      "final_avg_energy": 568.4696999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.50_plus_overshoot/seed_42/model.pth"
+    },
+    {
+      "config": "energy_x1.50_plus_overshoot",
+      "seed": 2024,
+      "episodes": 1500,
+      "wall_sec": 151.62381505966187,
+      "final_avg_reward": -7.812912088765521,
+      "final_avg_energy": 573.9965999999997,
+      "model_path": "outputs/revision_relearn/models/energy_x1.50_plus_overshoot/seed_2024/model.pth"
+    },
+    {
+      "config": "energy_x1.50_plus_overshoot",
+      "seed": 7,
+      "episodes": 1500,
+      "wall_sec": 162.24219703674316,
+      "final_avg_reward": -13.209406233701609,
+      "final_avg_energy": 589.3668999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.50_plus_overshoot/seed_7/model.pth"
+    },
+    {
+      "config": "energy_x1.25_plus_overshoot",
+      "seed": 42,
+      "episodes": 1500,
+      "wall_sec": 165.38937187194824,
+      "final_avg_reward": -11.146158297791423,
+      "final_avg_energy": 586.4565999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.25_plus_overshoot/seed_42/model.pth"
+    },
+    {
+      "config": "energy_x1.25_plus_overshoot",
+      "seed": 2024,
+      "episodes": 1500,
+      "wall_sec": 174.33362889289856,
+      "final_avg_reward": -6.921029677872412,
+      "final_avg_energy": 559.7387999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.25_plus_overshoot/seed_2024/model.pth"
+    },
+    {
+      "config": "energy_x1.25_plus_overshoot",
+      "seed": 7,
+      "episodes": 1500,
+      "wall_sec": 163.24181199073792,
+      "final_avg_reward": -9.019229609942668,
+      "final_avg_energy": 562.4443999999996,
+      "model_path": "outputs/revision_relearn/models/energy_x1.25_plus_overshoot/seed_7/model.pth"
+    }
+  ],
+  "total_wall_time_sec": 2998.6092302799225
+}

@@ -76,7 +76,31 @@
       "Bash(.venv/bin/python3 revision_experiments/train_rl_reward_variants.py)",
       "Bash(awk '{print $2, $10, $11}')",
       "Bash(awk '{print $2, $10}')",
-      "Bash(ps -o pid,etime,pcpu -p 5613)"
+      "Bash(ps -o pid,etime,pcpu -p 5613)",
+      "Bash(PYTHONPATH=. python3 revision_experiments/eval_rl_cold_hot_mixed.py)",
+      "Bash(tee /tmp/cold_hot_mixed.log)",
+      "Bash(conda run:*)",
+      "Bash(PYTHONPATH=. /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/.venv/bin/python revision_experiments/eval_rl_cold_hot_mixed.py)",
+      "Bash(/Users/kraiwitchpawadee/Personal/project/smart-factory-ds/.venv/bin/python -c ':*)",
+      "Bash(grep -E \"^-.*\\\\.\\(json|yaml|yml|cfg\\)$\")",
+      "Bash(grep -r \"calculate_reward\\\\|dense_reward\" /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/src/environment/*.py)",
+      "Bash(grep -n \"def calculate_reward\\\\|def step\" /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/src/environment/*.py)",
+      "Bash(python3 -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(pip3 list *)",
+      "Bash(conda list *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python revision_experiments/train_rl_relearn_grid.py)",
+      "Bash(.venv/bin/python revision_experiments/eval_rl_relearn_grid.py)",
+      "Bash(.venv/bin/python revision_experiments/select_best_relearn_model.py)",
+      "Bash(ls /Users/kraiwitchpawadee/Personal/project/smart-factory-ds/backend/*.py)",
+      "Bash(lsof -ti:8000)",
+      "Bash(xargs kill *)",
+      "Bash(PYTHONPATH=. uvicorn backend.main:app --reload --port 8000)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(curl -s http://127.0.0.1:8000/api/settings)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://127.0.0.1:8000/api/plans)"
     ]
   }
 }

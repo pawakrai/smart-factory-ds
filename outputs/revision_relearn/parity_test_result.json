@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "test_seed": 0,
+  "test_actions": [
+    9,
+    5,
+    9,
+    0,
+    7,
+    9
+  ],
+  "details": [
+    "PASS reset state match",
+    "PASS step 1 action=9: reward=-0.452599 (patch=-0.452599)",
+    "PASS step 2 action=5: reward=-0.243559 (patch=-0.243559)",
+    "PASS step 3 action=9: reward=-0.489649 (patch=-0.489649)",
+    "PASS step 4 action=0: reward=-0.090929 (patch=-0.090929)",
+    "PASS step 5 action=7: reward=-0.384600 (patch=-0.384600)",
+    "PASS step 6 action=9: reward=-0.402172 (patch=-0.402172)"
+  ],
+  "timestamp": "2026-04-16T11:12:15.722210"
+}
