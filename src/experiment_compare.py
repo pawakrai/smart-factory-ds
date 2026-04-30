@@ -223,8 +223,14 @@ def main(seed=42):
     _write_csv(rows, csv_path)
     print(f"\nSaved comparison CSV: {csv_path}")
 
+    fig_dir = Path(__file__).resolve().parent.parent / "figures" / "policy_compare"
     for d in all_results:
-        sim.plot_policy_result(d, title_prefix=d.get("policy_name", "policy"))
+        sim.plot_policy_result(
+            d,
+            title_prefix=d.get("policy_name", "policy"),
+            save_dir=str(fig_dir),
+            show=False,
+        )
 
     _plot_overlay_total_kw(all_results)
 

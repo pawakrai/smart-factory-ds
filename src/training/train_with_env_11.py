@@ -143,7 +143,11 @@ def train_agent(
             logger.info(f"Current epsilon: {agent.epsilon:.4f}")
 
     plot_training_results(
-        episode_rewards, episode_lengths, episode_energies, episode_losses
+        episode_rewards,
+        episode_lengths,
+        episode_energies,
+        episode_losses,
+        save_dir="figures/training_env_11",
     )
 
     np.save(os.path.join(save_path, "episode_rewards.npy"), np.array(episode_rewards))

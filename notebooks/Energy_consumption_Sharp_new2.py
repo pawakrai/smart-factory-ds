@@ -338,6 +338,70 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
+# Step 8b: Publication-ready scatter plot (large fonts, no per-point labels, no colorbar)
+fig, ax = plt.subplots(figsize=(10, 7))
+
+ax.scatter(
+    df_melt_profile_filtered["time_duration"],
+    df_melt_profile_filtered["kWh_usage"],
+    s=120,
+    color="#1f4e79",
+    edgecolor="white",
+    linewidth=0.8,
+    alpha=0.85,
+    label="Batch observations",
+)
+
+# Trend line
+z_pub = np.polyfit(
+    df_melt_profile_filtered["time_duration"],
+    df_melt_profile_filtered["kWh_usage"],
+    1,
+)
+p_pub = np.poly1d(z_pub)
+x_sorted = np.sort(df_melt_profile_filtered["time_duration"].values)
+r2_pub = (
+    np.corrcoef(
+        df_melt_profile_filtered["time_duration"],
+        df_melt_profile_filtered["kWh_usage"],
+    )[0, 1]
+    ** 2
+)
+ax.plot(
+    x_sorted,
+    p_pub(x_sorted),
+    color="#c00000",
+    linestyle="--",
+    linewidth=2.5,
+    label=f"Linear trend (R² = {r2_pub:.3f})",
+)
+
+ax.set_xlabel("Time Duration (minutes)", fontsize=16, fontweight="bold", labelpad=10)
+ax.set_ylabel("Energy Consumption (kWh)", fontsize=16, fontweight="bold", labelpad=10)
+ax.tick_params(axis="both", which="major", labelsize=13, length=5, width=1.0)
+
+# Reduce tick density so numbers stay large and readable
+ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=6))
+ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=6))
+
+ax.grid(True, linestyle="--", alpha=0.35)
+for spine in ax.spines.values():
+    spine.set_linewidth(1.2)
+
+ax.legend(fontsize=12, loc="best", frameon=True, framealpha=0.95)
+
+plt.tight_layout()
+plt.savefig(
+    "energy_vs_time_scatter_publication.png",
+    dpi=300,
+    bbox_inches="tight",
+)
+plt.savefig(
+    "energy_vs_time_scatter_publication.pdf",
+    bbox_inches="tight",
+)
+plt.show()
+
 # Alternative interactive scatter plot using Plotly (filtered data)
 fig_scatter = go.Figure()
 

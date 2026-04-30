@@ -2672,7 +2672,13 @@ class ViolationFirstProblem(Problem):
         out["cost_details"] = details
 
 
-def plot_policy_result(cost_details, title_prefix="Policy Result"):
+def plot_policy_result(
+    cost_details,
+    title_prefix="Policy Result",
+    save_dir=None,
+    show=True,
+    publication=True,
+):
     schedule = cost_details.get("schedule", [])
     mh_levels = cost_details.get("mh_levels")
     baseline_kw = cost_details.get("baseline_kw")
@@ -2685,7 +2691,36 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     tou_raw = cost_details.get("tou_raw_price")
     tou_effective = cost_details.get("tou_effective_price")
 
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(18, 14), sharex=True)
+    # Publication mode: bigger figure with extra vertical room for larger fonts.
+    fig_size = (20, 16) if publication else (18, 14)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(
+        4, 1, figsize=fig_size, sharex=True, gridspec_kw={"hspace": 0.32}
+    )
+
+    # Font tokens (per-axis styling applied at the end of the function)
+    if publication:
+        title_fs = 15
+        label_fs = 14
+        tick_fs = 12
+        legend_fs = 11
+        gantt_text_fs = 12
+        annot_fs = 11
+        legend_kwargs = dict(
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            fontsize=legend_fs,
+            frameon=True,
+            framealpha=0.95,
+            borderaxespad=0.0,
+        )
+    else:
+        title_fs = 11
+        label_fs = 11
+        tick_fs = 10
+        legend_fs = 9
+        gantt_text_fs = 9
+        annot_fs = 9
+        legend_kwargs = dict(loc="upper right", fontsize=legend_fs)
 
     for item in schedule:
         b_id = item["batch_id"]
@@ -2718,7 +2753,8 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             ha="center",
             va="center",
             color="white",
-            fontsize=9,
+            fontsize=gantt_text_fs,
+            fontweight="bold",
         )
 
     ax1.set_ylabel("IF Furnace")
@@ -2753,7 +2789,7 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
     ax2.set_ylabel("M&H Level (kg)")
     ax2.set_title("M&H Levels")
     ax2.grid(True, alpha=0.4)
-    ax2.legend(loc="upper right")
+    ax2.legend(**legend_kwargs)
 
     use_visual = bool(
         USE_VISUAL_IF_PROFILE
@@ -2886,14 +2922,14 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             transform=ax3.transAxes,
             ha="left",
             va="top",
-            fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.7),
+            fontsize=annot_fs,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.85),
         )
     ax3.set_ylabel("kW")
-    ax3.set_xlabel("Time (HH:MM)")
     ax3.set_title("Plant Load")
     ax3.grid(True, alpha=0.4)
-    ax3.legend(loc="upper right")
+    # Plant Load has the densest legend — keep a single column outside the panel.
+    ax3.legend(**legend_kwargs)
 
     if tou_raw is not None:
         ax4.plot(
@@ -2927,9 +2963,10 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
             label="IF active window",
         )
     ax4.set_ylabel("Price")
+    ax4.set_xlabel("Time (HH:MM)")
     ax4.set_title("TOU Raw vs Effective")
     ax4.grid(True, alpha=0.4)
-    ax4.legend(loc="upper right")
+    ax4.legend(**legend_kwargs)
 
     # NEW/CHANGED: highlight solar window on every subplot.
     plot_start = SHIFT_START
@@ -2944,12 +2981,42 @@ def plot_policy_result(cost_details, title_prefix="Policy Result"):
         for ax in (ax1, ax2, ax3, ax4):
             ax.axvspan(ss, ee, color="gold", alpha=0.18, linewidth=0)
 
-    xticks = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN + 1, 60)
+    # Reduce x-axis tick density for publication readability (every 2 hours instead of 1).
+    tick_step = 120 if publication else 60
+    xticks = np.arange(SHIFT_START, SHIFT_START + SIM_DURATION_MIN + 1, tick_step)
     ax4.set_xticks(xticks)
-    ax4.set_xticklabels([f"{(x // 60) % 24:02d}:{x % 60:02d}" for x in xticks])
+    ax4.set_xticklabels(
+        [f"{(x // 60) % 24:02d}:{x % 60:02d}" for x in xticks],
+        fontsize=tick_fs,
+    )
 
-    plt.tight_layout()
-    plt.show()
+    # Apply consistent font/tick styling to every subplot.
+    for ax in (ax1, ax2, ax3, ax4):
+        if ax.get_title():
+            ax.set_title(ax.get_title(), fontsize=title_fs, fontweight="bold")
+        if ax.get_xlabel():
+            ax.set_xlabel(ax.get_xlabel(), fontsize=label_fs, fontweight="bold")
+        if ax.get_ylabel():
+            ax.set_ylabel(ax.get_ylabel(), fontsize=label_fs, fontweight="bold")
+        ax.tick_params(axis="both", which="major", labelsize=tick_fs)
+
+    fig.tight_layout()
+
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        safe_name = "".join(
+            c if (c.isalnum() or c in ("_", "-")) else "_" for c in str(title_prefix)
+        )
+        png_path = os.path.join(save_dir, f"{safe_name}.png")
+        pdf_path = os.path.join(save_dir, f"{safe_name}.pdf")
+        fig.savefig(png_path, dpi=300, bbox_inches="tight")
+        fig.savefig(pdf_path, bbox_inches="tight")
+        print(f"Saved: {png_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 def dump_mh_trace(cost_details, out_csv_path, step_min=1):
