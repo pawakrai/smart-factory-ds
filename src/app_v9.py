@@ -168,7 +168,7 @@ SOLAR_OFFSET_KW = 500.0
 # NEW/CHANGED: effective TOU discount during solar window.
 SOLAR_EFFECTIVE_PRICE_FACTOR = 0.35
 FURNACE_COLORS = {"A": "blue", "B": "green"}
-MH_FURNACE_COLORS = {"A": "red", "B": "orange"}
+MH_FURNACE_COLORS = {"A": "#D55E00", "B": "#56B4E9"}
 furnace_y = {0: 10, 1: 25}
 height = 8
 
@@ -2691,36 +2691,44 @@ def plot_policy_result(
     tou_raw = cost_details.get("tou_raw_price")
     tou_effective = cost_details.get("tou_effective_price")
 
-    # Publication mode: bigger figure with extra vertical room for larger fonts.
-    fig_size = (20, 16) if publication else (18, 14)
+    # Publication mode: tall figure with legends placed below each subplot
+    # so the data area is not horizontally compressed by side legends.
+    fig_size = (22, 24) if publication else (18, 14)
+    hspace = 0.75 if publication else 0.32
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(
-        4, 1, figsize=fig_size, sharex=True, gridspec_kw={"hspace": 0.32}
+        4, 1, figsize=fig_size, sharex=True, gridspec_kw={"hspace": hspace}
     )
 
     # Font tokens (per-axis styling applied at the end of the function)
     if publication:
-        title_fs = 15
-        label_fs = 14
-        tick_fs = 12
-        legend_fs = 11
-        gantt_text_fs = 12
-        annot_fs = 11
-        legend_kwargs = dict(
-            loc="upper left",
-            bbox_to_anchor=(1.01, 1.0),
-            fontsize=legend_fs,
-            frameon=True,
-            framealpha=0.95,
-            borderaxespad=0.0,
-        )
+        title_fs = 26
+        label_fs = 24
+        tick_fs = 22
+        legend_fs = 20
+        gantt_text_fs = 22
+
+        def _legend_below(ax, ncol):
+            ax.legend(
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.22),
+                ncol=ncol,
+                fontsize=legend_fs,
+                frameon=True,
+                framealpha=0.95,
+                borderaxespad=0.4,
+                handlelength=2.5,
+                columnspacing=2.0,
+                handletextpad=0.7,
+            )
     else:
         title_fs = 11
         label_fs = 11
         tick_fs = 10
         legend_fs = 9
         gantt_text_fs = 9
-        annot_fs = 9
-        legend_kwargs = dict(loc="upper right", fontsize=legend_fs)
+
+        def _legend_below(ax, ncol):
+            ax.legend(loc="upper right", fontsize=legend_fs)
 
     for item in schedule:
         b_id = item["batch_id"]
@@ -2759,7 +2767,7 @@ def plot_policy_result(
 
     ax1.set_ylabel("IF Furnace")
     ax1.set_yticks([furnace_y[0] + height / 2, furnace_y[1] + height / 2])
-    ax1.set_yticklabels(["Furnace A", "Furnace B"])
+    ax1.set_yticklabels(["IF-A", "IF-B"])
     ax1.grid(True, axis="y", alpha=0.4)
     ax1.set_title(f"{title_prefix} - IF Gantt (melt=gray, holding/reheat=red)")
 
@@ -2789,7 +2797,7 @@ def plot_policy_result(
     ax2.set_ylabel("M&H Level (kg)")
     ax2.set_title("M&H Levels")
     ax2.grid(True, alpha=0.4)
-    ax2.legend(**legend_kwargs)
+    _legend_below(ax2, ncol=2)
 
     use_visual = bool(
         USE_VISUAL_IF_PROFILE
@@ -2814,8 +2822,8 @@ def plot_policy_result(
                 ax3.plot(
                     t_shifted,
                     baseline_nominal,
-                    label="Baseline kW (no spikes)",
-                    color="gray",
+                    label="_nolegend_",
+                    color="#999999",
                     linewidth=1.0,
                     linestyle="--",
                     alpha=0.75,
@@ -2824,20 +2832,20 @@ def plot_policy_result(
                 pass
 
         ax3.plot(
-            t_shifted, baseline_kw, label="Baseline kW", color="gray", linewidth=1.5
+            t_shifted, baseline_kw, label="Baseline kW", color="#999999", linewidth=1.5
         )
         ax3.plot(
             t_shifted,
             if_kw_to_plot,
             label="IF kW (plot)" if use_visual else "IF kW",
-            color="blue",
+            color="#0072B2",
             linewidth=1.5,
         )
         ax3.plot(
             t_shifted,
             total_kw_to_plot,
             label="Total Plant kW (plot)" if use_visual else "Total Plant kW",
-            color="red",
+            color="#009E73",
             linewidth=2,
         )
         ax3.axhline(
@@ -2847,9 +2855,11 @@ def plot_policy_result(
         ax3.scatter(
             [SHIFT_START + peak_idx],
             [total_kw_to_plot[peak_idx]],
-            color="magenta" if not use_visual else "orange",
+            color="#000000",
             zorder=5,
-            label=f"Peak {'(plot) ' if use_visual else ''}{total_kw_to_plot[peak_idx]:.1f} kW",
+            marker="*",
+            s=140,
+            label="Peak (plot)" if use_visual else "Peak",
         )
         if use_visual:
             try:
@@ -2857,9 +2867,9 @@ def plot_policy_result(
                 ax3.scatter(
                     [SHIFT_START + peak_idx_acc],
                     [float(np.asarray(total_kw, dtype=float)[peak_idx_acc])],
-                    color="magenta",
+                    color="#000000",
                     zorder=5,
-                    label=f"Peak (account) {float(np.asarray(total_kw, dtype=float)[peak_idx_acc]):.1f} kW",
+                    label="_nolegend_",
                     marker="x",
                 )
             except Exception:
@@ -2868,10 +2878,10 @@ def plot_policy_result(
         md_15_line = float(cost_details.get("md_15_kw", 0.0))
         ax3.axhline(
             md_15_line,
-            color="purple",
+            color="#CC79A7",
             linestyle=":",
             linewidth=1.6,
-            label=f"MD15 {md_15_line:.1f} kW",
+            label="MD15",
         )
         md_15_plot = None
         if use_visual:
@@ -2881,11 +2891,11 @@ def plot_policy_result(
                 )
                 ax3.axhline(
                     md_15_plot,
-                    color="darkgreen",
+                    color="#CC79A7",
                     linestyle="--",
                     linewidth=1.4,
                     alpha=0.85,
-                    label=f"MD15 (plot) {md_15_plot:.1f} kW",
+                    label="_nolegend_",
                 )
             except Exception:
                 md_15_plot = None
@@ -2900,8 +2910,8 @@ def plot_policy_result(
                         y0,
                         y1,
                         where=mask,
-                        color="orange",
-                        alpha=0.08,
+                        color="#E69F00",
+                        alpha=0.10,
                         step="pre",
                         label="Baseline spike window",
                     )
@@ -2909,27 +2919,11 @@ def plot_policy_result(
             except Exception:
                 pass
 
-        md_15 = float(cost_details.get("md_15_kw", 0.0))
-        dc_month = float(cost_details.get("demand_charge_month", 0.0))
-        dc_day = float(cost_details.get("demand_charge_day_equiv", 0.0))
-        md15_txt = f"MD15(acc)={md_15:.1f} kW" + (
-            f" | MD15(plot)={md_15_plot:.1f} kW" if md_15_plot is not None else ""
-        )
-        ax3.text(
-            0.01,
-            0.98,
-            f"{md15_txt} | DC month={dc_month:.1f} THB | DC day~{dc_day:.1f} THB",
-            transform=ax3.transAxes,
-            ha="left",
-            va="top",
-            fontsize=annot_fs,
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.85),
-        )
     ax3.set_ylabel("kW")
     ax3.set_title("Plant Load")
     ax3.grid(True, alpha=0.4)
-    # Plant Load has the densest legend — keep a single column outside the panel.
-    ax3.legend(**legend_kwargs)
+    # Plant Load has the densest legend — split across multiple columns below the panel.
+    _legend_below(ax3, ncol=4)
 
     if tou_raw is not None:
         ax4.plot(
@@ -2944,7 +2938,7 @@ def plot_policy_result(
             t_shifted,
             tou_effective,
             label="TOU Effective Price (after solar)",
-            color="purple",
+            color="#CC79A7",
             linewidth=2.0,
         )
     if (if_kw is not None or if_kw_plot is not None) and tou_effective is not None:
@@ -2957,8 +2951,8 @@ def plot_policy_result(
             y0,
             y1,
             where=active_mask,
-            color="steelblue",
-            alpha=0.22,
+            color="#0072B2",
+            alpha=0.18,
             step="pre",
             label="IF active window",
         )
@@ -2966,7 +2960,7 @@ def plot_policy_result(
     ax4.set_xlabel("Time (HH:MM)")
     ax4.set_title("TOU Raw vs Effective")
     ax4.grid(True, alpha=0.4)
-    ax4.legend(**legend_kwargs)
+    _legend_below(ax4, ncol=3)
 
     # NEW/CHANGED: highlight solar window on every subplot.
     plot_start = SHIFT_START
@@ -2979,7 +2973,7 @@ def plot_policy_result(
         ss = max(s, plot_start)
         ee = min(e, plot_end)
         for ax in (ax1, ax2, ax3, ax4):
-            ax.axvspan(ss, ee, color="gold", alpha=0.18, linewidth=0)
+            ax.axvspan(ss, ee, color="#F0E442", alpha=0.15, linewidth=0)
 
     # Reduce x-axis tick density for publication readability (every 2 hours instead of 1).
     tick_step = 120 if publication else 60
