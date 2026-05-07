@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlmodel import Session, select
 from ..database import get_session, engine
-from ..models import Plan, Batch
+from ..models import Plan, Batch, EnergyLog
 from ..models.setting import Setting
 from ..schemas.plan import PlanCreate, PlanUpdate, PlanRead, ScheduleData
 from ..services.ga_service import generate_schedule
@@ -131,6 +131,13 @@ def delete_plan(plan_id: str, session: Session = Depends(get_session)):
     plan = session.get(Plan, plan_id)
     if not plan:
         raise HTTPException(404, "Plan not found")
+    # FK on existing schema isn't ON DELETE CASCADE — remove dependents explicitly.
+    batch_ids = [b.id for b in session.exec(select(Batch).where(Batch.plan_id == plan_id)).all()]
+    if batch_ids:
+        for log in session.exec(select(EnergyLog).where(EnergyLog.batch_id.in_(batch_ids))).all():
+            session.delete(log)
+        for batch in session.exec(select(Batch).where(Batch.plan_id == plan_id)).all():
+            session.delete(batch)
     session.delete(plan)
     session.commit()
 

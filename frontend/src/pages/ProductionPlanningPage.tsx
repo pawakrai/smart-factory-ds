@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   CalendarClock, Loader2, ChevronRight, AlertCircle, Zap, Factory,
   Trash2, Flame, ChevronDown, ChevronUp, CheckCircle, Calendar, Filter,
+  MoreVertical,
 } from "lucide-react";
 
 import PageWrapper from "@/components/layout/PageWrapper";
@@ -289,7 +290,7 @@ function PlanRow({
   const isPending = plan.status === "pending";
   return (
     <div
-      className={`flex items-center gap-1 rounded-lg border transition-colors cursor-pointer ${
+      className={`flex items-stretch gap-1 rounded-lg border transition-colors ${
         active ? "bg-brand-red/10 border-brand-red/30" : "bg-bg-elevated hover:bg-[var(--border-color)]/40 border-transparent"
       } ${isPending ? "opacity-70" : ""}`}
       onContextMenu={onContextMenu}
@@ -297,7 +298,7 @@ function PlanRow({
       <button
         onClick={onClick}
         disabled={isPending}
-        className="flex-1 flex items-center justify-between px-3 py-2.5 text-left min-w-0"
+        className="flex-1 flex items-center justify-between px-3 py-2.5 text-left min-w-0 cursor-pointer disabled:cursor-not-allowed"
       >
         <div className="min-w-0">
           <p className="text-xs font-medium text-[var(--text-primary)] truncate">
@@ -321,6 +322,17 @@ function PlanRow({
           {!isPending && <ChevronRight size={12} className="text-zinc-600" />}
         </div>
       </button>
+      {!isPending && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onContextMenu(e); }}
+          aria-label="Plan actions"
+          title="Actions (Activate / Delete)"
+          className="px-2 flex items-center justify-center text-zinc-500 hover:text-[var(--text-primary)] hover:bg-[var(--border-color)]/40 rounded-r-lg cursor-pointer"
+        >
+          <MoreVertical size={14} />
+        </button>
+      )}
     </div>
   );
 }

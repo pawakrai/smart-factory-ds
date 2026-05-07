@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,6 +10,15 @@ from .routers import uploads
 
 # Import models so SQLModel registers them before create_all
 from .models import Plan, Batch, EnergyLog, Setting, PlantLoadProfile  # noqa: F401
+
+# Refuse to start with SQLite when running inside Docker -- almost always means
+# the operator forgot `--env-file .env.local|.env.deploy` and compose silently
+# picked up a stray host `.env` pointing at sqlite.
+if os.path.exists("/.dockerenv") and "sqlite" in settings.database_url.lower():
+    raise RuntimeError(
+        f"Refusing to start: DATABASE_URL is {settings.database_url!r} inside Docker. "
+        "Run with --env-file .env.local (with --profile local) or --env-file .env.deploy."
+    )
 
 app = FastAPI(
     title="FurnaceFlow API",

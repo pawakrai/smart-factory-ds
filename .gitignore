@@ -58,6 +58,8 @@ target/
 
 # DotEnv configuration
 .env
+.env.local
+.env.deploy
 
 # Database
 *.db

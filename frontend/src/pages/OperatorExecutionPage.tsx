@@ -211,7 +211,7 @@ export default function OperatorExecutionPage() {
     reset,
     setValue,
     formState: { errors, isSubmitting },
-  } = useForm<FormData>({ resolver: zodResolver(schema) });
+  } = useForm<z.input<typeof schema>, unknown, FormData>({ resolver: zodResolver(schema) });
 
   // ── Auto-select in_progress batch when batches load ──
   useEffect(() => {

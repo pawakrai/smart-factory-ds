@@ -125,10 +125,8 @@ export default function ReportsPage() {
     }
 
     result.sort((a, b) => {
-      let av: unknown = a[sortField];
-      let bv: unknown = b[sortField];
-      if (av === null || av === undefined) av = "";
-      if (bv === null || bv === undefined) bv = "";
+      const av: string | number = (a[sortField] ?? "") as string | number;
+      const bv: string | number = (b[sortField] ?? "") as string | number;
       if (av < bv) return sortDir === "asc" ? -1 : 1;
       if (av > bv) return sortDir === "asc" ? 1 : -1;
       return 0;

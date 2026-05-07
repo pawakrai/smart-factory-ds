@@ -21,7 +21,7 @@ export function usePowerProfile(batchId: string | null) {
 export function useUpdateBatch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Pick<Batch, "actual_start" | "ingot_kg" | "fe_kg" | "si_kg" | "scrap_kg" | "status">> }) =>
+    mutationFn: ({ id, data }: { id: string; data: Partial<Pick<Batch, "actual_start" | "actual_finish" | "ingot_kg" | "fe_kg" | "si_kg" | "scrap_kg" | "status">> }) =>
       batchesApi.update(id, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["batches"] });

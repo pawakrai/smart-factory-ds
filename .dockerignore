@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Env files (compose injects vars; never bake into image)
+.env
+.env.*
+
+# Local DBs
+dev.db
+*.db
+*.rdb
+
+# Frontend (built separately)
+frontend/node_modules/
+frontend/dist/
+frontend/.env*
+
+# VCS / tooling
+.git/
+.gitignore
+.dockerignore
+.github/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Docs / non-runtime
+README.md
+docs/
+*.ipynb
+
+# Heavy raw datasets (re-add specifically if backend needs them at runtime)
+data/raw/
+
+# Plan / scratch
+.claude/
