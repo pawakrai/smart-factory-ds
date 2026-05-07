@@ -17,7 +17,9 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost/ >/dev/null || exit 1
+# BusyBox wget --spider just sends a HEAD-like request, no body download.
+# More portable across nginx:alpine variants than `wget -qO-`.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget --spider -q -T 3 http://127.0.0.1/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
