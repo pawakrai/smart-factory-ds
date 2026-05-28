@@ -17,6 +17,10 @@ class Plan(SQLModel, table=True):
     if_b_enabled: bool = Field(default=True)
     mh_a_consumption_rate: Optional[float] = Field(default=None)
     mh_b_consumption_rate: Optional[float] = Field(default=None)
+    mh_a_initial_level_kg: Optional[float] = Field(default=None)
+    mh_b_initial_level_kg: Optional[float] = Field(default=None)
+    consider_tou_price: bool = Field(default=True)
+    consider_plant_load: bool = Field(default=True)
     schedule_metrics: Optional[str] = None          # JSON: ScheduleMetrics
     schedule_data: Optional[str] = None             # JSON: ScheduleData (time-series arrays)
     created_at: datetime = Field(default_factory=datetime.utcnow)

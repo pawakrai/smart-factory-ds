@@ -180,7 +180,7 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
     ]
     # Update POWER_PROFILE to match new power options — keep the existing entries
     # (durations/energies are fixed physics, not user-configurable)
-    app_v9.IF_BATCH_OUTPUT_KG = f("if_batch_output_kg", 500)
+    app_v9.IF_BATCH_OUTPUT_KG = f("if_batch_output_kg", 600)
     app_v9.IF_FURNACE_EFFICIENCY_FACTOR = {
         0: f("if_efficiency_factor_a", 0.99),
         1: f("if_efficiency_factor_b", 1.03),
@@ -195,9 +195,12 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         "A": f("mh_a_capacity_kg", 400),
         "B": f("mh_b_capacity_kg", 250),
     }
+    # MH initial level: plan override > settings default
+    mh_a_init = getattr(plan, "mh_a_initial_level_kg", None)
+    mh_b_init = getattr(plan, "mh_b_initial_level_kg", None)
     app_v9.MH_INITIAL_LEVEL_KG = {
-        "A": f("mh_a_initial_level_kg", 400),
-        "B": f("mh_b_initial_level_kg", 230),
+        "A": float(mh_a_init) if mh_a_init is not None else f("mh_a_initial_level_kg", 400),
+        "B": float(mh_b_init) if mh_b_init is not None else f("mh_b_initial_level_kg", 230),
     }
     app_v9.MH_CONSUMPTION_RATE_KG_PER_MIN = {
         "A": float(mh_a_rate),
@@ -231,12 +234,55 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
     app_v9.DEMAND_CHARGE_BAHT_PER_KW_MONTH = f("demand_charge_baht_per_kw_month", 132.93)
     app_v9.CONTRACT_DEMAND_KW = f("contract_demand_kw", 1600)
 
+    # Per-plan cost-consideration flags
+    if not bool(getattr(plan, "consider_tou_price", True)):
+        # Flat off-peak price 24h: collapse onpeak to offpeak and zero the high-TOU penalty weight
+        app_v9.TOU_ONPEAK_BAHT_PER_KWH_BASE = app_v9.TOU_OFFPEAK_BAHT_PER_KWH_BASE
+        app_v9.TOU_ONPEAK_BAHT_PER_KWH = app_v9.TOU_OFFPEAK_BAHT_PER_KWH
+        if hasattr(app_v9, "ENERGY_MODE_HIGH_TOU_GAP_WEIGHT"):
+            app_v9.ENERGY_MODE_HIGH_TOU_GAP_WEIGHT = 0.0
+    if not bool(getattr(plan, "consider_plant_load", True)):
+        # Drop demand-charge term so GA stops avoiding peak demand
+        app_v9.DEMAND_CHARGE_BAHT_PER_KW_MONTH = 0.0
+
+    # When the user signals "ignore all cost optimisation" by turning off BOTH cost flags,
+    # treat the GA objective as pure max-throughput: zero the time-dependent cost penalties
+    # so it can melt continuously, bounded only by the hard MH min/overflow constraints.
+    if (not bool(getattr(plan, "consider_tou_price", True))
+            and not bool(getattr(plan, "consider_plant_load", True))):
+        app_v9.IF_HOLDING_PENALTY_PER_MIN = 0.0
+        if hasattr(app_v9, "ENERGY_MAKESPAN_COST_PER_MIN"):
+            app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 0.0
+        if hasattr(app_v9, "ENERGY_IDLE_GAP_COST_PER_MIN"):
+            app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 0.0
+        if hasattr(app_v9, "ENERGY_IDLE_GAP_SUPERLINEAR_COEFF"):
+            app_v9.ENERGY_IDLE_GAP_SUPERLINEAR_COEFF = 0.0
+        if hasattr(app_v9, "OBJ1_COMPONENT_WEIGHTS"):
+            app_v9.OBJ1_COMPONENT_WEIGHTS["holding_penalty"] = 0.0
+        # Linearise low-level penalty so GA doesn't stagger starts just to dodge the
+        # quadratic-depth term — the hard constraint already keeps levels above min.
+        app_v9.LOW_LEVEL_NONLINEAR_FACTOR = 0.0
+        # Remove the 25-minute JIT slack floor that energy mode normally enforces to
+        # allow price-window shifting — with flat TOU this just forces avoidable hold.
+        if hasattr(app_v9, "ENERGY_MODE_MIN_JIT_SLACK_MIN"):
+            app_v9.ENERGY_MODE_MIN_JIT_SLACK_MIN = 0.0
+        # Cap GA's freedom to insert long inter-IF-start gaps — flags-off mode means
+        # "melt continuously"; preventing the GA from choosing a high min_start_gap_min.
+        if hasattr(app_v9, "POLICY_OVERRIDE_MIN_START_GAP_MAX"):
+            app_v9.POLICY_OVERRIDE_MIN_START_GAP_MAX = 5.0
+
     # Solar window (parse HH:MM strings)
     solar_start_str = settings_dict.get("solar_window_start", "12:00")
     solar_end_str = settings_dict.get("solar_window_end", "13:00")
     app_v9.SOLAR_START = _hhmm_to_min(solar_start_str)
     app_v9.SOLAR_END = _hhmm_to_min(solar_end_str)
     app_v9.SOLAR_EFFECTIVE_PRICE_FACTOR = f("solar_price_factor", 0.35)
+
+    # Disable solar window discount when both flags are off — must come AFTER the
+    # unconditional settings load above (which would otherwise overwrite this).
+    if (not bool(getattr(plan, "consider_tou_price", True))
+            and not bool(getattr(plan, "consider_plant_load", True))):
+        app_v9.SOLAR_EFFECTIVE_PRICE_FACTOR = 1.0
 
     # Clear evaluation cache so new settings take effect
     app_v9._EVAL_CACHE.clear()
@@ -358,6 +404,19 @@ def _build_ga_result(plan: "Plan", sim: dict, settings_dict: dict[str, str], app
     mh_a_raw = mh_levels.get("A", np.zeros(1440)) if mh_levels else np.zeros(1440)
     mh_b_raw = mh_levels.get("B", np.zeros(1440)) if mh_levels else np.zeros(1440)
 
+    # Per-plan display overrides — flatten arrays for the charts when the
+    # corresponding consideration was disabled at plan time.
+    if not bool(getattr(plan, "consider_tou_price", True)):
+        offpeak_eff = float(getattr(app_v9, "TOU_OFFPEAK_BAHT_PER_KWH", 0.0)) if app_v9 is not None else 0.0
+        offpeak_base = float(getattr(app_v9, "TOU_OFFPEAK_BAHT_PER_KWH_BASE", offpeak_eff)) if app_v9 is not None else 0.0
+        tou_raw = np.full_like(np.asarray(tou_raw, dtype=float), offpeak_eff)
+        tou_raw_price_raw = np.full_like(np.asarray(tou_raw_price_raw, dtype=float), offpeak_base)
+    if not bool(getattr(plan, "consider_plant_load", True)):
+        baseline_arr = np.asarray(baseline_raw, dtype=float)
+        baseline_mean = float(baseline_arr.mean()) if baseline_arr.size else 0.0
+        baseline_raw = np.full_like(baseline_arr, baseline_mean)
+        total_kw_raw = baseline_raw + np.asarray(if_kw_raw, dtype=float)
+
     duration_min = len(np.asarray(if_kw_raw))
     indices = list(range(0, duration_min, SAMPLE_INTERVAL))
 
@@ -383,6 +442,8 @@ def _build_ga_result(plan: "Plan", sim: dict, settings_dict: dict[str, str], app
         mh_b_levels_kg=_sample(mh_b_raw),
         mh_a_min_level_kg=float(MH_MIN_OPERATIONAL_LEVEL_KG.get("A", 200)),
         mh_b_min_level_kg=float(MH_MIN_OPERATIONAL_LEVEL_KG.get("B", 125)),
+        mh_a_max_capacity_kg=float(app_v9.MH_MAX_CAPACITY_KG.get("A", 800)) if app_v9 is not None else 800.0,
+        mh_b_max_capacity_kg=float(app_v9.MH_MAX_CAPACITY_KG.get("B", 1100)) if app_v9 is not None else 1100.0,
         if_kw=_sample(if_kw_raw),
         baseline_kw=_sample(baseline_raw),
         total_plant_kw=_sample(total_kw_raw),

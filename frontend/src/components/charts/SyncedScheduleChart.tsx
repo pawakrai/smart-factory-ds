@@ -89,11 +89,13 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
   const {
     mh_a_levels_kg, mh_b_levels_kg,
     mh_a_min_level_kg, mh_b_min_level_kg,
+    mh_a_max_capacity_kg, mh_b_max_capacity_kg,
     sample_interval_min,
   } = scheduleData;
 
   const maxMhY = Math.max(
     ...mh_a_levels_kg, ...mh_b_levels_kg,
+    mh_a_max_capacity_kg, mh_b_max_capacity_kg,
     mh_a_min_level_kg * 1.4,
   ) * 1.08;
 
@@ -354,6 +356,27 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         <text x={PAD.left + CHART_W - 4} y={toMhY(mh_b_min_level_kg) - 2}
           textAnchor="end" fontSize={8} fill={C_MH_B} fontFamily="Inter, sans-serif" opacity={0.8}>
           Min B ({mh_b_min_level_kg}kg)
+        </text>
+
+        {/* Max capacity reference lines */}
+        <line
+          x1={PAD.left} y1={toMhY(mh_a_max_capacity_kg)}
+          x2={PAD.left + CHART_W} y2={toMhY(mh_a_max_capacity_kg)}
+          stroke={C_MH_A} strokeWidth={1} strokeDasharray="5 3" opacity={0.4}
+        />
+        <text x={PAD.left + 4} y={toMhY(mh_a_max_capacity_kg) - 2} fontSize={8}
+          fill={C_MH_A} fontFamily="Inter, sans-serif" opacity={0.7}>
+          Max A ({mh_a_max_capacity_kg}kg)
+        </text>
+
+        <line
+          x1={PAD.left} y1={toMhY(mh_b_max_capacity_kg)}
+          x2={PAD.left + CHART_W} y2={toMhY(mh_b_max_capacity_kg)}
+          stroke={C_MH_B} strokeWidth={1} strokeDasharray="5 3" opacity={0.4}
+        />
+        <text x={PAD.left + CHART_W - 4} y={toMhY(mh_b_max_capacity_kg) - 2}
+          textAnchor="end" fontSize={8} fill={C_MH_B} fontFamily="Inter, sans-serif" opacity={0.7}>
+          Max B ({mh_b_max_capacity_kg}kg)
         </text>
 
         {/* M&H level lines */}

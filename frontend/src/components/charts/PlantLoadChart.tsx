@@ -61,10 +61,10 @@ export default function PlantLoadChart({ data }: Props) {
   const hasSolar =
     solarStart != null && solarEnd != null && solarEnd > solarStart;
 
-  // X-axis ticks: every 60 min
+  // X-axis ticks: every 120 min (match Gantt chart)
   const tickIndices = chartData
     .map((d, i) => ({ i, offset: d.minuteOffset }))
-    .filter(({ offset }) => offset % 60 === 0)
+    .filter(({ offset }) => offset % 120 === 0)
     .map(({ offset }) => offset);
 
   return (

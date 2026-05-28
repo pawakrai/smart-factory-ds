@@ -11,6 +11,10 @@ class PlanCreate(BaseModel):
     if_b_enabled: bool = True
     mh_a_consumption_rate: Optional[float] = None   # None = use settings default
     mh_b_consumption_rate: Optional[float] = None
+    mh_a_initial_level_kg: Optional[float] = None   # None = use settings default
+    mh_b_initial_level_kg: Optional[float] = None
+    consider_tou_price: bool = True
+    consider_plant_load: bool = True
 
 
 class PlanUpdate(BaseModel):
@@ -41,6 +45,8 @@ class ScheduleData(BaseModel):
     mh_b_levels_kg: list[float]
     mh_a_min_level_kg: float
     mh_b_min_level_kg: float
+    mh_a_max_capacity_kg: float = 800.0
+    mh_b_max_capacity_kg: float = 1100.0
     if_kw: list[float]
     baseline_kw: list[float]
     total_plant_kw: list[float]
@@ -58,6 +64,8 @@ class PlanRead(BaseModel):
     shift_start: datetime
     opt_mode: str
     status: str
+    consider_tou_price: Optional[bool] = None
+    consider_plant_load: Optional[bool] = None
     schedule_metrics: Optional[str] = None
     created_at: datetime
 

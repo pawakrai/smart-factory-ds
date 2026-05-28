@@ -57,7 +57,9 @@ def _seed_settings():
         ("if_power_option_low_kw",           "450",    "IF power option low (kW)"),
         ("if_power_option_mid_kw",           "475",    "IF power option mid (kW)"),
         ("if_power_option_high_kw",          "500",    "IF power option high (kW)"),
-        ("if_batch_output_kg",               "500",    "Metal output per IF batch (kg)"),
+        ("if_batch_output_kg",               "600",    "Metal output per IF batch (kg)"),
+        ("if_pour_amount_mh_a_kg",           "250",    "Metal poured from IF to MH-A per pour event (kg)"),
+        ("if_pour_amount_mh_b_kg",           "350",    "Metal poured from IF to MH-B per pour event (kg)"),
         ("if_efficiency_factor_a",           "0.99",   "IF-A efficiency factor"),
         ("if_efficiency_factor_b",           "1.03",   "IF-B efficiency factor"),
         ("cold_start_gap_threshold_min",     "180",    "Gap (min) triggering cold start penalty"),
@@ -65,14 +67,14 @@ def _seed_settings():
         ("cold_start_extra_energy_kwh",      "30",     "Extra energy for cold start (kWh)"),
         ("post_pour_downtime_min",           "10",     "Downtime after pour before furnace free (min)"),
         # ── Section B: M&H Furnace ────────────────────────────────────────────
-        ("mh_a_capacity_kg",                 "400",    "M&H A maximum capacity (kg)"),
-        ("mh_a_initial_level_kg",            "400",    "M&H A starting level at shift start (kg)"),
-        ("mh_a_consumption_rate_kg_per_min", "2.20",   "M&H A consumption rate (kg/min)"),
-        ("mh_a_min_operational_level_kg",    "200",    "M&H A minimum safe operational level (kg)"),
-        ("mh_b_capacity_kg",                 "250",    "M&H B maximum capacity (kg)"),
-        ("mh_b_initial_level_kg",            "230",    "M&H B starting level at shift start (kg)"),
-        ("mh_b_consumption_rate_kg_per_min", "2.30",   "M&H B consumption rate (kg/min)"),
-        ("mh_b_min_operational_level_kg",    "125",    "M&H B minimum safe operational level (kg)"),
+        ("mh_a_capacity_kg",                 "800",    "M&H A maximum capacity (kg)"),
+        ("mh_a_initial_level_kg",            "800",    "M&H A starting level at shift start (kg)"),
+        ("mh_a_consumption_rate_kg_per_min", "2.50",   "M&H A consumption rate (kg/min)"),
+        ("mh_a_min_operational_level_kg",    "400",    "M&H A minimum safe operational level (kg)"),
+        ("mh_b_capacity_kg",                 "1100",   "M&H B maximum capacity (kg)"),
+        ("mh_b_initial_level_kg",            "1100",   "M&H B starting level at shift start (kg)"),
+        ("mh_b_consumption_rate_kg_per_min", "2.60",   "M&H B consumption rate (kg/min)"),
+        ("mh_b_min_operational_level_kg",    "550",    "M&H B minimum safe operational level (kg)"),
         ("mh_empty_penalty_per_min",         "150",    "Penalty per minute when M&H furnace runs empty (Baht/min)"),
         ("mh_low_level_minute_penalty",      "40",     "Penalty per minute when M&H level is below minimum (Baht/min)"),
         ("mh_low_level_penalty_rate",        "200",    "Base penalty rate for low-level violation used in simulation"),
@@ -101,7 +103,7 @@ def _seed_settings():
         # ── Section E: Shift Configuration ───────────────────────────────────
         ("shift_duration_hours",             "8",      "Default shift duration (hours)"),
         ("shift_start_hhmm",                 "08:00",  "Default shift start time of day (HH:MM)"),
-        ("target_batches_default",           "8",      "Default number of batches per shift"),
+        ("target_batches_default",           "9",      "Default number of batches per shift"),
     ]
     with Session(engine) as session:
         for key, value, desc in defaults:

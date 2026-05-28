@@ -76,6 +76,10 @@ def create_plan(data: PlanCreate, background_tasks: BackgroundTasks, session: Se
         if_b_enabled=data.if_b_enabled,
         mh_a_consumption_rate=data.mh_a_consumption_rate,
         mh_b_consumption_rate=data.mh_b_consumption_rate,
+        mh_a_initial_level_kg=data.mh_a_initial_level_kg,
+        mh_b_initial_level_kg=data.mh_b_initial_level_kg,
+        consider_tou_price=data.consider_tou_price,
+        consider_plant_load=data.consider_plant_load,
     )
     session.add(plan)
     session.commit()

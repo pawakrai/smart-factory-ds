@@ -33,6 +33,10 @@ const schema = z.object({
   if_b_enabled: z.boolean(),
   mh_a_consumption_rate: z.number().min(0.1, "Min 0.1").max(10, "Max 10"),
   mh_b_consumption_rate: z.number().min(0.1, "Min 0.1").max(10, "Max 10"),
+  mh_a_initial_level_kg: z.number().min(0, "Min 0").max(2000, "Max 2000"),
+  mh_b_initial_level_kg: z.number().min(0, "Min 0").max(2000, "Max 2000"),
+  consider_tou_price: z.boolean(),
+  consider_plant_load: z.boolean(),
 }).refine((d) => d.if_a_enabled || d.if_b_enabled, {
   message: "At least one furnace must be enabled",
   path: ["if_a_enabled"],
@@ -77,12 +81,16 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      target_batches: 12,
+      target_batches: 9,
       opt_mode: "energy",
       if_a_enabled: true,
       if_b_enabled: true,
-      mh_a_consumption_rate: 2.20,
-      mh_b_consumption_rate: 2.30,
+      mh_a_consumption_rate: 2.50,
+      mh_b_consumption_rate: 2.60,
+      mh_a_initial_level_kg: 800,
+      mh_b_initial_level_kg: 1100,
+      consider_tou_price: true,
+      consider_plant_load: true,
       shift_start: (() => {
         const d = new Date();
         d.setHours(8, 0, 0, 0);
@@ -95,6 +103,8 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
   const optMode = watch("opt_mode");
   const ifAEnabled = watch("if_a_enabled");
   const ifBEnabled = watch("if_b_enabled");
+  const considerTou = watch("consider_tou_price");
+  const considerPlantLoad = watch("consider_plant_load");
 
   function onSubmit(values: FormValues) {
     mutate(
@@ -108,6 +118,10 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
         if_b_enabled: values.if_b_enabled,
         mh_a_consumption_rate: values.mh_a_consumption_rate,
         mh_b_consumption_rate: values.mh_b_consumption_rate,
+        mh_a_initial_level_kg: values.mh_a_initial_level_kg,
+        mh_b_initial_level_kg: values.mh_b_initial_level_kg,
+        consider_tou_price: values.consider_tou_price,
+        consider_plant_load: values.consider_plant_load,
       },
       { onSuccess }
     );
@@ -208,6 +222,73 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
             )}
           </div>
         </div>
+      </div>
+
+      {/* M&H Initial Level */}
+      <div>
+        <label className="block text-xs text-zinc-400 mb-1.5">M&amp;H Initial Level (kg)</label>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10px] text-zinc-600 mb-1">MH-A</label>
+            <input
+              type="number"
+              step="1"
+              {...register("mh_a_initial_level_kg", { valueAsNumber: true })}
+              className="w-full bg-bg-elevated border border-[var(--border-color)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-brand-red"
+            />
+            {errors.mh_a_initial_level_kg && (
+              <p className="text-[10px] text-brand-red mt-0.5">{errors.mh_a_initial_level_kg.message}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-[10px] text-zinc-600 mb-1">MH-B</label>
+            <input
+              type="number"
+              step="1"
+              {...register("mh_b_initial_level_kg", { valueAsNumber: true })}
+              className="w-full bg-bg-elevated border border-[var(--border-color)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-brand-red"
+            />
+            {errors.mh_b_initial_level_kg && (
+              <p className="text-[10px] text-brand-red mt-0.5">{errors.mh_b_initial_level_kg.message}</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Cost Considerations */}
+      <div>
+        <label className="block text-xs text-zinc-400 mb-1.5">Cost Considerations</label>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setValue("consider_tou_price", !considerTou)}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${
+              considerTou
+                ? "bg-brand-red border-brand-red text-white"
+                : "bg-bg-elevated border-[var(--border-color)] text-zinc-500 hover:border-zinc-500"
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${considerTou ? "bg-white" : "bg-zinc-600"}`} />
+            <Zap size={12} />
+            TOU Price
+          </button>
+          <button
+            type="button"
+            onClick={() => setValue("consider_plant_load", !considerPlantLoad)}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${
+              considerPlantLoad
+                ? "bg-brand-red border-brand-red text-white"
+                : "bg-bg-elevated border-[var(--border-color)] text-zinc-500 hover:border-zinc-500"
+            }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${considerPlantLoad ? "bg-white" : "bg-zinc-600"}`} />
+            <Factory size={12} />
+            Plant Load
+          </button>
+        </div>
+        <p className="text-[10px] text-zinc-600 mt-1">
+          Disable to ignore time-of-use pricing or peak demand penalty during GA optimization
+        </p>
       </div>
 
       {/* Opt mode toggle */}
@@ -568,7 +649,50 @@ export default function ProductionPlanningPage() {
           {/* Combined synced chart */}
           <div className="bg-bg-card border border-[var(--border-color)] rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-[var(--text-primary)]">Production Schedule</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Production Schedule</h2>
+                {selectedPlan && (
+                  <>
+                    {/* Mode badge */}
+                    <span
+                      title="Optimisation goal"
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 ${
+                        selectedPlan.opt_mode === "energy"
+                          ? "bg-amber-500/15 text-amber-500"
+                          : "bg-blue-500/15 text-blue-400"
+                      }`}
+                    >
+                      {selectedPlan.opt_mode === "energy" ? (
+                        <><Zap size={9} /> Energy</>
+                      ) : (
+                        <><Factory size={9} /> Max Output</>
+                      )}
+                    </span>
+                    {/* TOU flag */}
+                    <span
+                      title={`TOU price considered: ${selectedPlan.consider_tou_price === false ? "no" : "yes"}`}
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        selectedPlan.consider_tou_price === false
+                          ? "bg-zinc-700/30 text-zinc-500 line-through"
+                          : "bg-brand-red/15 text-brand-red"
+                      }`}
+                    >
+                      TOU
+                    </span>
+                    {/* Plant Load flag */}
+                    <span
+                      title={`Plant load considered: ${selectedPlan.consider_plant_load === false ? "no" : "yes"}`}
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        selectedPlan.consider_plant_load === false
+                          ? "bg-zinc-700/30 text-zinc-500 line-through"
+                          : "bg-brand-red/15 text-brand-red"
+                      }`}
+                    >
+                      Plant Load
+                    </span>
+                  </>
+                )}
+              </div>
               {selectedPlan && batchCount > 0 && (
                 <div className="flex items-center gap-3 text-[10px] text-zinc-400">
                   <span>IF-A: {furnaceA}</span>

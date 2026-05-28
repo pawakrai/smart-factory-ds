@@ -12,6 +12,10 @@ export const plansApi = {
     if_b_enabled: boolean;
     mh_a_consumption_rate: number;
     mh_b_consumption_rate: number;
+    mh_a_initial_level_kg: number;
+    mh_b_initial_level_kg: number;
+    consider_tou_price: boolean;
+    consider_plant_load: boolean;
   }) => client.post<Plan>("/plans", data).then((r) => r.data),
   getBatches: (id: string) =>
     client.get<Batch[]>(`/plans/${id}/batches`).then((r) => r.data),

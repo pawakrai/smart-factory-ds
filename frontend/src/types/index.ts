@@ -10,6 +10,10 @@ export interface Plan {
   status: PlanStatus;
   schedule_metrics: string | null;
   created_at: string;
+  mh_a_initial_level_kg?: number | null;
+  mh_b_initial_level_kg?: number | null;
+  consider_tou_price?: boolean;
+  consider_plant_load?: boolean;
 }
 
 export interface Batch {
@@ -74,6 +78,8 @@ export interface ScheduleData {
   mh_b_levels_kg: number[];
   mh_a_min_level_kg: number;
   mh_b_min_level_kg: number;
+  mh_a_max_capacity_kg: number;
+  mh_b_max_capacity_kg: number;
   if_kw: number[];
   baseline_kw: number[];
   total_plant_kw: number[];

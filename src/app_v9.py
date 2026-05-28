@@ -31,9 +31,10 @@ SERVICE_W_OVERFLOW = 1e8
 SERVICE_W_ZERO_MINUTES = 1e5
 SERVICE_W_EPS_DEFICIT_AREA = 1e2
 SERVICE_W_LOW_LEVEL_MINUTES = 1.0
-SERVICE_W_HOLDING_MINUTES = 1e4
+SERVICE_W_HOLDING_MINUTES = 1e1            # lowered from 1e4 — holding is acceptable to serve throughput
 SERVICE_W_REHEAT_KWH = 1e3
 SERVICE_W_ENERGY_TIEBREAKER = 1e-6
+SERVICE_W_MH_LEVEL_DEFICIT = 1.0           # NEW — penalize MH level below MAX (kg-min) to reward continuous melt
 
 # Energy-mode behavior tuning (price-first scheduling)
 ENERGY_MODE_START_W_DEP = 0.9
@@ -52,6 +53,9 @@ ENERGY_IDLE_GAP_SUPERLINEAR_COEFF = 0.15
 ENERGY_CHEAP_MELT_CREDIT_PER_MIN = 5.0
 ENERGY_MODE_MIN_JIT_SLACK_MIN = 25.0
 
+# Optional GA-decoder caps (None = use default range). Set from ga_service.
+POLICY_OVERRIDE_MIN_START_GAP_MAX = None  # cap min_start_gap_min (minutes)
+
 # Energy-mode objective re-weighting (applies only when OPT_MODE == "energy").
 ENERGY_COST_WEIGHT_ENERGY_MODE = 6.0
 EMPTY_PENALTY_SCALE_ENERGY_MODE = 0.3
@@ -69,7 +73,7 @@ USE_FURNACE_A = True
 USE_FURNACE_B = True
 ALLOW_PARALLEL_IF = False
 
-IF_BATCH_OUTPUT_KG = 500.0
+IF_BATCH_OUTPUT_KG = 600.0
 POST_POUR_DOWNTIME_MIN = 10
 PREFERRED_MH_FURNACE_TO_FILL_FIRST = "B"
 
@@ -642,7 +646,11 @@ def _decode_policy_vector(x):
             "demand_headroom_kw": float(np.clip(x[3], 0.0, 1.0) * 100.0),
             "tou_weight": float(np.clip(x[4], 0.0, 2.0)),
             "peak_avoid_weight": float(np.clip(x[5], 0.0, 1.0)),
-            "min_start_gap_min": float(np.clip(x[6], 0.0, 1.0) * 20.0),
+            "min_start_gap_min": (
+                min(float(np.clip(x[6], 0.0, 1.0) * 20.0), POLICY_OVERRIDE_MIN_START_GAP_MAX)
+                if POLICY_OVERRIDE_MIN_START_GAP_MAX is not None
+                else float(np.clip(x[6], 0.0, 1.0) * 20.0)
+            ),
             "alternation_bias": float(np.clip(x[7], -1.0, 1.0)),
             "force_urgency_threshold": float(np.clip(x[8], 0.70, 0.98)),
             "power_aggressiveness": float(np.clip(x[9], 0.0, 1.0)),
@@ -699,7 +707,11 @@ def _decode_policy_vector(x):
         "start_w_depletion": float(np.clip(x[11], 0.0, 4.0)),
         "start_w_queue": float(np.clip(x[12], 0.0, 4.0)),
         "start_w_peak": float(np.clip(x[13], 0.0, 4.0)),
-        "min_start_gap_min": float(np.clip(x[14], 0.0, 1.0) * 120.0),
+        "min_start_gap_min": (
+            min(float(np.clip(x[14], 0.0, 1.0) * 120.0), POLICY_OVERRIDE_MIN_START_GAP_MAX)
+            if POLICY_OVERRIDE_MIN_START_GAP_MAX is not None
+            else float(np.clip(x[14], 0.0, 1.0) * 120.0)
+        ),
         "gap_peak_coeff": float(np.clip(x[15], 0.0, 3.0)),
         "parallel_open_margin_kw": float(np.clip(x[16], 0.0, 1.0) * 500.0),
         "parallel_score_bias": float(np.clip(x[17], -2.0, 2.0)),
@@ -904,8 +916,17 @@ def _violation_vector(m):
     poured_batches = int(m.get("poured_batches_count", 0))
     target_batches = int(m.get("target_num_batches", _current_num_batches()))
     missing_batches = float(max(0, target_batches - poured_batches))
+
+    # Hard constraint: cumulative kg-min that MH spent below MIN_OPERATIONAL_LEVEL
+    below_min = m.get("mh_below_min_kgmin", {"A": 0.0, "B": 0.0})
+    mh_a_violation = float(below_min.get("A", 0.0))
+    mh_b_violation = float(below_min.get("B", 0.0))
+
     # Constraints are the same for both modes.
-    return np.array([overflow_violation, missing_batches], dtype=float)
+    return np.array(
+        [overflow_violation, missing_batches, mh_a_violation, mh_b_violation],
+        dtype=float,
+    )
 
 
 class PolicyDuplicateElimination(ElementwiseDuplicateElimination):
@@ -1215,13 +1236,11 @@ def _idle_gap_superlinear_minutes_from_intervals(intervals):
 
 
 def _pour_ready_eta_min(current_level, downtime_remaining):
-    # free capacity (physical space) should NOT become 0 just because of downtime
+    # Combined-capacity pour model: ready when A_space + B_space >= IF_BATCH_OUTPUT_KG.
     cap_free_now = (MH_MAX_CAPACITY_KG["A"] - current_level["A"]) + (
         MH_MAX_CAPACITY_KG["B"] - current_level["B"]
     )
-
     need_cap = max(0.0, IF_BATCH_OUTPUT_KG - cap_free_now)
-
     total_cons = (
         MH_CONSUMPTION_RATE_KG_PER_MIN["A"] + MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
     )
@@ -1342,6 +1361,8 @@ def simulate_policy_day(policy_params, controller=None):
     mh_empty_minutes = {"A": 0, "B": 0}
     mh_low_level_minutes = {"A": 0, "B": 0}
     mh_low_level_penalty = 0.0
+    mh_below_min_kgmin = {"A": 0.0, "B": 0.0}
+    mh_max_level_deficit_kgmin = 0.0  # cumulative (MAX_CAP - level) over time, both furnaces
     zero_minutes_total = 0.0  # NEW/CHANGED
     eps_deficit_area = 0.0  # NEW/CHANGED
     min_level_reached = {"A": current_level["A"], "B": current_level["B"]}
@@ -1377,6 +1398,7 @@ def simulate_policy_day(policy_params, controller=None):
         nonlocal solar_melt_minutes
         nonlocal cheap_melt_minutes
         nonlocal parallel_peak_minutes
+        nonlocal mh_max_level_deficit_kgmin
 
         # 5) IF load minute
         minute_if_kw = 0.0
@@ -1414,6 +1436,7 @@ def simulate_policy_day(policy_params, controller=None):
             elif current_level[f_id] < MH_MIN_OPERATIONAL_LEVEL_KG[f_id]:
                 mh_low_level_minutes[f_id] += 1
                 deficit = MH_MIN_OPERATIONAL_LEVEL_KG[f_id] - current_level[f_id]
+                mh_below_min_kgmin[f_id] += deficit  # cumulative kg-min for hard constraint
                 deficit_ratio = deficit / max(MH_MIN_OPERATIONAL_LEVEL_KG[f_id], 1e-9)
                 mh_low_level_penalty += MH_LOW_LEVEL_PENALTY_RATE * (
                     1.0 + LOW_LEVEL_NONLINEAR_FACTOR * (deficit_ratio**2)
@@ -1423,6 +1446,11 @@ def simulate_policy_day(policy_params, controller=None):
                 current_level[f_id], 0.0, MH_MAX_CAPACITY_KG[f_id]
             )
             mh_levels_series[f_id][t] = current_level[f_id]
+
+            # Accumulate "fullness deficit" (kg-min below MAX) — service-mode objective
+            mh_max_level_deficit_kgmin += max(
+                0.0, MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
+            )
 
             if downtime_remaining[f_id] > 0:
                 downtime_remaining[f_id] -= 1
@@ -1498,6 +1526,7 @@ def simulate_policy_day(policy_params, controller=None):
                 if downtime_remaining["B"] <= 0
                 else 0.0
             )
+            # Combined-capacity pour: delay only if A+B together can't receive 600 kg.
             total_available = available_A + available_B
             if total_available < IF_BATCH_OUTPUT_KG:
                 break
@@ -1522,7 +1551,7 @@ def simulate_policy_day(policy_params, controller=None):
                         poured_B += put
                     remaining -= put
             if remaining > 1e-9:
-                # Should be unreachable due to total_available guard, keep robust.
+                # Should be unreachable due to total_available guard; keep robust.
                 break
 
             current_level["A"] = np.clip(
@@ -2156,6 +2185,8 @@ def simulate_policy_day(policy_params, controller=None):
             "mh_empty_minutes": mh_empty_minutes,
             "mh_low_level_minutes": mh_low_level_minutes,
             "mh_low_level_penalty": mh_low_level_penalty,
+            "mh_below_min_kgmin": mh_below_min_kgmin,
+            "mh_max_level_deficit_kgmin": float(mh_max_level_deficit_kgmin),
             "zero_minutes_total": float(zero_minutes_total),  # NEW/CHANGED
             "eps_deficit_area": float(eps_deficit_area),  # NEW/CHANGED
             "overflow_kg_total": overflow_kg_total,
@@ -2216,6 +2247,7 @@ def evaluate_policy(policy_params, controller=None):
         tmp_g = _violation_vector(m)
         overflow_v = float(max(0.0, tmp_g[0]))
         missing_v = float(max(0.0, tmp_g[1]))
+        max_level_deficit = float(m.get("mh_max_level_deficit_kgmin", 0.0))
         f_scalar = float(
             SERVICE_W_MISSING_BATCHES * missing_v
             + SERVICE_W_OVERFLOW * overflow_v
@@ -2224,6 +2256,7 @@ def evaluate_policy(policy_params, controller=None):
             + SERVICE_W_LOW_LEVEL_MINUTES * low_level_minutes_total
             + SERVICE_W_HOLDING_MINUTES * holding_minutes_total
             + SERVICE_W_REHEAT_KWH * reheat_kwh
+            + SERVICE_W_MH_LEVEL_DEFICIT * max_level_deficit
             + SERVICE_W_ENERGY_TIEBREAKER * m["total_energy_cost"]
         )
     else:
@@ -2460,7 +2493,7 @@ class PolicyProblem(Problem):
                 dtype=float,
             )
             n_var = 21
-        n_constr = 2  # [overflow, missing_batches] for both modes
+        n_constr = 4  # [overflow, missing_batches, mh_a_below_min_kgmin, mh_b_below_min_kgmin]
         super().__init__(n_var=n_var, n_obj=1, n_constr=n_constr, xl=xl, xu=xu)
 
     def _evaluate(self, X, out, *args, **kwargs):
