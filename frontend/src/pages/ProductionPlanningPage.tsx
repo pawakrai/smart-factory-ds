@@ -37,10 +37,17 @@ const schema = z.object({
   mh_b_initial_level_kg: z.number().min(0, "Min 0").max(2000, "Max 2000"),
   consider_tou_price: z.boolean(),
   consider_plant_load: z.boolean(),
+  preferred_start_furnace: z.enum(["A", "B"]),
 }).refine((d) => d.if_a_enabled || d.if_b_enabled, {
   message: "At least one furnace must be enabled",
   path: ["if_a_enabled"],
-});
+}).refine(
+  (d) => (d.preferred_start_furnace === "A" ? d.if_a_enabled : d.if_b_enabled),
+  {
+    message: "Preferred furnace must be enabled",
+    path: ["preferred_start_furnace"],
+  },
+);
 type FormValues = z.infer<typeof schema>;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -91,6 +98,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
       mh_b_initial_level_kg: 1100,
       consider_tou_price: true,
       consider_plant_load: true,
+      preferred_start_furnace: "A",
       shift_start: (() => {
         const d = new Date();
         d.setHours(8, 0, 0, 0);
@@ -105,6 +113,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
   const ifBEnabled = watch("if_b_enabled");
   const considerTou = watch("consider_tou_price");
   const considerPlantLoad = watch("consider_plant_load");
+  const preferredStart = watch("preferred_start_furnace");
 
   function onSubmit(values: FormValues) {
     mutate(
@@ -122,6 +131,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
         mh_b_initial_level_kg: values.mh_b_initial_level_kg,
         consider_tou_price: values.consider_tou_price,
         consider_plant_load: values.consider_plant_load,
+        preferred_start_furnace: values.preferred_start_furnace,
       },
       { onSuccess }
     );
@@ -131,7 +141,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       {/* Target batches */}
       <div>
-        <label className="block text-xs text-zinc-400 mb-1.5">Target Batches</label>
+        <label className="block text-xs text-zinc-400 mb-1.5">Target Charges</label>
         <input
           type="number"
           {...register("target_batches", { valueAsNumber: true })}
@@ -193,12 +203,47 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
         )}
       </div>
 
+      {/* Start First Charge On — operator preference for the first IF dispatch */}
+      <div>
+        <label className="block text-xs text-zinc-400 mb-1.5">Start First Charge On</label>
+        <div className="grid grid-cols-2 gap-2">
+          {(["A", "B"] as const).map((f) => {
+            const enabled = f === "A" ? ifAEnabled : ifBEnabled;
+            const selected = preferredStart === f;
+            return (
+              <button
+                key={f}
+                type="button"
+                disabled={!enabled}
+                onClick={() => setValue("preferred_start_furnace", f, { shouldValidate: true })}
+                className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                  !enabled
+                    ? "bg-bg-elevated/50 border-[var(--border-color)] text-zinc-700 cursor-not-allowed"
+                    : selected
+                    ? "bg-brand-red border-brand-red text-white"
+                    : "bg-bg-elevated border-[var(--border-color)] text-zinc-400 hover:border-zinc-500"
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${selected && enabled ? "bg-white" : "bg-zinc-600"}`} />
+                IF-{f} first
+              </button>
+            );
+          })}
+        </div>
+        {errors.preferred_start_furnace && (
+          <p className="text-xs text-brand-red mt-1">{errors.preferred_start_furnace.message}</p>
+        )}
+        <p className="text-[10px] text-zinc-600 mt-1">
+          GA จะเริ่ม schedule ด้วยเตาที่เลือก ส่วน charge ถัดไป GA ตัดสินเองตามปกติ
+        </p>
+      </div>
+
       {/* M&H Consumption Rate */}
       <div>
         <label className="block text-xs text-zinc-400 mb-1.5">M&H Consumption Rate (kg/min)</label>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-[10px] text-zinc-600 mb-1">MH-A</label>
+            <label className="block text-[10px] text-zinc-600 mb-1">SS TECH</label>
             <input
               type="number"
               step="0.01"
@@ -210,7 +255,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
             )}
           </div>
           <div>
-            <label className="block text-[10px] text-zinc-600 mb-1">MH-B</label>
+            <label className="block text-[10px] text-zinc-600 mb-1">DIKI-3</label>
             <input
               type="number"
               step="0.01"
@@ -229,7 +274,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
         <label className="block text-xs text-zinc-400 mb-1.5">M&amp;H Initial Level (kg)</label>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-[10px] text-zinc-600 mb-1">MH-A</label>
+            <label className="block text-[10px] text-zinc-600 mb-1">SS TECH</label>
             <input
               type="number"
               step="1"
@@ -241,7 +286,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
             )}
           </div>
           <div>
-            <label className="block text-[10px] text-zinc-600 mb-1">MH-B</label>
+            <label className="block text-[10px] text-zinc-600 mb-1">DIKI-3</label>
             <input
               type="number"
               step="1"
@@ -323,7 +368,7 @@ function PlanForm({ onSuccess }: { onSuccess: (plan: Plan) => void }) {
         <p className="text-[10px] text-zinc-600 mt-1">
           {optMode === "energy"
             ? "Minimize electricity cost using TOU pricing"
-            : "Maximize batches poured, minimize M&H empty time"}
+            : "Maximize charges poured, minimize M&H empty time"}
         </p>
       </div>
 
@@ -383,7 +428,7 @@ function PlanRow({
       >
         <div className="min-w-0">
           <p className="text-xs font-medium text-[var(--text-primary)] truncate">
-            {plan.target_batches} batches · {plan.opt_mode === "energy" ? "Energy" : "Service"} mode
+            {plan.target_batches} charges · {plan.opt_mode === "energy" ? "Energy" : "Service"} mode
           </p>
           <p className="text-[10px] text-zinc-500 mt-0.5">
             {new Date(plan.shift_start).toLocaleString("en-GB", {
@@ -517,10 +562,15 @@ export default function ProductionPlanningPage() {
     setContextMenu({ planId, x, y });
   }
 
-  usePlanPolling(pollingPlanId, onGaComplete);
-
+  // Also poll whenever the currently selected plan is "pending" — covers
+  // server-side regeneration triggered outside this client (PATCH from another
+  // tab, restart of the GA worker, etc.).
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
-  const isGaRunning = !!pollingPlanId;
+  const pollTargetId = pollingPlanId
+    ?? (selectedPlan?.status === "pending" ? selectedPlan.id : null);
+  usePlanPolling(pollTargetId, onGaComplete);
+
+  const isGaRunning = !!pollingPlanId || selectedPlan?.status === "pending";
 
   function handlePlanCreated(plan: Plan) {
     setPollingPlanId(plan.id);
@@ -718,7 +768,7 @@ export default function ProductionPlanningPage() {
               </div>
             ) : batchCount === 0 ? (
               <div className="h-64 flex items-center justify-center text-zinc-600 text-sm">
-                No batches — GA may have failed
+                No charges — GA may have failed
               </div>
             ) : !scheduleData ? (
               <div className="h-64 flex items-center justify-center text-zinc-600 text-sm">
@@ -765,7 +815,7 @@ export default function ProductionPlanningPage() {
               <h2 className="text-sm font-semibold text-[var(--text-primary)] mb-3">Schedule Summary</h2>
               <div className="grid grid-cols-3 gap-3">
                 <KpiCard
-                  label="Batches Poured"
+                  label="Charges Poured"
                   value={`${metrics?.poured_batches_count ?? batchCount} / ${selectedPlan.target_batches}`}
                   sub={metrics?.missing_batches != null ? `${metrics.missing_batches} missing` : undefined}
                 />
@@ -803,7 +853,7 @@ export default function ProductionPlanningPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-[var(--text-primary)]">Delete Plan</AlertDialogTitle>
             <AlertDialogDescription className="text-zinc-400">
-              Plan นี้จะถูกลบพร้อมกับ batch ทั้งหมด ไม่สามารถกู้คืนได้
+              Plan นี้จะถูกลบพร้อมกับ charge ทั้งหมด ไม่สามารถกู้คืนได้
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

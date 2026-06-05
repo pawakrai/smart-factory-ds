@@ -54,9 +54,9 @@ export default function DashboardPage() {
 
   const kpiCards = [
     {
-      label: "Total Batches Today",
+      label: "Total Charges Today",
       value: "12",
-      unit: "batches",
+      unit: "charges",
       icon: Factory,
       delta: "+2 vs yesterday",
     },

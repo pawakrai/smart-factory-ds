@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { plansApi } from "@/api/plans";
+import { plansApi, type PlanUpdateInput } from "@/api/plans";
 
 export function usePlans() {
   return useQuery({
@@ -19,12 +19,15 @@ export function usePlanBatches(planId: string | null) {
   });
 }
 
+// Schedule data is rebuilt on the server whenever GA-input fields change. Use a
+// short stale window so an edit-driven regeneration is picked up automatically
+// once `usePlanPolling` invalidates this query.
 export function usePlanScheduleData(planId: string | null) {
   return useQuery({
     queryKey: ["plan-schedule-data", planId],
     queryFn: () => plansApi.getScheduleData(planId!),
     enabled: !!planId,
-    staleTime: Infinity,
+    staleTime: 30_000,
   });
 }
 
@@ -62,6 +65,22 @@ export function useCreatePlan() {
   return useMutation({
     mutationFn: plansApi.create,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["plans"] }),
+  });
+}
+
+/** Edit an existing plan. Editing any GA-input field forces a server-side
+ *  re-run; caller should pass the returned plan id to `usePlanPolling` to
+ *  refetch schedule data once status leaves "pending". */
+export function useUpdatePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: PlanUpdateInput }) =>
+      plansApi.update(id, data),
+    onSuccess: (plan) => {
+      qc.invalidateQueries({ queryKey: ["plans"] });
+      qc.invalidateQueries({ queryKey: ["plan-batches", plan.id] });
+      qc.invalidateQueries({ queryKey: ["plan-schedule-data", plan.id] });
+    },
   });
 }
 

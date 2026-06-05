@@ -21,6 +21,8 @@ class Plan(SQLModel, table=True):
     mh_b_initial_level_kg: Optional[float] = Field(default=None)
     consider_tou_price: bool = Field(default=True)
     consider_plant_load: bool = Field(default=True)
+    # Operator preference for which IF starts the first batch ("A" or "B").
+    preferred_start_furnace: str = Field(default="A")
     schedule_metrics: Optional[str] = None          # JSON: ScheduleMetrics
     schedule_data: Optional[str] = None             # JSON: ScheduleData (time-series arrays)
     created_at: datetime = Field(default_factory=datetime.utcnow)

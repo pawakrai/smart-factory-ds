@@ -15,10 +15,42 @@ class PlanCreate(BaseModel):
     mh_b_initial_level_kg: Optional[float] = None
     consider_tou_price: bool = True
     consider_plant_load: bool = True
+    preferred_start_furnace: str = "A"  # "A" or "B" — which IF starts the first charge
 
 
 class PlanUpdate(BaseModel):
-    status: str | None = None
+    """Mutable plan fields. Editing any GA_RECOMPUTE_FIELDS triggers a re-run."""
+    status: Optional[str] = None
+    target_batches: Optional[int] = None
+    shift_start: Optional[datetime] = None
+    opt_mode: Optional[str] = None
+    if_a_enabled: Optional[bool] = None
+    if_b_enabled: Optional[bool] = None
+    mh_a_consumption_rate: Optional[float] = None
+    mh_b_consumption_rate: Optional[float] = None
+    mh_a_initial_level_kg: Optional[float] = None
+    mh_b_initial_level_kg: Optional[float] = None
+    consider_tou_price: Optional[bool] = None
+    consider_plant_load: Optional[bool] = None
+    preferred_start_furnace: Optional[str] = None
+
+
+# Fields whose change requires re-running the GA so schedule_data stays consistent
+# with the plan inputs. Anything outside this set (status, etc.) is a metadata edit.
+GA_RECOMPUTE_FIELDS = frozenset({
+    "target_batches",
+    "shift_start",
+    "opt_mode",
+    "if_a_enabled",
+    "if_b_enabled",
+    "mh_a_consumption_rate",
+    "mh_b_consumption_rate",
+    "mh_a_initial_level_kg",
+    "mh_b_initial_level_kg",
+    "consider_tou_price",
+    "consider_plant_load",
+    "preferred_start_furnace",
+})
 
 
 class ScheduleMetrics(BaseModel):
@@ -64,8 +96,15 @@ class PlanRead(BaseModel):
     shift_start: datetime
     opt_mode: str
     status: str
+    if_a_enabled: Optional[bool] = None
+    if_b_enabled: Optional[bool] = None
+    mh_a_consumption_rate: Optional[float] = None
+    mh_b_consumption_rate: Optional[float] = None
+    mh_a_initial_level_kg: Optional[float] = None
+    mh_b_initial_level_kg: Optional[float] = None
     consider_tou_price: Optional[bool] = None
     consider_plant_load: Optional[bool] = None
+    preferred_start_furnace: Optional[str] = None
     schedule_metrics: Optional[str] = None
     created_at: datetime
 

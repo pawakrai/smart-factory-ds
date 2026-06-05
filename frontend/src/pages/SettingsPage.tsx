@@ -28,7 +28,7 @@ const SETTING_TOOLTIPS: Record<string, { what: string; recommend: string; effect
   if_power_option_mid_kw: {
     what: "ตัวเลือกกำลังไฟกลางของเตาหลอม IF",
     recommend: "475 kW",
-    effect: "เพิ่ม → หลอมเร็วขึ้น พลังงานต่อ batch สูงขึ้น",
+    effect: "เพิ่ม → หลอมเร็วขึ้น พลังงานต่อ charge สูงขึ้น",
   },
   if_power_option_high_kw: {
     what: "ตัวเลือกกำลังไฟสูงสุดของเตาหลอม IF",
@@ -36,9 +36,9 @@ const SETTING_TOOLTIPS: Record<string, { what: string; recommend: string; effect
     effect: "เพิ่ม → หลอมเร็วที่สุด แต่ค่า demand charge สูง ระวัง peak kW",
   },
   if_batch_output_kg: {
-    what: "น้ำหนักอะลูมิเนียมที่ได้จากการหลอม 1 batch (kg) — กำหนดพื้นที่ว่างใน MH ที่ต้องมีก่อนเทได้",
+    what: "น้ำหนักอะลูมิเนียมที่ได้จากการหลอม 1 charge (kg) — กำหนดพื้นที่ว่างใน MH ที่ต้องมีก่อนเทได้",
     recommend: "500 kg (ตามพิกัดเตา)",
-    effect: "เพิ่ม → แต่ละ batch ต้องการพื้นที่ว่างใน MH มากขึ้น GA ต้องรอให้ MH drain ก่อนเท ส่งผลให้ schedule ตึงขึ้น | ลด → เทได้ง่ายขึ้น ลด JIT waiting time",
+    effect: "เพิ่ม → แต่ละ charge ต้องการพื้นที่ว่างใน MH มากขึ้น GA ต้องรอให้ MH drain ก่อนเท ส่งผลให้ schedule ตึงขึ้น | ลด → เทได้ง่ายขึ้น ลด JIT waiting time",
   },
   if_efficiency_factor_a: {
     what: "ตัวคูณประสิทธิภาพพลังงานของเตา IF-A (< 1 = ประหยัดกว่า, > 1 = สิ้นเปลืองกว่า)",
@@ -72,42 +72,42 @@ const SETTING_TOOLTIPS: Record<string, { what: string; recommend: string; effect
   },
   // M&H Furnace
   mh_a_capacity_kg: {
-    what: "ความจุสูงสุดของเตาพักอุ่น M&H A (kg)",
+    what: "ความจุสูงสุดของเตาพักอุ่น SS TECH (M&H A) (kg)",
     recommend: "400 kg (ตามสเปคจริง ห้ามเกิน)",
     effect: "เพิ่ม → GA เทน้ำได้มากขึ้นต่อครั้งโดยไม่ overflow | ลด → overflow penalty เกิดง่ายขึ้น",
   },
   mh_a_initial_level_kg: {
-    what: "ปริมาณน้ำอะลูมิเนียมในเตา M&H A ที่จุดเริ่มต้น shift (kg)",
+    what: "ปริมาณน้ำอะลูมิเนียมในเตา SS TECH (M&H A) ที่จุดเริ่มต้น shift (kg)",
     recommend: "ตามระดับจริงหน้างาน ก่อนเริ่ม shift",
     effect: "เพิ่ม → เตามีน้ำพอนานขึ้นช่วงต้น shift | ลด → อาจต้องเทน้ำเร็วขึ้น",
   },
   mh_a_consumption_rate_kg_per_min: {
-    what: "อัตราการใช้น้ำอะลูมิเนียมของสายการผลิต M&H A (kg/นาที) — นี่คือค่า default หาก Plan ไม่ได้ระบุค่าเอง (Plan สามารถ override ได้รายแผน)",
+    what: "อัตราการใช้น้ำอะลูมิเนียมของสายการผลิตที่เตา SS TECH (M&H A) (kg/นาที) — นี่คือค่า default หาก Plan ไม่ได้ระบุค่าเอง (Plan สามารถ override ได้รายแผน)",
     recommend: "2.20 kg/min (วัดจากข้อมูลจริง)",
     effect: "เพิ่ม → เตาเหลือน้ำเร็วขึ้น GA ต้องเทบ่อยขึ้น | ลด → น้ำอยู่นานขึ้น",
   },
   mh_a_min_operational_level_kg: {
-    what: "ระดับน้ำต่ำสุดที่ยอมให้ M&H A ทำงานต่อได้อย่างปลอดภัย (kg)",
+    what: "ระดับน้ำต่ำสุดที่ยอมให้เตา SS TECH (M&H A) ทำงานต่อได้อย่างปลอดภัย (kg)",
     recommend: "200 kg",
     effect: "เพิ่ม → GA ต้องเทน้ำถี่ขึ้น ลด low-level risk | ลด → ยอมให้น้ำต่ำกว่าเดิม เสี่ยงสายการผลิตหยุด",
   },
   mh_b_capacity_kg: {
-    what: "ความจุสูงสุดของเตาพักอุ่น M&H B (kg)",
+    what: "ความจุสูงสุดของเตาพักอุ่น DIKI-3 (M&H B) (kg)",
     recommend: "250 kg",
     effect: "เพิ่ม → รับน้ำได้มากขึ้นต่อครั้ง | ลด → overflow เกิดง่ายขึ้น",
   },
   mh_b_initial_level_kg: {
-    what: "ปริมาณน้ำเริ่มต้นในเตา M&H B ก่อน shift เริ่ม (kg)",
+    what: "ปริมาณน้ำเริ่มต้นในเตา DIKI-3 (M&H B) ก่อน shift เริ่ม (kg)",
     recommend: "ตามระดับจริงหน้างาน",
     effect: "เพิ่ม → เตา B มีน้ำสำรองช่วงต้น shift มากขึ้น",
   },
   mh_b_consumption_rate_kg_per_min: {
-    what: "อัตราการใช้น้ำอะลูมิเนียมของสายการผลิต M&H B (kg/นาที) — นี่คือค่า default หาก Plan ไม่ได้ระบุค่าเอง (Plan สามารถ override ได้รายแผน)",
+    what: "อัตราการใช้น้ำอะลูมิเนียมของสายการผลิตที่เตา DIKI-3 (M&H B) (kg/นาที) — นี่คือค่า default หาก Plan ไม่ได้ระบุค่าเอง (Plan สามารถ override ได้รายแผน)",
     recommend: "2.30 kg/min",
     effect: "เพิ่ม → น้ำหมดเร็วขึ้น GA ต้องวางแผนเทบ่อยขึ้น",
   },
   mh_b_min_operational_level_kg: {
-    what: "ระดับน้ำต่ำสุดที่ยอมให้ M&H B ทำงานได้ (kg)",
+    what: "ระดับน้ำต่ำสุดที่ยอมให้เตา DIKI-3 (M&H B) ทำงานได้ (kg)",
     recommend: "125 kg",
     effect: "เพิ่ม → GA ให้ความสำคัญกับการเติมน้ำ B มากขึ้น | ลด → ยอมให้วิ่งต่ำกว่าเดิม",
   },
@@ -165,7 +165,7 @@ const SETTING_TOOLTIPS: Record<string, { what: string; recommend: string; effect
   contract_demand_kw: {
     what: "ขีดจำกัด demand ตามสัญญาไฟฟ้าของโรงงาน (kW)",
     recommend: "1600 kW (ตามสัญญา กฟภ./กฟน.)",
-    effect: "เพิ่ม → GA มีอิสระใช้ไฟสูงขึ้น | ลด → GA ระวัง peak มากขึ้น อาจชะลอ batch",
+    effect: "เพิ่ม → GA มีอิสระใช้ไฟสูงขึ้น | ลด → GA ระวัง peak มากขึ้น อาจชะลอ charge",
   },
   peak_hours_start: {
     what: "เวลาเริ่มช่วง On-Peak (รูปแบบ HH:MM) ตามอัตรา TOU",
@@ -232,7 +232,7 @@ const SETTING_TOOLTIPS: Record<string, { what: string; recommend: string; effect
   shift_duration_hours: {
     what: "ความยาวของ shift การผลิต (ชั่วโมง)",
     recommend: "8 ชั่วโมง (1 shift มาตรฐาน)",
-    effect: "เพิ่ม → GA มีเวลาวางแผนมากขึ้น ใส่ batch ได้มากขึ้น | ลด → GA ต้องอัดแน่น",
+    effect: "เพิ่ม → GA มีเวลาวางแผนมากขึ้น ใส่ charge ได้มากขึ้น | ลด → GA ต้องอัดแน่น",
   },
   shift_start_hhmm: {
     what: "เวลาเริ่ม shift ค่าเริ่มต้น (HH:MM) ใช้เมื่อสร้าง plan ใหม่โดยไม่ระบุเวลา",
@@ -240,9 +240,9 @@ const SETTING_TOOLTIPS: Record<string, { what: string; recommend: string; effect
     effect: "เปลี่ยน → เวลาอ้างอิงของกราฟและ schedule ทั้งหมดเลื่อนตาม",
   },
   target_batches_default: {
-    what: "จำนวน batch เป้าหมายค่าเริ่มต้นเมื่อสร้าง plan ใหม่",
-    recommend: "8–12 batch ต่อ shift",
-    effect: "เพิ่ม → GA ต้องยัด batch มากขึ้น อาจกระทบเวลาว่างระหว่าง batch | ลด → schedule หลวมขึ้น",
+    what: "จำนวน charge เป้าหมายค่าเริ่มต้นเมื่อสร้าง plan ใหม่",
+    recommend: "8–12 charge ต่อ shift",
+    effect: "เพิ่ม → GA ต้องยัด charge มากขึ้น อาจกระทบเวลาว่างระหว่าง charge | ลด → schedule หลวมขึ้น",
   },
 };
 
@@ -761,6 +761,18 @@ export default function SettingsPage() {
       subtitle="Furnace parameters, energy tariff, GA optimization, and shift configuration"
     >
       <div className="space-y-4">
+        <div className="flex items-start gap-2 bg-amber-500/5 border border-amber-500/30 rounded-xl px-4 py-3 text-amber-200">
+          <Info size={14} className="mt-0.5 shrink-0 text-amber-400" />
+          <div className="text-xs leading-relaxed">
+            <p className="font-semibold text-amber-100">
+              Global settings apply to new plans only.
+            </p>
+            <p className="mt-0.5 text-amber-200/80">
+              ค่าที่แก้ตรงนี้จะใช้กับ Plan ที่สร้างใหม่เท่านั้น Plan เดิมจะยังคงใช้ค่าที่ถูกบันทึกไว้ตอนสร้าง — ถ้าต้องการให้กราฟของ Plan เก่าใช้ค่าใหม่ ให้แก้ค่าใน Plan นั้นตรง ๆ จาก Production Planning page (จะ rerun GA ให้อัตโนมัติ)
+            </p>
+          </div>
+        </div>
+
         {isLoading ? (
           <div className="bg-bg-card border border-[var(--border-color)] rounded-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-[var(--border-color)] flex items-center gap-2">

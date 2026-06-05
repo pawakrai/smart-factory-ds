@@ -62,7 +62,7 @@ function exportCSV(batches: Batch[]) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `completed-batches-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `completed-charges-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -70,7 +70,7 @@ function exportCSV(batches: Batch[]) {
 type ColDef = { label: string; field: SortField; className?: string };
 
 const COLS: ColDef[] = [
-  { label: "Batch #",          field: "batch_number" },
+  { label: "Charge #",         field: "batch_number" },
   { label: "Expected Start",   field: "expected_start" },
   { label: "Expected Finish",  field: "melt_finish_at" },
   { label: "Actual Start",     field: "actual_start" },
@@ -145,7 +145,7 @@ export default function ReportsPage() {
   return (
     <PageWrapper
       title="Reports & Logs"
-      subtitle="Completed batch records"
+      subtitle="Completed charge records"
       actions={
         <div className="flex items-center gap-2 flex-wrap">
           {/* Date filter */}
@@ -169,7 +169,7 @@ export default function ReportsPage() {
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
             <input
               type="text"
-              placeholder="Batch # or furnace…"
+              placeholder="Charge # or furnace…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="bg-bg-elevated border border-[var(--border-color)] text-xs text-[var(--text-primary)] rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:border-zinc-500 w-44"
@@ -192,7 +192,7 @@ export default function ReportsPage() {
       {filtered.length > 0 && (
         <div className="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Completed Batches", value: String(filtered.length), unit: "" },
+            { label: "Completed Charges", value: String(filtered.length), unit: "" },
             { label: "Total Ingot",       value: totalIngot.toFixed(0),   unit: "kg" },
             { label: "Total Energy",      value: totalEnergy.toFixed(0),  unit: "kWh" },
             { label: "Avg Power",         value: isNaN(avgPower) ? "—" : avgPower.toFixed(0), unit: "kW" },
@@ -242,9 +242,9 @@ export default function ReportsPage() {
               <tr>
                 <td colSpan={COLS.length} className="px-4 py-12 text-center text-xs text-zinc-600">
                   {completedBatches.length === 0
-                    ? "No completed batches yet — complete batches in Operator Execution"
+                    ? "No completed charges yet — complete charges in Operator Execution"
                     : dateFilter || search
-                    ? "No completed batches match the current filter"
+                    ? "No completed charges match the current filter"
                     : "No data"}
                 </td>
               </tr>
@@ -334,7 +334,7 @@ export default function ReportsPage() {
             <tfoot>
               <tr className="border-t-2 border-[var(--border-color)] bg-bg-elevated/30">
                 <td colSpan={5} className="px-4 py-2.5 text-xs text-zinc-500 font-medium uppercase tracking-wide">
-                  Total ({filtered.length} batches)
+                  Total ({filtered.length} charges)
                 </td>
                 <td className="px-4 py-2.5 font-mono text-xs text-[var(--text-primary)] text-right font-semibold">
                   {totalIngot.toFixed(1)}
@@ -361,7 +361,7 @@ export default function ReportsPage() {
 
         <div className="px-4 py-3 border-t border-[var(--border-color)] flex items-center justify-between text-xs text-zinc-500">
           <span>
-            {filtered.length} of {completedBatches.length} completed batch{completedBatches.length !== 1 ? "es" : ""}
+            {filtered.length} of {completedBatches.length} completed charge{completedBatches.length !== 1 ? "s" : ""}
             {dateFilter && ` · ${dateFilter}`}
           </span>
           {batches.length > 0 && (

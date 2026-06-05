@@ -35,6 +35,9 @@ SERVICE_W_HOLDING_MINUTES = 1e1            # lowered from 1e4 — holding is acc
 SERVICE_W_REHEAT_KWH = 1e3
 SERVICE_W_ENERGY_TIEBREAKER = 1e-6
 SERVICE_W_MH_LEVEL_DEFICIT = 1.0           # NEW — penalize MH level below MAX (kg-min) to reward continuous melt
+SERVICE_W_MAKESPAN = 0.0                   # NEW — reward shorter makespan (baht-equivalent per minute);
+                                            # default 0 keeps backward compat; ga_service can raise this
+                                            # for "tight schedule" modes (e.g., service + flags off).
 
 # Energy-mode behavior tuning (price-first scheduling)
 ENERGY_MODE_START_W_DEP = 0.9
@@ -98,6 +101,12 @@ MH_EMPTY_THRESHOLD_KG = 0.0
 MH_MIN_OPERATIONAL_LEVEL_KG = {"A": 200.0, "B": 125.0}
 MH_LOW_LEVEL_PENALTY_RATE = 200.0
 LOW_LEVEL_NONLINEAR_FACTOR = 3.0
+
+# Optional operator preference for which Induction Furnace runs the *first*
+# batch of the shift. None = let the GA pick (default behaviour); "A" or "B" =
+# force that furnace as long as it's idle at first-batch dispatch. Subsequent
+# batches always fall back to the GA's scoring policy.
+PREFERRED_START_FURNACE = None
 
 # TH tariff defaults: TOU 4.2.2 (22-33kV) + Ft (THB units, excl. VAT)
 TARIFF_NAME = "TOU_22-33kV_4.2.2"
@@ -1200,6 +1209,46 @@ def _select_if_furnace(
     return best_f
 
 
+def _distribute_pour_proportional(available_a: float, available_b: float, total_pour: float):
+    """Split a 600 kg IF pour between MH-A and MH-B in proportion to each
+    furnace's *current* free space.
+
+    The previous "fill A first, then B" rule starved whichever furnace was
+    placed second when consumption rates were unequal — a furnace draining
+    faster never received priority because the static order ignored it. The
+    proportional rule is self-balancing: whichever MH has drained more (so
+    has more free space) gets more of the pour, automatically.
+
+    Caller guarantees `available_a + available_b >= total_pour` via the
+    feasibility check upstream — this function does NOT delay/skip pours.
+
+    Float-precision safety: if the proportional share rounds slightly above
+    one furnace's free space, the overflow spills into the other furnace
+    instead of clipping (which would lose mass).
+
+    Returns (poured_a, poured_b) with poured_a + poured_b == total_pour
+    (within float precision) and each ≤ its furnace's free space.
+    """
+    total_free = available_a + available_b
+    if total_free <= 1e-9:
+        # Defensive: caller's guard at "total_available >= IF_BATCH_OUTPUT_KG"
+        # should make this unreachable. Return zeros so we never NaN.
+        return 0.0, 0.0
+
+    share_a = total_pour * available_a / total_free
+    share_b = total_pour * available_b / total_free
+
+    # Float-precision safety: redirect any overflow to the other furnace.
+    if share_a > available_a:
+        share_b += share_a - available_a
+        share_a = available_a
+    elif share_b > available_b:
+        share_a += share_b - available_b
+        share_b = available_b
+
+    return share_a, share_b
+
+
 def _total_idle_minutes_from_intervals(intervals):
     if not intervals:
         return 0.0
@@ -1531,28 +1580,14 @@ def simulate_policy_day(policy_params, controller=None):
             if total_available < IF_BATCH_OUTPUT_KG:
                 break
 
-            remaining = IF_BATCH_OUTPUT_KG
-            fill_order = (
-                ["A", "B"] if PREFERRED_MH_FURNACE_TO_FILL_FIRST == "A" else ["B", "A"]
+            # Distribute the 600 kg pour in proportion to each MH's free space
+            # (self-balancing — replaces the old fill-A-first rule that starved
+            # the second furnace when consumption rates were unequal). The
+            # total_available >= IF_BATCH_OUTPUT_KG guard above makes the
+            # helper's "no space" branch unreachable.
+            poured_A, poured_B = _distribute_pour_proportional(
+                available_A, available_B, IF_BATCH_OUTPUT_KG
             )
-            poured_A = 0.0
-            poured_B = 0.0
-            for f_id in fill_order:
-                if remaining <= 0:
-                    break
-                if downtime_remaining[f_id] > 0:
-                    continue
-                space = MH_MAX_CAPACITY_KG[f_id] - current_level[f_id]
-                put = min(remaining, space)
-                if put > 0:
-                    if f_id == "A":
-                        poured_A += put
-                    else:
-                        poured_B += put
-                    remaining -= put
-            if remaining > 1e-9:
-                # Should be unreachable due to total_available guard; keep robust.
-                break
 
             current_level["A"] = np.clip(
                 current_level["A"] + poured_A, 0.0, MH_MAX_CAPACITY_KG["A"]
@@ -1737,6 +1772,17 @@ def simulate_policy_day(policy_params, controller=None):
                             req_if = controller_decision.get("chosen_if")
                             if req_if in idle_ready:
                                 chosen_if = int(req_if)
+                        # First-batch-only operator preference. Applied before
+                        # the GA scoring kicks in, so the optimiser still owns
+                        # every subsequent dispatch decision.
+                        if (
+                            chosen_if is None
+                            and last_started_furnace is None
+                            and PREFERRED_START_FURNACE in ("A", "B")
+                        ):
+                            preferred_idx = 0 if PREFERRED_START_FURNACE == "A" else 1
+                            if preferred_idx in idle_ready:
+                                chosen_if = preferred_idx
                         if chosen_if is None:
                             chosen_if = _select_if_furnace(
                                 policy,
@@ -2257,6 +2303,7 @@ def evaluate_policy(policy_params, controller=None):
             + SERVICE_W_HOLDING_MINUTES * holding_minutes_total
             + SERVICE_W_REHEAT_KWH * reheat_kwh
             + SERVICE_W_MH_LEVEL_DEFICIT * max_level_deficit
+            + SERVICE_W_MAKESPAN * float(m.get("makespan_minutes", 0.0))
             + SERVICE_W_ENERGY_TIEBREAKER * m["total_energy_cost"]
         )
     else:

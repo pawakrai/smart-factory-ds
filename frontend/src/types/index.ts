@@ -10,10 +10,15 @@ export interface Plan {
   status: PlanStatus;
   schedule_metrics: string | null;
   created_at: string;
+  if_a_enabled?: boolean;
+  if_b_enabled?: boolean;
+  mh_a_consumption_rate?: number | null;
+  mh_b_consumption_rate?: number | null;
   mh_a_initial_level_kg?: number | null;
   mh_b_initial_level_kg?: number | null;
   consider_tou_price?: boolean;
   consider_plant_load?: boolean;
+  preferred_start_furnace?: "A" | "B";
 }
 
 export interface Batch {

@@ -164,6 +164,11 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
     app_v9.USE_FURNACE_A = bool(getattr(plan, "if_a_enabled", True))
     app_v9.USE_FURNACE_B = bool(getattr(plan, "if_b_enabled", True))
 
+    # First-charge preference: forces the GA dispatcher to start on A or B.
+    # Only applies to the first batch; subsequent batches use scoring as before.
+    preferred = getattr(plan, "preferred_start_furnace", "A")
+    app_v9.PREFERRED_START_FURNACE = preferred if preferred in ("A", "B") else None
+
     # M&H consumption rates: plan-level values take precedence over settings
     mh_a_rate = getattr(plan, "mh_a_consumption_rate", None)
     mh_b_rate = getattr(plan, "mh_b_consumption_rate", None)
@@ -234,6 +239,16 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
     app_v9.DEMAND_CHARGE_BAHT_PER_KW_MONTH = f("demand_charge_baht_per_kw_month", 132.93)
     app_v9.CONTRACT_DEMAND_KW = f("contract_demand_kw", 1600)
 
+    # Reset service-mode tuning to module defaults so an earlier service+flags-off
+    # run doesn't leak its boosted weights into the next plan.
+    # (PREFERRED_MH_FURNACE_TO_FILL_FIRST is no longer read by the simulator —
+    # the pour is split proportionally to free space — so we don't bother
+    # resetting it. See _distribute_pour_proportional in src/app_v9.py.)
+    if hasattr(app_v9, "SERVICE_W_MAKESPAN"):
+        app_v9.SERVICE_W_MAKESPAN = 0.0
+    if hasattr(app_v9, "SERVICE_W_HOLDING_MINUTES"):
+        app_v9.SERVICE_W_HOLDING_MINUTES = 1e1
+
     # Per-plan cost-consideration flags
     if not bool(getattr(plan, "consider_tou_price", True)):
         # Flat off-peak price 24h: collapse onpeak to offpeak and zero the high-TOU penalty weight
@@ -245,31 +260,88 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         # Drop demand-charge term so GA stops avoiding peak demand
         app_v9.DEMAND_CHARGE_BAHT_PER_KW_MONTH = 0.0
 
-    # When the user signals "ignore all cost optimisation" by turning off BOTH cost flags,
-    # treat the GA objective as pure max-throughput: zero the time-dependent cost penalties
-    # so it can melt continuously, bounded only by the hard MH min/overflow constraints.
-    if (not bool(getattr(plan, "consider_tou_price", True))
-            and not bool(getattr(plan, "consider_plant_load", True))):
-        app_v9.IF_HOLDING_PENALTY_PER_MIN = 0.0
-        if hasattr(app_v9, "ENERGY_MAKESPAN_COST_PER_MIN"):
-            app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 0.0
-        if hasattr(app_v9, "ENERGY_IDLE_GAP_COST_PER_MIN"):
-            app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 0.0
-        if hasattr(app_v9, "ENERGY_IDLE_GAP_SUPERLINEAR_COEFF"):
-            app_v9.ENERGY_IDLE_GAP_SUPERLINEAR_COEFF = 0.0
+    # Both-flags-off = "ignore cost, melt continuously without MH violations".
+    # Cost penalties go away; *safety* penalties (MH low-level / empty) stay strong
+    # — they're operator safety constraints, not cost trade-offs.
+    both_flags_off = (
+        not bool(getattr(plan, "consider_tou_price", True))
+        and not bool(getattr(plan, "consider_plant_load", True))
+    )
+    if both_flags_off:
+        # Unified "continuous melt" mode for BOTH energy and service opt_mode.
+        # The operator's intent is the same regardless of nominal mode: ignore
+        # cost optimisation, keep MH safe, finish as fast as the physics allow.
+        # We differentiate only in how the makespan/hold REWARD is wired into
+        # each mode's objective (energy → ENERGY_*_COST_PER_MIN; service →
+        # SERVICE_W_*).
+
+        # ── Safety: keep quadratic low-level penalty + boost OBJ1 weights ──
+        # These are simulator-level safety constraints, not cost trade-offs.
+        # Boosting them keeps the GA from happily draining MH-A below Min.
         if hasattr(app_v9, "OBJ1_COMPONENT_WEIGHTS"):
-            app_v9.OBJ1_COMPONENT_WEIGHTS["holding_penalty"] = 0.0
-        # Linearise low-level penalty so GA doesn't stagger starts just to dodge the
-        # quadratic-depth term — the hard constraint already keeps levels above min.
-        app_v9.LOW_LEVEL_NONLINEAR_FACTOR = 0.0
-        # Remove the 25-minute JIT slack floor that energy mode normally enforces to
-        # allow price-window shifting — with flat TOU this just forces avoidable hold.
+            w = app_v9.OBJ1_COMPONENT_WEIGHTS
+            w["empty_penalty"]           = max(w.get("empty_penalty", 1.10), 10.0)
+            w["low_level_min_penalty"]   = max(w.get("low_level_min_penalty", 0.80), 10.0)
+            w["low_level_shape_penalty"] = max(w.get("low_level_shape_penalty", 0.90), 5.0)
+            # holding_penalty is an energy-mode hold-time term in OBJ1; we
+            # drive holding via mode-specific terms below instead so this
+            # doesn't double-count.
+            w["holding_penalty"] = 0.0
+        # Hard MH-min budget: 30 min cumulative below Min (default 240).
+        app_v9.MAX_LOW_LEVEL_MIN_ALLOW = min(
+            getattr(app_v9, "MAX_LOW_LEVEL_MIN_ALLOW", 240.0), 30.0
+        )
+        # Hard empty budget: 15 min (default 120) — MH-empty is unsafe.
+        if hasattr(app_v9, "MAX_EMPTY_MIN_ALLOW"):
+            app_v9.MAX_EMPTY_MIN_ALLOW = min(app_v9.MAX_EMPTY_MIN_ALLOW, 15.0)
+
+        # ── Continuous-melt geometry: zero start-gap + kill peak-risk gap ──
+        if hasattr(app_v9, "POLICY_OVERRIDE_MIN_START_GAP_MAX"):
+            app_v9.POLICY_OVERRIDE_MIN_START_GAP_MAX = 0.0
+        # _dynamic_min_start_gap injects 50 min of gap whenever projected
+        # baseline + IF kW exceeds CONTRACT_DEMAND_KW. With contract → ∞,
+        # margin_ratio stays positive → peak_risk = 0 → no auto-gap.
+        app_v9.CONTRACT_DEMAND_KW = 1e9
+
+        # (Pour distribution is now proportional to per-furnace free space at
+        # the simulator level — see _distribute_pour_proportional in app_v9.py.
+        # No per-plan override needed; the algorithm self-balances.)
+
+        # ── Remove price/peak-shifting incentives that fight continuous melt ──
         if hasattr(app_v9, "ENERGY_MODE_MIN_JIT_SLACK_MIN"):
             app_v9.ENERGY_MODE_MIN_JIT_SLACK_MIN = 0.0
-        # Cap GA's freedom to insert long inter-IF-start gaps — flags-off mode means
-        # "melt continuously"; preventing the GA from choosing a high min_start_gap_min.
-        if hasattr(app_v9, "POLICY_OVERRIDE_MIN_START_GAP_MAX"):
-            app_v9.POLICY_OVERRIDE_MIN_START_GAP_MAX = 5.0
+        if hasattr(app_v9, "ENERGY_IDLE_GAP_SUPERLINEAR_COEFF"):
+            app_v9.ENERGY_IDLE_GAP_SUPERLINEAR_COEFF = 0.0
+
+        # ── Mode-specific makespan/hold REWARD wiring ──
+        # The previous design *zeroed* these for energy mode under the
+        # mistaken assumption that "ignore cost" = "ignore all penalties".
+        # The result was a flat objective with no incentive to compress the
+        # schedule → GA wandered (3-hour delays, MH-A empty 8+ hours).
+        # Instead: KEEP and BOOST the throughput-related cost terms; only
+        # the TOU/demand-related terms (already zeroed above) go away.
+        if plan.opt_mode == "service":
+            app_v9.SERVICE_W_MAKESPAN = 50.0       # service objective: new makespan term
+            app_v9.SERVICE_W_HOLDING_MINUTES = 100.0
+            app_v9.IF_HOLDING_PENALTY_PER_MIN = 0.0  # avoid double-count vs SERVICE_W_HOLDING_MINUTES
+            if hasattr(app_v9, "ENERGY_MAKESPAN_COST_PER_MIN"):
+                app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 0.0
+            if hasattr(app_v9, "ENERGY_IDLE_GAP_COST_PER_MIN"):
+                app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 0.0
+        else:
+            # energy mode: drive continuous melt through energy-mode terms.
+            # Default ENERGY_MAKESPAN_COST_PER_MIN = 0.6 is too small to
+            # dominate the (now-tiny) tou_term; boost ×50 so makespan is the
+            # principal cost driver.
+            if hasattr(app_v9, "ENERGY_MAKESPAN_COST_PER_MIN"):
+                app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 30.0
+            # Idle-gap penalty needs the same treatment.
+            if hasattr(app_v9, "ENERGY_IDLE_GAP_COST_PER_MIN"):
+                app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 30.0
+            # IF holding cost — keep modest so the GA penalises holding but
+            # doesn't lock to a degenerate "never hold" schedule.
+            app_v9.IF_HOLDING_PENALTY_PER_MIN = 5.0
+            # Service-only globals stay at module defaults (reset at fn top).
 
     # Solar window (parse HH:MM strings)
     solar_start_str = settings_dict.get("solar_window_start", "12:00")

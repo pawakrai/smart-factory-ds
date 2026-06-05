@@ -345,7 +345,7 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         />
         <text x={PAD.left + 4} y={toMhY(mh_a_min_level_kg) - 2} fontSize={8}
           fill={C_MH_A} fontFamily="Inter, sans-serif" opacity={0.8}>
-          Min A ({mh_a_min_level_kg}kg)
+          Min SS TECH ({mh_a_min_level_kg}kg)
         </text>
 
         <line
@@ -355,7 +355,7 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         />
         <text x={PAD.left + CHART_W - 4} y={toMhY(mh_b_min_level_kg) - 2}
           textAnchor="end" fontSize={8} fill={C_MH_B} fontFamily="Inter, sans-serif" opacity={0.8}>
-          Min B ({mh_b_min_level_kg}kg)
+          Min DIKI-3 ({mh_b_min_level_kg}kg)
         </text>
 
         {/* Max capacity reference lines */}
@@ -366,7 +366,7 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         />
         <text x={PAD.left + 4} y={toMhY(mh_a_max_capacity_kg) - 2} fontSize={8}
           fill={C_MH_A} fontFamily="Inter, sans-serif" opacity={0.7}>
-          Max A ({mh_a_max_capacity_kg}kg)
+          Max SS TECH ({mh_a_max_capacity_kg}kg)
         </text>
 
         <line
@@ -376,7 +376,7 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         />
         <text x={PAD.left + CHART_W - 4} y={toMhY(mh_b_max_capacity_kg) - 2}
           textAnchor="end" fontSize={8} fill={C_MH_B} fontFamily="Inter, sans-serif" opacity={0.7}>
-          Max B ({mh_b_max_capacity_kg}kg)
+          Max DIKI-3 ({mh_b_max_capacity_kg}kg)
         </text>
 
         {/* M&H level lines */}
@@ -465,11 +465,11 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         {/* M&H legend (right side) */}
         <g transform={`translate(${SVG_W - PAD.right - 112}, ${SVG_H - LEGEND_H + 4})`}>
           <line x1={0} y1={5} x2={12} y2={5} stroke={C_MH_A} strokeWidth={2} />
-          <text x={16} y={9} fontSize={9} fill={C_TEXT_MUTED} fontFamily="Inter, sans-serif">M&amp;H A</text>
+          <text x={16} y={9} fontSize={9} fill={C_TEXT_MUTED} fontFamily="Inter, sans-serif">SS TECH</text>
         </g>
         <g transform={`translate(${SVG_W - PAD.right - 56}, ${SVG_H - LEGEND_H + 4})`}>
           <line x1={0} y1={5} x2={12} y2={5} stroke={C_MH_B} strokeWidth={2} />
-          <text x={16} y={9} fontSize={9} fill={C_TEXT_MUTED} fontFamily="Inter, sans-serif">M&amp;H B</text>
+          <text x={16} y={9} fontSize={9} fill={C_TEXT_MUTED} fontFamily="Inter, sans-serif">DIKI-3</text>
         </g>
       </svg>
     </div>

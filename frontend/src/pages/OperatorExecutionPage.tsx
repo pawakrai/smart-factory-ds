@@ -4,7 +4,6 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
   ClipboardCheck,
-  ChevronDown,
   CheckCircle2,
   AlertCircle,
   Play,
@@ -12,6 +11,7 @@ import {
   Check,
   Maximize2,
   Minimize2,
+  ChevronDown,
   ChevronRight,
   Save,
   X,
@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import PageWrapper from "@/components/layout/PageWrapper";
 import PowerProfileChart from "@/components/charts/PowerProfileChart";
+import ChargeSelector, { STATUS_COLORS } from "@/components/operator/ChargeSelector";
+import { toDatetimeLocal, nowLocalISO, fmtTime, fmtDateTime, ensureSeconds } from "@/components/operator/operatorTime";
 import { useBatches, usePowerProfile, useUpdateBatch } from "@/hooks/useBatches";
 import { usePlans } from "@/hooks/usePlans";
 import { useAppStore } from "@/store/appStore";
@@ -27,83 +29,16 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Batch } from "@/types";
 import type { PowerProfilePoint } from "@/api/batches";
 
+// actual_finish is intentionally NOT part of the form schema — it's stamped
+// from the wall clock on submit (operator-pressed-Complete time), never from
+// a suggested value.
 const schema = z.object({
   ingot_kg: z.coerce.number().min(0, "Must be ≥ 0"),
   fe_kg: z.coerce.number().min(0, "Must be ≥ 0"),
   si_kg: z.coerce.number().min(0, "Must be ≥ 0"),
   scrap_kg: z.coerce.number().min(0, "Must be ≥ 0"),
-  actual_finish: z.string().optional(),
 });
 type FormData = z.infer<typeof schema>;
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: "#52525B",
-  in_progress: "#F59E0B",
-  completed: "#22C55E",
-};
-
-function BatchSelector({
-  batches,
-  selected,
-  onSelect,
-}: {
-  batches: Batch[];
-  selected: Batch | null;
-  onSelect: (b: Batch) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between bg-bg-elevated border border-[var(--border-color)] hover:border-zinc-500 rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] transition-colors"
-      >
-        <span className="flex items-center gap-2">
-          {selected ? (
-            <>
-              <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: STATUS_COLORS[selected.status] }}
-              />
-              <span className="font-mono text-xs">Batch #{selected.batch_number}</span>
-              <span className="text-zinc-500 text-xs">— {selected.furnace ?? "?"} furnace</span>
-            </>
-          ) : (
-            <span className="text-zinc-500">Select a batch…</span>
-          )}
-        </span>
-        <ChevronDown size={14} className="text-zinc-400" />
-      </button>
-
-      {open && (
-        <div className="absolute z-10 mt-1 w-full bg-bg-elevated border border-[var(--border-color)] rounded-lg shadow-xl overflow-hidden">
-          {batches.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-zinc-500">No pending batches</p>
-          ) : (
-            batches.map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => { onSelect(b); setOpen(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-bg-card transition-colors text-left"
-              >
-                <span
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: STATUS_COLORS[b.status] }}
-                />
-                <span className="font-mono text-[var(--text-primary)]">Batch #{b.batch_number}</span>
-                <span className="text-zinc-500">Furnace {b.furnace ?? "?"}</span>
-                <span className="ml-auto text-zinc-600 capitalize">{b.status.replace("_", " ")}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function getPowerAtTime(profile: PowerProfilePoint[], t: number): number {
   if (!profile.length) return 0;
@@ -111,30 +46,6 @@ function getPowerAtTime(profile: PowerProfilePoint[], t: number): number {
     if (profile[i].time_min <= t) return profile[i].power_kw;
   }
   return profile[0].power_kw;
-}
-
-function toDatetimeLocal(iso: string) {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function nowLocalISO(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fmtDateTime(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // ── Inline row editor state type ──
@@ -209,7 +120,6 @@ export default function OperatorExecutionPage() {
     register,
     handleSubmit,
     reset,
-    setValue,
     formState: { errors, isSubmitting },
   } = useForm<z.input<typeof schema>, unknown, FormData>({ resolver: zodResolver(schema) });
 
@@ -235,19 +145,6 @@ export default function OperatorExecutionPage() {
     const id = setInterval(tick, 10_000);
     return () => clearInterval(id);
   }, [batchStarted, startedAt]);
-
-  // ── Auto-fill actual_finish when batch starts ──
-  useEffect(() => {
-    if (batchStarted && startedAt && selectedBatch?.duration_min != null) {
-      const finishMs = new Date(startedAt).getTime() + selectedBatch.duration_min * 60000;
-      const d = new Date(finishMs);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      setValue("actual_finish", `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
-    } else {
-      setValue("actual_finish", "");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batchStarted, startedAt, selectedBatch?.duration_min]);
 
   const currentPower = batchStarted && profile.length > 0
     ? getPowerAtTime(profile, elapsedMin)
@@ -286,16 +183,16 @@ export default function OperatorExecutionPage() {
       await updateBatch.mutateAsync({ id: selectedBatch.id, data: { actual_start: now, status: "in_progress" } });
       setBatchStarted(true);
       setStartedAt(now);
-      showToast("success", `Batch #${selectedBatch.batch_number} started`);
+      showToast("success", `Charge #${selectedBatch.batch_number} started`);
     } catch {
-      showToast("error", "Failed to start batch. Check your connection.");
+      showToast("error", "Failed to start charge. Check your connection.");
     }
   }
 
   async function handleSaveEditedStart() {
     if (!selectedBatch || !editStartValue) return;
     try {
-      const iso = editStartValue.length === 16 ? editStartValue + ":00" : editStartValue;
+      const iso = ensureSeconds(editStartValue);
       await updateBatch.mutateAsync({ id: selectedBatch.id, data: { actual_start: iso } });
       setStartedAt(iso);
       setEditingStart(false);
@@ -307,14 +204,15 @@ export default function OperatorExecutionPage() {
   async function onSubmit(values: FormData) {
     if (!selectedBatch) return;
     try {
-      const actualFinishISO = values.actual_finish
-        ? (values.actual_finish.length === 16 ? values.actual_finish + ":00" : values.actual_finish)
-        : undefined;
+      // Stamp wall-clock time at submit. Operators tap Complete the moment the
+      // melt actually finishes, so this is the source of truth — never the
+      // GA-suggested duration.
+      const actualFinishISO = nowLocalISO();
       await updateBatch.mutateAsync({
         id: selectedBatch.id,
         data: { ingot_kg: values.ingot_kg, fe_kg: values.fe_kg, si_kg: values.si_kg, scrap_kg: values.scrap_kg, actual_finish: actualFinishISO, status: "completed" },
       });
-      showToast("success", `Batch #${selectedBatch.batch_number} marked completed`);
+      showToast("success", `Charge #${selectedBatch.batch_number} marked completed`);
 
       const allDone = batches
         .map((b) => (b.id === selectedBatch.id ? "completed" : b.status))
@@ -333,7 +231,7 @@ export default function OperatorExecutionPage() {
       setFullscreen(false);
       reset();
     } catch {
-      showToast("error", "Failed to update batch. Check your connection.");
+      showToast("error", "Failed to update charge. Check your connection.");
     }
   }
 
@@ -355,19 +253,15 @@ export default function OperatorExecutionPage() {
       await updateBatch.mutateAsync({
         id: batchId,
         data: {
-          actual_start: rowEdit.actual_start
-            ? (rowEdit.actual_start.length === 16 ? rowEdit.actual_start + ":00" : rowEdit.actual_start)
-            : undefined,
-          actual_finish: rowEdit.actual_finish
-            ? (rowEdit.actual_finish.length === 16 ? rowEdit.actual_finish + ":00" : rowEdit.actual_finish)
-            : undefined,
+          actual_start: rowEdit.actual_start ? ensureSeconds(rowEdit.actual_start) : undefined,
+          actual_finish: rowEdit.actual_finish ? ensureSeconds(rowEdit.actual_finish) : undefined,
           ingot_kg: rowEdit.ingot_kg !== "" ? parseFloat(rowEdit.ingot_kg) : undefined,
           fe_kg: rowEdit.fe_kg !== "" ? parseFloat(rowEdit.fe_kg) : undefined,
           si_kg: rowEdit.si_kg !== "" ? parseFloat(rowEdit.si_kg) : undefined,
           scrap_kg: rowEdit.scrap_kg !== "" ? parseFloat(rowEdit.scrap_kg) : undefined,
         },
       });
-      showToast("success", "Batch updated");
+      showToast("success", "Charge updated");
       setExpandedBatchId(null);
       setRowEdit(null);
     } catch {
@@ -384,7 +278,7 @@ export default function OperatorExecutionPage() {
   return (
     <PageWrapper
       title="Operator Execution"
-      subtitle="Follow the power profile guideline and log actual batch data"
+      subtitle="Follow the power profile guideline and log actual charge data"
     >
       {/* Toast */}
       {toast && (
@@ -425,7 +319,7 @@ export default function OperatorExecutionPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-widest mb-1">Batch</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-widest mb-1">Charge</p>
                 <p className="text-3xl font-mono font-bold text-[var(--text-primary)]">#{selectedBatch.batch_number}</p>
               </div>
             </div>
@@ -522,11 +416,11 @@ export default function OperatorExecutionPage() {
       {selectedPlanId && (
         <div className="mb-4">
           <div className="flex items-center gap-1.5 mb-1.5">
-            <label className="text-xs text-zinc-400 font-medium">Select Batch to Execute</label>
+            <label className="text-xs text-zinc-400 font-medium">Select Charge to Execute</label>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <div className="w-64">
-              <BatchSelector batches={pendingBatches} selected={selectedBatch} onSelect={handleSelectBatch} />
+              <ChargeSelector batches={pendingBatches} selected={selectedBatch} onSelect={handleSelectBatch} />
             </div>
 
             {selectedBatch && !batchStarted && (
@@ -537,7 +431,7 @@ export default function OperatorExecutionPage() {
                 className="flex items-center gap-1.5 bg-brand-red hover:bg-brand-red-dark disabled:opacity-40 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
               >
                 <Play size={12} fill="white" />
-                Start Batch
+                Start Charge
               </button>
             )}
 
@@ -599,7 +493,7 @@ export default function OperatorExecutionPage() {
                 </span>
               ) : (
                 <span className="text-xs bg-brand-red/10 text-brand-red border border-brand-red/20 rounded px-2 py-0.5">
-                  Select a batch
+                  Select a charge
                 </span>
               )}
               {selectedBatch && (
@@ -624,7 +518,7 @@ export default function OperatorExecutionPage() {
               />
             ) : (
               <div className="h-full flex items-center justify-center text-zinc-600 text-sm border border-dashed border-[var(--border-color)] rounded-lg">
-                Select a batch to view its power profile
+                Select a charge to view its power profile
               </div>
             )}
           </div>
@@ -670,15 +564,14 @@ export default function OperatorExecutionPage() {
               );
             })}
 
-            {/* Actual Finish */}
+            {/* Actual Finish — stamped from wall clock when Complete is pressed.
+                Read-only preview so the operator sees exactly what will be saved. */}
             <div>
               <label className="block text-xs text-zinc-400 mb-1.5">Actual Finish</label>
-              <input
-                type="datetime-local"
-                {...register("actual_finish")}
-                className="w-full bg-bg-elevated border border-[var(--border-color)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-brand-red font-mono"
-              />
-              <p className="text-xs text-zinc-600 mt-0.5">Auto-filled · adjustable</p>
+              <div className="w-full bg-bg-elevated border border-[var(--border-color)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] font-mono">
+                {batchStarted ? fmtDateTime(new Date().toISOString()) : "—"}
+              </div>
+              <p className="text-xs text-zinc-600 mt-0.5">Stamped on Complete · wall-clock time</p>
             </div>
 
             <div className="flex-1" />
@@ -688,14 +581,14 @@ export default function OperatorExecutionPage() {
               disabled={!selectedBatch || !batchStarted || isSubmitting || updateBatch.isPending}
               className="w-full bg-brand-red hover:bg-brand-red-dark disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold py-2.5 rounded-lg transition-colors mt-1"
             >
-              {updateBatch.isPending ? "Saving…" : "Complete Batch"}
+              {updateBatch.isPending ? "Saving…" : "Complete Charge"}
             </button>
 
             {!selectedBatch && (
-              <p className="text-xs text-zinc-600 text-center">Select a batch above first</p>
+              <p className="text-xs text-zinc-600 text-center">Select a charge above first</p>
             )}
             {selectedBatch && !batchStarted && (
-              <p className="text-xs text-zinc-600 text-center">Press Start Batch to begin</p>
+              <p className="text-xs text-zinc-600 text-center">Press Start Charge to begin</p>
             )}
           </form>
         </div>
@@ -705,7 +598,7 @@ export default function OperatorExecutionPage() {
       {filteredBatches.length > 0 && (
         <div className="mt-4 bg-bg-card border border-[var(--border-color)] rounded-xl overflow-hidden">
           <div className="px-5 py-3 border-b border-[var(--border-color)] flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Batch Progress</h3>
+            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Charge Progress</h3>
             <span className="text-xs text-zinc-600">Click a row to view &amp; edit details</span>
           </div>
           <table className="w-full text-xs">
@@ -901,7 +794,7 @@ export default function OperatorExecutionPage() {
       {/* Empty state */}
       {selectedPlanId && filteredBatches.length === 0 && (
         <div className="mt-4 py-10 text-center text-zinc-600 text-sm border border-dashed border-[var(--border-color)] rounded-xl">
-          {dateFilter ? `No batches on ${dateFilter}` : "No batches found for this plan"}
+          {dateFilter ? `No charges on ${dateFilter}` : "No charges found for this plan"}
         </div>
       )}
     </PageWrapper>

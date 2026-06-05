@@ -99,19 +99,19 @@ export default function MetalLevelChart({ scheduleData }: Props) {
           stroke="#E3000F"
           strokeDasharray="4 4"
           strokeOpacity={0.5}
-          label={{ value: `Min A (${mh_a_min_level_kg}kg)`, fill: "#E3000F", fontSize: 8, position: "insideTopLeft" }}
+          label={{ value: `Min SS TECH (${mh_a_min_level_kg}kg)`, fill: "#E3000F", fontSize: 8, position: "insideTopLeft" }}
         />
         <ReferenceLine
           y={mh_b_min_level_kg}
           stroke="#3B82F6"
           strokeDasharray="4 4"
           strokeOpacity={0.5}
-          label={{ value: `Min B (${mh_b_min_level_kg}kg)`, fill: "#3B82F6", fontSize: 8, position: "insideTopRight" }}
+          label={{ value: `Min DIKI-3 (${mh_b_min_level_kg}kg)`, fill: "#3B82F6", fontSize: 8, position: "insideTopRight" }}
         />
         <Line
           type="monotone"
           dataKey="mhA"
-          name="M&H A"
+          name="SS TECH"
           stroke="#E3000F"
           strokeWidth={2}
           dot={false}
@@ -120,7 +120,7 @@ export default function MetalLevelChart({ scheduleData }: Props) {
         <Line
           type="monotone"
           dataKey="mhB"
-          name="M&H B"
+          name="DIKI-3"
           stroke="#3B82F6"
           strokeWidth={2}
           dot={false}

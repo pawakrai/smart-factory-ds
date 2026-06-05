@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from ..database import get_session, engine
 from ..models import Plan, Batch, EnergyLog
 from ..models.setting import Setting
-from ..schemas.plan import PlanCreate, PlanUpdate, PlanRead, ScheduleData
+from ..schemas.plan import PlanCreate, PlanUpdate, PlanRead, ScheduleData, GA_RECOMPUTE_FIELDS
 from ..services.ga_service import generate_schedule
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ def create_plan(data: PlanCreate, background_tasks: BackgroundTasks, session: Se
         mh_b_initial_level_kg=data.mh_b_initial_level_kg,
         consider_tou_price=data.consider_tou_price,
         consider_plant_load=data.consider_plant_load,
+        preferred_start_furnace=data.preferred_start_furnace,
     )
     session.add(plan)
     session.commit()
@@ -98,15 +99,51 @@ def get_plan(plan_id: str, session: Session = Depends(get_session)):
 
 
 @router.patch("/{plan_id}", response_model=PlanRead)
-def update_plan(plan_id: str, data: PlanUpdate, session: Session = Depends(get_session)):
+def update_plan(
+    plan_id: str,
+    data: PlanUpdate,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """Patch a plan. If any GA-input field changes, the schedule is regenerated
+    so chart data (mh_*_levels_kg series, etc.) stays consistent with the plan."""
     plan = session.get(Plan, plan_id)
     if not plan:
         raise HTTPException(404, "Plan not found")
-    for k, v in data.model_dump(exclude_none=True).items():
+
+    updates = data.model_dump(exclude_none=True)
+    ga_changes = {k: v for k, v in updates.items() if k in GA_RECOMPUTE_FIELDS}
+
+    if ga_changes and plan.status == "active":
+        raise HTTPException(
+            400,
+            "Plan is active; deactivate it before editing GA parameters.",
+        )
+    if ga_changes and plan.status == "pending":
+        raise HTTPException(
+            409,
+            "Plan is already regenerating; wait for it to finish before editing.",
+        )
+
+    for k, v in updates.items():
         setattr(plan, k, v)
+
+    if ga_changes:
+        # Drop stale derived data so the chart never shows a rate that doesn't
+        # match the plan inputs while the GA re-runs.
+        plan.schedule_data = None
+        plan.schedule_metrics = None
+        plan.status = "pending"
+        for batch in session.exec(select(Batch).where(Batch.plan_id == plan_id)).all():
+            session.delete(batch)
+
     session.add(plan)
     session.commit()
     session.refresh(plan)
+
+    if ga_changes:
+        background_tasks.add_task(_run_ga_and_update, plan.id)
+
     return plan
 
 
