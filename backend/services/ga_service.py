@@ -106,6 +106,54 @@ def _run_app_v9_ga(plan: "Plan", settings_dict: dict[str, str]) -> GaResult:
             raise RuntimeError("GA returned no valid solution")
 
         policy = app_v9._decode_policy_vector(best_x)
+
+        # Force "start at shift_start" when operator turned off both cost flags.
+        # The chromosome encodes `start_delay_min` (0-60 min) and `start_score_bias`
+        # (−2..+2) which together control how quickly the simulator dispatches
+        # the first IF. The optimal solution under cost-aware objectives usually
+        # *delays* the start (so the first pour lands the moment MH levels have
+        # drained enough to accept 600 kg — zero hold). With flags off we want
+        # the opposite: dispatch at shift_start and tolerate ~28 min hold before
+        # the first pour fits, so MH peaks return to MAX after refill.
+        if (not bool(getattr(plan, "consider_tou_price", True))
+                and not bool(getattr(plan, "consider_plant_load", True))):
+            # CAP start_delay_min at 35 min instead of forcing 0. The GA's
+            # chromosome can still encode a *small* delay so the first IF's
+            # melt-finish aligns with the moment MH has 600 kg free — that
+            # eliminates the ~28 min hold + reheat cost without pushing the
+            # finish-time out (last-pour timing is unchanged). Forcing 0 wastes
+            # one hold-cycle of reheat energy; capping lets the GA pick the
+            # JIT-optimal value (≈ 28-30 min for typical rates).
+            policy["start_delay_min"] = min(float(policy.get("start_delay_min", 0.0)), 35.0)
+            # Force min_start_gap to the *steady-state* cycle time so each
+            # subsequent IF starts exactly when its melt-finish will align
+            # with the next pour-ready moment. Eliminates the 28-min hold per
+            # cycle for charges #2-N (the chart's biggest hold contributor).
+            # cycle = IF_BATCH_OUTPUT_KG / (rate_A + rate_B). Using app_v9
+            # constants which were just set by _apply_settings_overrides.
+            rate_total = (
+                app_v9.MH_CONSUMPTION_RATE_KG_PER_MIN["A"]
+                + app_v9.MH_CONSUMPTION_RATE_KG_PER_MIN["B"]
+            )
+            if rate_total > 1e-9:
+                steady_cycle = app_v9.IF_BATCH_OUTPUT_KG / rate_total
+                # Subtract 1 min for float safety — better slight overlap than gap.
+                policy["min_start_gap_min"] = max(0.0, steady_cycle - 1.0)
+            else:
+                policy["min_start_gap_min"] = 0.0
+            # start_score is computed every minute and must be ≥ 0 for dispatch
+            # to fire. Push bias positive so an idle furnace dispatches once
+            # start_delay_min has elapsed (even when both MHs are full and
+            # depletion_urgency = 0).
+            policy["start_score_bias"] = max(float(policy.get("start_score_bias", 0.0)), 1.0)
+            policy["tou_weight"] = 0.0  # eliminate TOU penalty from start_score
+            policy["peak_avoid_weight"] = 0.0  # eliminate peak penalty from start_score
+            logger.info(
+                "Flags-off policy override: start_delay_min=%.1f (cap 35), "
+                "min_start_gap_min=0, start_score_bias=%s, tou=peak=0",
+                policy["start_delay_min"], policy["start_score_bias"],
+            )
+
         sim = app_v9.simulate_policy_day(policy)
 
     return _build_ga_result(plan, sim, settings_dict, app_v9)
@@ -248,6 +296,8 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         app_v9.SERVICE_W_MAKESPAN = 0.0
     if hasattr(app_v9, "SERVICE_W_HOLDING_MINUTES"):
         app_v9.SERVICE_W_HOLDING_MINUTES = 1e1
+    if hasattr(app_v9, "SERVICE_W_REHEAT_KWH"):
+        app_v9.SERVICE_W_REHEAT_KWH = 1e3
 
     # Per-plan cost-consideration flags
     if not bool(getattr(plan, "consider_tou_price", True)):
@@ -276,20 +326,23 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         # SERVICE_W_*).
 
         # ── Safety: keep quadratic low-level penalty + boost OBJ1 weights ──
-        # These are simulator-level safety constraints, not cost trade-offs.
-        # Boosting them keeps the GA from happily draining MH-A below Min.
+        # Boosted hard in Fix 12: operator reported that even with proportional
+        # pour the GA tolerated MH-A dipping to ~Min. Tripling these weights
+        # forces the optimiser to schedule pours BEFORE Min is reached.
         if hasattr(app_v9, "OBJ1_COMPONENT_WEIGHTS"):
             w = app_v9.OBJ1_COMPONENT_WEIGHTS
-            w["empty_penalty"]           = max(w.get("empty_penalty", 1.10), 10.0)
-            w["low_level_min_penalty"]   = max(w.get("low_level_min_penalty", 0.80), 10.0)
-            w["low_level_shape_penalty"] = max(w.get("low_level_shape_penalty", 0.90), 5.0)
+            w["empty_penalty"]           = max(w.get("empty_penalty", 1.10), 30.0)
+            w["low_level_min_penalty"]   = max(w.get("low_level_min_penalty", 0.80), 30.0)
+            w["low_level_shape_penalty"] = max(w.get("low_level_shape_penalty", 0.90), 15.0)
             # holding_penalty is an energy-mode hold-time term in OBJ1; we
             # drive holding via mode-specific terms below instead so this
             # doesn't double-count.
             w["holding_penalty"] = 0.0
-        # Hard MH-min budget: 30 min cumulative below Min (default 240).
+        # Hard MH-min budget: 5 min cumulative below Min (default 240) — near
+        # zero tolerance; any sustained dip blows the CV vector and the GA
+        # picks a feasible neighbour instead.
         app_v9.MAX_LOW_LEVEL_MIN_ALLOW = min(
-            getattr(app_v9, "MAX_LOW_LEVEL_MIN_ALLOW", 240.0), 30.0
+            getattr(app_v9, "MAX_LOW_LEVEL_MIN_ALLOW", 240.0), 5.0
         )
         # Hard empty budget: 15 min (default 120) — MH-empty is unsafe.
         if hasattr(app_v9, "MAX_EMPTY_MIN_ALLOW"):
@@ -320,27 +373,44 @@ def _apply_settings_overrides(app_v9, settings_dict: dict[str, str], plan: "Plan
         # schedule → GA wandered (3-hour delays, MH-A empty 8+ hours).
         # Instead: KEEP and BOOST the throughput-related cost terms; only
         # the TOU/demand-related terms (already zeroed above) go away.
+        # Fix 12 trade-off: operator wants "start at shift_start, tolerate some
+        # hold, finish ASAP, keep MH high". The hold/makespan ratios below tip
+        # the GA toward an early start with a short (~26 min) hold before the
+        # first pour fits — instead of the old "delay start 85 min to skip
+        # holding entirely" choice which left A.peak at 660 / makespan +90 min.
         if plan.opt_mode == "service":
-            app_v9.SERVICE_W_MAKESPAN = 50.0       # service objective: new makespan term
-            app_v9.SERVICE_W_HOLDING_MINUTES = 100.0
+            app_v9.SERVICE_W_MAKESPAN = 1000.0       # 20× original — finish-fast must dominate everything else
+            # Bumped back up in Fix 12.1: hold visible on the chart was operator
+            # feedback. With start_delay_min capped at 35 (above) the GA can
+            # JIT-align melt-finish to pour-ready, so hold should be 0 at the
+            # optimum — making hold expensive nudges the GA there.
+            app_v9.SERVICE_W_HOLDING_MINUTES = 30.0
             app_v9.IF_HOLDING_PENALTY_PER_MIN = 0.0  # avoid double-count vs SERVICE_W_HOLDING_MINUTES
+            # Service objective normally charges SERVICE_W_REHEAT_KWH (1e3) per
+            # reheat-kWh, which dominates makespan and locks the GA into "late
+            # start, zero reheat" choices. With flags off the operator does
+            # not care about reheat energy cost — zero this so the GA only
+            # cares about makespan + MH safety.
+            if hasattr(app_v9, "SERVICE_W_REHEAT_KWH"):
+                app_v9.SERVICE_W_REHEAT_KWH = 0.0
             if hasattr(app_v9, "ENERGY_MAKESPAN_COST_PER_MIN"):
                 app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 0.0
             if hasattr(app_v9, "ENERGY_IDLE_GAP_COST_PER_MIN"):
                 app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 0.0
         else:
             # energy mode: drive continuous melt through energy-mode terms.
-            # Default ENERGY_MAKESPAN_COST_PER_MIN = 0.6 is too small to
-            # dominate the (now-tiny) tou_term; boost ×50 so makespan is the
-            # principal cost driver.
+            # ENERGY_MAKESPAN_COST_PER_MIN boosted to 100 (default 0.6) so
+            # makespan dominates; IF_HOLDING_PENALTY_PER_MIN dropped to 1 so
+            # GA tolerates early-start hold without lockout.
             if hasattr(app_v9, "ENERGY_MAKESPAN_COST_PER_MIN"):
-                app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 30.0
-            # Idle-gap penalty needs the same treatment.
+                app_v9.ENERGY_MAKESPAN_COST_PER_MIN = 100.0
+            # Idle-gap penalty matches makespan weight to discourage gaps.
             if hasattr(app_v9, "ENERGY_IDLE_GAP_COST_PER_MIN"):
-                app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 30.0
-            # IF holding cost — keep modest so the GA penalises holding but
-            # doesn't lock to a degenerate "never hold" schedule.
-            app_v9.IF_HOLDING_PENALTY_PER_MIN = 5.0
+                app_v9.ENERGY_IDLE_GAP_COST_PER_MIN = 100.0
+            # IF holding cost — bumped to 10 in Fix 12.1 so GA prefers JIT
+            # dispatch (start late enough that melt-finish = pour-ready) over
+            # "start at t=0 then hold 28 min" — same makespan, no reheat.
+            app_v9.IF_HOLDING_PENALTY_PER_MIN = 10.0
             # Service-only globals stay at module defaults (reset at fn top).
 
     # Solar window (parse HH:MM strings)

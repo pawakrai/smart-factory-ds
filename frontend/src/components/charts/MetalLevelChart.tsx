@@ -7,6 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  ReferenceArea,
 } from "recharts";
 import type { ScheduleData } from "@/types";
 
@@ -40,9 +41,14 @@ function CustomTooltip({ active, payload, label }: any) {
 
 interface Props {
   scheduleData: ScheduleData;
+  /** Last-pour offset in minutes from shift_start. When provided, a "Shift End"
+   *  reference line + shaded post-shift area are drawn. The simulator runs a
+   *  full 24h day even though production stops at the last pour; without this
+   *  cue the chart's post-shift drain reads as "MH-A reached 0 during work". */
+  makespanMinutes?: number;
 }
 
-export default function MetalLevelChart({ scheduleData }: Props) {
+export default function MetalLevelChart({ scheduleData, makespanMinutes }: Props) {
   const {
     mh_a_levels_kg,
     mh_b_levels_kg,
@@ -57,6 +63,13 @@ export default function MetalLevelChart({ scheduleData }: Props) {
     mhA: Math.round(val),
     mhB: Math.round(mh_b_levels_kg[i] ?? 0),
   }));
+
+  // Map makespan_minutes onto the discrete x-category we feed to Recharts.
+  // Round up to the next sample so the line falls AT the last pour, not before.
+  const shiftEndLabel =
+    makespanMinutes != null && makespanMinutes > 0
+      ? data[Math.min(data.length - 1, Math.ceil(makespanMinutes / sample_interval_min))]?.label
+      : undefined;
 
   if (data.length === 0) {
     return (
@@ -108,6 +121,27 @@ export default function MetalLevelChart({ scheduleData }: Props) {
           strokeOpacity={0.5}
           label={{ value: `Min DIKI-3 (${mh_b_min_level_kg}kg)`, fill: "#3B82F6", fontSize: 8, position: "insideTopRight" }}
         />
+        {/* Shift End indicator — anything to the right is post-shift drain
+            with no more pours. Without this, the simulator's 24h horizon
+            makes MH-A's tail look like a critical drop. */}
+        {shiftEndLabel && (
+          <>
+            <ReferenceArea
+              x1={shiftEndLabel}
+              x2={data[data.length - 1].label}
+              fill="#52525B"
+              fillOpacity={0.18}
+              ifOverflow="visible"
+            />
+            <ReferenceLine
+              x={shiftEndLabel}
+              stroke="#A1A1AA"
+              strokeDasharray="3 3"
+              strokeOpacity={0.7}
+              label={{ value: "Shift End", fill: "#A1A1AA", fontSize: 9, position: "top" }}
+            />
+          </>
+        )}
         <Line
           type="monotone"
           dataKey="mhA"

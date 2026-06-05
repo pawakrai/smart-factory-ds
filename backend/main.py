@@ -69,11 +69,11 @@ def _seed_settings():
         # ── Section B: M&H Furnace ────────────────────────────────────────────
         ("mh_a_capacity_kg",                 "800",    "M&H A maximum capacity (kg)"),
         ("mh_a_initial_level_kg",            "800",    "M&H A starting level at shift start (kg)"),
-        ("mh_a_consumption_rate_kg_per_min", "2.50",   "M&H A consumption rate (kg/min)"),
+        ("mh_a_consumption_rate_kg_per_min", "2.20",   "M&H A (SS TECH) consumption rate (kg/min)"),
         ("mh_a_min_operational_level_kg",    "400",    "M&H A minimum safe operational level (kg)"),
         ("mh_b_capacity_kg",                 "1100",   "M&H B maximum capacity (kg)"),
         ("mh_b_initial_level_kg",            "1100",   "M&H B starting level at shift start (kg)"),
-        ("mh_b_consumption_rate_kg_per_min", "2.60",   "M&H B consumption rate (kg/min)"),
+        ("mh_b_consumption_rate_kg_per_min", "2.95",   "M&H B (DIKI-3) consumption rate (kg/min)"),
         ("mh_b_min_operational_level_kg",    "550",    "M&H B minimum safe operational level (kg)"),
         ("mh_empty_penalty_per_min",         "150",    "Penalty per minute when M&H furnace runs empty (Baht/min)"),
         ("mh_low_level_minute_penalty",      "40",     "Penalty per minute when M&H level is below minimum (Baht/min)"),

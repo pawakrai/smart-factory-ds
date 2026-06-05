@@ -147,11 +147,12 @@ def test_service_flags_off_keeps_mh_protection_strong():
     )
     # OBJ1 safety weights boosted
     w = app_v9.OBJ1_COMPONENT_WEIGHTS
-    assert w["empty_penalty"] >= 10.0, f"empty_penalty={w['empty_penalty']}"
-    assert w["low_level_min_penalty"] >= 10.0, f"low_level_min={w['low_level_min_penalty']}"
-    assert w["low_level_shape_penalty"] >= 5.0, f"low_level_shape={w['low_level_shape_penalty']}"
-    # Hard MH-min budget tightened to ≤ 30 min
-    assert app_v9.MAX_LOW_LEVEL_MIN_ALLOW <= 30.0, (
+    # Fix 12: boosted ×3 from previous values so GA never tolerates dipping near Min.
+    assert w["empty_penalty"] >= 30.0, f"empty_penalty={w['empty_penalty']}"
+    assert w["low_level_min_penalty"] >= 30.0, f"low_level_min={w['low_level_min_penalty']}"
+    assert w["low_level_shape_penalty"] >= 15.0, f"low_level_shape={w['low_level_shape_penalty']}"
+    # Hard MH-min budget tightened to ≤ 5 min (Fix 12 — near zero tolerance)
+    assert app_v9.MAX_LOW_LEVEL_MIN_ALLOW <= 5.0, (
         f"MAX_LOW_LEVEL_MIN_ALLOW={app_v9.MAX_LOW_LEVEL_MIN_ALLOW}; "
         f"service+flags off should tighten this from default 240."
     )
@@ -172,14 +173,16 @@ def test_service_flags_off_keeps_mh_protection_strong():
     # simulator level (see _distribute_pour_proportional). The old static
     # PREFERRED_MH_FURNACE_TO_FILL_FIRST flag is no longer read.
     # Makespan reward — service objective normally lacks a makespan term.
-    assert app_v9.SERVICE_W_MAKESPAN >= 50.0, (
-        f"expected SERVICE_W_MAKESPAN ≥ 50 to reward tight schedules, got "
-        f"{app_v9.SERVICE_W_MAKESPAN}"
+    assert app_v9.SERVICE_W_MAKESPAN >= 1000.0, (
+        f"expected SERVICE_W_MAKESPAN ≥ 1000 to dominate hold + reheat costs, "
+        f"got {app_v9.SERVICE_W_MAKESPAN}"
     )
-    # Holding-minutes weight raised so any idle furnace minute is painful.
-    assert app_v9.SERVICE_W_HOLDING_MINUTES >= 100.0, (
+    # Holding-minutes weight RAISED in Fix 12.1 — combined with the cap on
+    # start_delay_min the GA picks JIT dispatch (no hold) rather than "start
+    # immediately and hold".
+    assert app_v9.SERVICE_W_HOLDING_MINUTES >= 20.0, (
         f"SERVICE_W_HOLDING_MINUTES={app_v9.SERVICE_W_HOLDING_MINUTES}; "
-        f"need ≥ 100 to discourage holding when flags are off."
+        f"need ≥ 20 so GA prefers JIT dispatch over start-at-t=0-then-hold."
     )
     # CONTRACT_DEMAND_KW effectively infinite → margin_ratio stays positive →
     # peak_risk = 0 → _dynamic_min_start_gap returns 0 (no auto-gap from
@@ -208,10 +211,10 @@ def test_energy_flags_off_drives_continuous_melt_via_energy_terms():
         "energy+flags off must keep quadratic low-level penalty; the old "
         "linearization was the proximate cause of MH-A draining unchecked."
     )
-    assert app_v9.OBJ1_COMPONENT_WEIGHTS["empty_penalty"] >= 10.0
-    assert app_v9.OBJ1_COMPONENT_WEIGHTS["low_level_min_penalty"] >= 10.0
-    assert app_v9.OBJ1_COMPONENT_WEIGHTS["low_level_shape_penalty"] >= 5.0
-    assert app_v9.MAX_LOW_LEVEL_MIN_ALLOW <= 30.0
+    assert app_v9.OBJ1_COMPONENT_WEIGHTS["empty_penalty"] >= 30.0
+    assert app_v9.OBJ1_COMPONENT_WEIGHTS["low_level_min_penalty"] >= 30.0
+    assert app_v9.OBJ1_COMPONENT_WEIGHTS["low_level_shape_penalty"] >= 15.0
+    assert app_v9.MAX_LOW_LEVEL_MIN_ALLOW <= 5.0
     assert app_v9.MAX_EMPTY_MIN_ALLOW <= 15.0
 
     # Continuous-melt geometry identical
@@ -220,13 +223,17 @@ def test_energy_flags_off_drives_continuous_melt_via_energy_terms():
     # Pour distribution is proportional (helper-level), no per-plan override.
 
     # ── Mode-specific: energy mode drives makespan via ENERGY_MAKESPAN_COST_PER_MIN ──
-    assert app_v9.ENERGY_MAKESPAN_COST_PER_MIN >= 30.0, (
-        f"energy+flags off must keep makespan cost ≥ 30 to push GA toward "
-        f"tight schedules; got {app_v9.ENERGY_MAKESPAN_COST_PER_MIN}. "
-        f"Previously zeroed → GA wandered (3h delays, MH-A empty 8h+)."
+    # Fix 12: boosted to 100 so makespan dominates; IF hold dropped to 1 so
+    # GA can hold briefly for early-start without lockout.
+    assert app_v9.ENERGY_MAKESPAN_COST_PER_MIN >= 100.0, (
+        f"energy+flags off must keep makespan cost ≥ 100 to push GA toward "
+        f"tight schedules; got {app_v9.ENERGY_MAKESPAN_COST_PER_MIN}."
     )
-    assert app_v9.ENERGY_IDLE_GAP_COST_PER_MIN >= 30.0
-    assert app_v9.IF_HOLDING_PENALTY_PER_MIN >= 5.0
+    assert app_v9.ENERGY_IDLE_GAP_COST_PER_MIN >= 100.0
+    assert app_v9.IF_HOLDING_PENALTY_PER_MIN >= 5.0, (
+        f"IF_HOLDING_PENALTY_PER_MIN={app_v9.IF_HOLDING_PENALTY_PER_MIN}; "
+        f"Fix 12.1 raises this so GA prefers JIT dispatch over start+hold."
+    )
     # Service weights NOT activated in energy mode
     assert app_v9.SERVICE_W_MAKESPAN == 0.0
     assert app_v9.SERVICE_W_HOLDING_MINUTES == 1e1
@@ -286,7 +293,7 @@ def test_overrides_do_not_leak_across_plans():
         consider_plant_load=False,
     )
     _apply_settings_overrides(app_v9, _SETTINGS, p1)
-    assert app_v9.OBJ1_COMPONENT_WEIGHTS["empty_penalty"] >= 3.0
+    assert app_v9.OBJ1_COMPONENT_WEIGHTS["empty_penalty"] >= 30.0
 
     # Then: energy + flags on, weights MUST go back to settings defaults
     p2 = FakePlan(

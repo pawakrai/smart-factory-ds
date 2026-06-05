@@ -383,6 +383,33 @@ export default function SyncedScheduleChart({ plan, batches, scheduleData }: Pro
         <polyline points={mhPolyline(mh_a_levels_kg)} fill="none" stroke={C_MH_A} strokeWidth={1.5} />
         <polyline points={mhPolyline(mh_b_levels_kg)} fill="none" stroke={C_MH_B} strokeWidth={1.5} />
 
+        {/* ── Shift End indicator ──────────────────────────────────────────
+            Marks the moment after the last pour where production stops. The
+            simulator keeps running until SIM_DURATION_MIN, so without this
+            cue the natural post-shift MH drain reads as a critical drop. */}
+        {batchWindows.length > 0 && (() => {
+          const lastPourMin = Math.max(...batchWindows.map((b) => b.pourMin));
+          const sx = toX(lastPourMin);
+          // Shade everything to the right of the last pour up to chart edge.
+          return (
+            <>
+              <rect
+                x={sx} y={PAD.top}
+                width={Math.max(0, PAD.left + CHART_W - sx)} height={MH_Y + MH_H - PAD.top}
+                fill="#52525B" fillOpacity={0.18}
+              />
+              <line
+                x1={sx} y1={PAD.top} x2={sx} y2={MH_Y + MH_H}
+                stroke={C_TEXT_MUTED} strokeWidth={1} strokeDasharray="4 3" opacity={0.85}
+              />
+              <text x={sx - 3} y={PAD.top + 10} textAnchor="end"
+                fontSize={8} fill={C_TEXT_MUTED} fontFamily="Inter, sans-serif">
+                Shift End
+              </text>
+            </>
+          );
+        })()}
+
         {/* ── SHARED TIME AXIS ──────────────────────────────────────────── */}
         {ticks.map((t) => {
           const x = toX(t);
